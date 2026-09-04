@@ -3525,6 +3525,7 @@ func (m *Model) statusPlayLines(w int) []string {
 			accent.Render("K/J") + muted.Render(" move"),
 			accent.Render("⇧↑/⇧↓") + muted.Render(" top/end"),
 			accent.Render("D") + muted.Render(" cut to end"),
+			accent.Render("^⇧D") + muted.Render(" cut above"),
 			accent.Render("R") + muted.Render(" radio from it"),
 			accent.Render("c") + muted.Render(" clear all"),
 			accent.Render("esc") + muted.Render(" done"),

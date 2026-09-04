@@ -15,9 +15,10 @@ import (
 // enter jumps to the highlighted track with the whole queue left in place, d
 // (also x/delete) removes it, K/J move it, R seeds radio from it, c clears the
 // queue, gg/G jump to the ends and esc drops the cursor so the list follows the
-// playing track again. shift+↑/↓ jump to the top/bottom of the list and
-// shift+d removes the highlighted entry and everything below it. Every other
-// key behaves exactly as without a highlight.
+// playing track again. shift+↑/↓ jump to the top/bottom of the list, shift+d
+// removes the highlighted entry and everything below it, and ctrl+shift+d
+// removes everything above it. Every other key behaves exactly as without a
+// highlight.
 
 // noQueueCursor means no entry is highlighted; the list follows playback.
 const noQueueCursor = -1
@@ -232,8 +233,35 @@ func (m *Model) handleQueueCursorKey(k string) (tea.Cmd, bool) {
 	case "D":
 		m.lastKey = ""
 		return m.deleteQueueTail(m.queueCursor), true
+	case "ctrl+shift+d", "ctrl+shift+D":
+		m.lastKey = ""
+		return m.deleteQueueHead(m.queueCursor), true
 	}
 	return nil, false
+}
+
+// deleteQueueHead (ctrl+shift+d) removes everything above the highlighted
+// entry, which becomes the first in the queue. Entries are removed from the
+// engine highest index first; if the playing track is among them the engine
+// slides the highlighted entry into its slot and plays it, so playback moves
+// to the highlighted track rather than stopping.
+func (m *Model) deleteQueueHead(before int) tea.Cmd {
+	if before <= 0 || before >= len(m.queueTracks) || before >= len(m.queueIDs) {
+		return nil
+	}
+	m.queueTracks = m.queueTracks[before:]
+	m.queueIDs = m.queueIDs[before:]
+	m.syncQueue()
+	m.setQueueCursor(0)
+	m.appendLog(fmt.Sprintf("[queue] removed the %d track(s) above position %d", before, before+1))
+	return m.playerCmd(func(p player.Player) error {
+		for i := before - 1; i >= 0; i-- {
+			if err := p.RemoveFromQueue(i); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // deleteQueueTail (shift+d) removes the highlighted entry and everything

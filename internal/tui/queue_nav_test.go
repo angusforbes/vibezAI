@@ -322,3 +322,34 @@ func TestShiftD_IncludingPlayingTrackStopsPlayback(t *testing.T) {
 		t.Fatalf("highlight should rest on the remaining entry, got %d", m.queueCursor)
 	}
 }
+
+func TestCtrlShiftD_CutsEverythingAboveHighlight(t *testing.T) {
+	m, mock := navModel(t) // playing "Two" (index 1)
+	key(m, "down")         // highlight "Three" (index 2)
+	if cmd := key(m, "ctrl+shift+d"); cmd != nil {
+		_ = cmd()
+	}
+	if len(m.queueTracks) != 2 || m.queueTracks[0].Title != "Three" || m.queueTracks[1].Title != "Four" {
+		t.Fatalf("queue after ctrl+shift+d = %+v, want [Three Four]", m.queueTracks)
+	}
+	if len(mock.removeFromQueueIdx) != 2 || mock.removeFromQueueIdx[0] != 1 || mock.removeFromQueueIdx[1] != 0 {
+		t.Fatalf("RemoveFromQueue calls = %v, want [1 0] (highest first)", mock.removeFromQueueIdx)
+	}
+	if mock.stopCalled {
+		t.Fatal("cutting above must not stop playback")
+	}
+	if m.queueCursor != 0 {
+		t.Fatalf("highlight should stay on the kept entry, now first (0), got %d", m.queueCursor)
+	}
+}
+
+func TestCtrlShiftD_OnFirstEntryIsNoop(t *testing.T) {
+	m, mock := navModel(t)
+	key(m, "shift+up") // highlight the first entry
+	if cmd := key(m, "ctrl+shift+d"); cmd != nil {
+		_ = cmd()
+	}
+	if len(m.queueTracks) != 4 || len(mock.removeFromQueueIdx) != 0 {
+		t.Fatal("nothing is above the first entry, so nothing should change")
+	}
+}
