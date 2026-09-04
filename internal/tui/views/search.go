@@ -192,15 +192,19 @@ func (m *SearchModel) adjustShown(section string, delta int) {
 	m.shown[section] = max(0, min(total, m.shownCount(section, total)+delta))
 	more := delta > 0
 	m.rebuildRows()
-	// Stay on the control that was used; when "less" folded the section to
-	// nothing that row is gone, so land on the section's "more" row instead.
+	// Stay on the control that was used; when it has disappeared (nothing
+	// left to reveal, or nothing left to hide) land on the section's other one.
 	target := -1
 	for i, r := range m.rows {
-		if r.toggle && r.label == section && (r.more == more || target < 0 && r.more) {
+		if !r.toggle || r.label != section {
+			continue
+		}
+		if r.more == more {
 			target = i
-			if r.more == more {
-				break
-			}
+			break
+		}
+		if target < 0 {
+			target = i
 		}
 	}
 	if target >= 0 {
@@ -210,7 +214,8 @@ func (m *SearchModel) adjustShown(section string, delta int) {
 }
 
 // sectionRows appends a header, the shown items and the control rows: "+ 5
-// more" always, "− 5 less" only while something is shown.
+// more" only while something is hidden, "− 5 less" only while something is
+// shown.
 func (m *SearchModel) sectionRows(label string, total int, item func(i int) searchRow) {
 	if total == 0 {
 		return
@@ -220,7 +225,9 @@ func (m *SearchModel) sectionRows(label string, total int, item func(i int) sear
 	for i := range n {
 		m.rows = append(m.rows, item(i))
 	}
-	m.rows = append(m.rows, searchRow{toggle: true, label: label, more: true, step: min(searchSectionCap, total-n)})
+	if n < total {
+		m.rows = append(m.rows, searchRow{toggle: true, label: label, more: true, step: min(searchSectionCap, total-n)})
+	}
 	if n > 0 {
 		m.rows = append(m.rows, searchRow{toggle: true, label: label, more: false, step: min(searchSectionCap, n)})
 	}
@@ -470,19 +477,11 @@ func (m *SearchModel) View() string {
 
 		switch {
 		case row.toggle:
-			var label string
-			switch {
-			case row.more && row.step > 0:
+			label := fmt.Sprintf("− %d less", row.step)
+			if row.more {
 				label = fmt.Sprintf("+ %d more", row.step)
-			case row.more:
-				label = "+ more (all shown)"
-			default:
-				label = fmt.Sprintf("− %d less", row.step)
 			}
 			ts := tagStyle
-			if row.step == 0 {
-				ts = ts.Faint(true)
-			}
 			if sel {
 				ts = lipgloss.NewStyle().Foreground(currentAccent).Bold(true)
 			}

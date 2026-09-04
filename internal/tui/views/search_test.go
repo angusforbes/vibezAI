@@ -586,17 +586,18 @@ func TestSearch_Navigation_CrossesSectionBoundary(t *testing.T) {
 		},
 	}, false, nil)
 
-	// Rows: Albums header, album, + more, − less, Tracks header, track, + more, − less.
+	// Rows: Albums header, album, − less, Tracks header, track, − less
+	// (everything is shown, so there are no more rows).
 	if s.SelectedAlbum() == nil {
 		t.Fatal("expected album to be selected initially")
 	}
-	for range 3 {
+	for range 2 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "Only Track" {
-		t.Fatalf("expected the track after passing the albums' control rows")
+		t.Fatalf("expected the track after passing the albums' less row")
 	}
-	for range 3 {
+	for range 2 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	}
 	if s.SelectedAlbum() == nil || s.SelectedAlbum().Title != "Only Album" {
@@ -620,8 +621,8 @@ func TestSearch_Navigation_AllSections(t *testing.T) {
 		},
 	}, false, nil)
 
-	// Order: Playlists, Albums, Library, Tracks; each item is followed by the
-	// section's two control rows.
+	// Order: Playlists, Albums, Library, Tracks; each fully shown section has
+	// its item followed by a single − less row.
 	if s.SelectedPlaylist() == nil {
 		t.Fatal("step 0: expected playlist")
 	}
@@ -631,22 +632,22 @@ func TestSearch_Navigation_AllSections(t *testing.T) {
 		}
 	}
 	down(1)
-	if sec, more, ok := s.SelectedToggle(); !ok || sec != "Playlists" || !more {
-		t.Fatal("step 1: expected the playlists' more row")
+	if sec, more, ok := s.SelectedToggle(); !ok || sec != "Playlists" || more {
+		t.Fatal("step 1: expected the playlists' less row")
+	}
+	down(1)
+	if s.SelectedAlbum() == nil {
+		t.Fatal("step 2: expected album")
 	}
 	down(2)
-	if s.SelectedAlbum() == nil {
-		t.Fatal("step 3: expected album")
-	}
-	down(3)
 	if s.SelectedTrack() == nil || s.SelectedTrack().ID != "i.lib1" {
-		t.Fatal("step 6: expected the library track")
+		t.Fatal("step 4: expected the library track")
 	}
-	down(3)
+	down(2)
 	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "Track One" {
-		t.Fatal("step 9: expected the catalog track")
+		t.Fatal("step 6: expected the catalog track")
 	}
-	down(3)
+	down(2)
 	if sec, more, ok := s.SelectedToggle(); !ok || sec != "Tracks" || more {
 		t.Fatal("end: expected to stop on the tracks' less row")
 	}
@@ -715,12 +716,16 @@ func TestSearch_MoreLessStepsOfFive(t *testing.T) {
 		t.Fatal("highlight should stay on the more row")
 	}
 	s.ShowMore("Albums")
-	if shown() != 12 || !strings.Contains(s.View(), "+ more (all shown)") {
-		t.Fatalf("after second more: %d shown, want all 12 with a dimmed more row: %q", shown(), s.View())
+	// Everything shown: the more row is gone and the highlight moves to less.
+	if len(s.rows) != 1+12+1 || strings.Contains(s.View(), "more") {
+		t.Fatalf("after second more: rows=%d, want header + 12 + less only: %q", len(s.rows), s.View())
+	}
+	if sec, more, ok := s.SelectedToggle(); !ok || sec != "Albums" || more {
+		t.Fatalf("highlight should move to the less row when more disappears, got %q %v %v", sec, more, ok)
 	}
 	s.ShowLess("Albums")
-	if shown() != 7 || !strings.Contains(s.View(), "− 5 less") {
-		t.Fatalf("less should drop the last five: %d shown", shown())
+	if shown() != 7 || !strings.Contains(s.View(), "− 5 less") || !strings.Contains(s.View(), "+ 5 more") {
+		t.Fatalf("less should drop the last five and bring the more row back: %d shown", shown())
 	}
 	s.ShowLess("Albums")
 	if shown() != 2 || !strings.Contains(s.View(), "− 2 less") {
@@ -749,8 +754,8 @@ func TestSearch_PlaylistRowsAreOneLine(t *testing.T) {
 		t.Fatal("playlist rows should take one line")
 	}
 	lines := strings.Split(strings.TrimRight(s.View(), "\n"), "\n")
-	if len(lines) != 5 {
-		t.Fatalf("header + 2 playlists + 2 control rows should render as 5 lines, got %d: %q", len(lines), lines)
+	if len(lines) != 4 {
+		t.Fatalf("header + 2 playlists + a less row should render as 4 lines, got %d: %q", len(lines), lines)
 	}
 	if !strings.Contains(lines[1], "Chill") || !strings.Contains(lines[1], "12 tracks") {
 		t.Fatalf("playlist line should carry the count inline: %q", lines[1])
@@ -871,15 +876,15 @@ func TestSearch_ScrollUp_AlbumSectionHeaderRemainsVisible(t *testing.T) {
 		},
 	}, false, nil)
 
-	// Albums first: a1 a2 a3, more, less, then the track. Down to the track,
-	// then back up to the first album, the row right after the Albums header.
-	for range 5 {
+	// Albums first: a1 a2 a3, less, then the track. Down to the track, then
+	// back up to the first album, the row right after the Albums header.
+	for range 4 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if s.SelectedTrack() == nil {
 		t.Fatal("expected the track at the end of the list")
 	}
-	for range 5 {
+	for range 4 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	}
 	if s.SelectedAlbum() == nil || s.SelectedAlbum().Title != "Album One" {
@@ -910,8 +915,8 @@ func TestSearch_ColorSeeding_TracksWhenHeaderScrolledPast(t *testing.T) {
 	if v := s.View(); !strings.Contains(v, "My Playlist") {
 		t.Errorf("playlist name should be visible in the view, got: %q", v)
 	}
-	// playlist, more, less, T1, T2, T3
-	for range 5 {
+	// playlist, less, T1, T2, T3
+	for range 4 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "T3" {
@@ -942,8 +947,8 @@ func TestSearch_ColorSeeding_TracksAfterAlbums(t *testing.T) {
 	if v := s.View(); !strings.Contains(v, "Album Visible") {
 		t.Errorf("album title should be visible, got: %q", v)
 	}
-	// album, more, less, T1, T2, T3
-	for range 5 {
+	// album, less, T1, T2, T3
+	for range 4 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "T3" {
@@ -968,19 +973,19 @@ func TestSearch_SelectedIndex_MixedSections(t *testing.T) {
 	}, false, nil)
 
 	// Sections run Playlists, Albums, Library, Tracks, and every selectable
-	// row counts: A1(0), more(1), less(2), T1(3), T2(4).
+	// row counts: A1(0), less(1), T1(2), T2(3).
 	if s.SelectedIndex() != 0 || s.SelectedAlbum() == nil {
 		t.Errorf("initial SelectedIndex = %d (album=%v), want 0 on the album", s.SelectedIndex(), s.SelectedAlbum() != nil)
 	}
-	for range 3 {
+	for range 2 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	if s.SelectedIndex() != 3 || s.SelectedTrack() == nil || s.SelectedTrack().Title != "T1" {
-		t.Errorf("after 3 down SelectedIndex = %d, want 3 on T1", s.SelectedIndex())
+	if s.SelectedIndex() != 2 || s.SelectedTrack() == nil || s.SelectedTrack().Title != "T1" {
+		t.Errorf("after 2 down SelectedIndex = %d, want 2 on T1", s.SelectedIndex())
 	}
 	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	if s.SelectedIndex() != 4 || s.SelectedTrack() == nil || s.SelectedTrack().Title != "T2" {
-		t.Errorf("after 4 down SelectedIndex = %d, want 4 on T2", s.SelectedIndex())
+	if s.SelectedIndex() != 3 || s.SelectedTrack() == nil || s.SelectedTrack().Title != "T2" {
+		t.Errorf("after 3 down SelectedIndex = %d, want 3 on T2", s.SelectedIndex())
 	}
 }
 
