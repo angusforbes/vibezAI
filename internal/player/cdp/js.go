@@ -41,6 +41,27 @@ func buildSetQueueAtJS(ids []string, startID string) (string, error) {
 	return fmt.Sprintf(`window.vibezSetQueue && window.vibezSetQueue(%s,%s)`, js, start), nil
 }
 
+// buildSyncQueueJS returns the JS expression that calls vibezSyncQueue.
+func buildSyncQueueJS(ids []string, currentID, playID string) (string, error) {
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return "", fmt.Errorf("cdp: marshal queue ids: %w", err)
+	}
+	js, err := json.Marshal(string(b))
+	if err != nil {
+		return "", fmt.Errorf("cdp: marshal queue json string: %w", err)
+	}
+	cur, err := json.Marshal(currentID)
+	if err != nil {
+		return "", fmt.Errorf("cdp: marshal current id: %w", err)
+	}
+	play, err := json.Marshal(playID)
+	if err != nil {
+		return "", fmt.Errorf("cdp: marshal play id: %w", err)
+	}
+	return fmt.Sprintf(`window.vibezSyncQueue && window.vibezSyncQueue(%s,%s,%s)`, js, cur, play), nil
+}
+
 // buildPlayQueuedJS returns the JS expression that calls vibezPlayQueued.
 func buildPlayQueuedJS(idx int, id string) (string, error) {
 	js, err := json.Marshal(id)

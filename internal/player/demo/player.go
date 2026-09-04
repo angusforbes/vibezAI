@@ -222,6 +222,40 @@ func (p *Player) SetQueueAt(ids []string, startID string) error {
 	return nil
 }
 
+// SyncQueue replaces the queue, keeping the playing track by id, optionally
+// starting playID; when the playing track is gone and nothing is asked for,
+// playback stops.
+func (p *Player) SyncQueue(ids []string, currentID, playID string) error {
+	p.mu.Lock()
+	p.queue = tracksForIDs(ids)
+	cur := indexOfTrack(p.queue, -1, currentID)
+	if playID != "" {
+		if j := indexOfTrack(p.queue, -1, playID); j >= 0 {
+			p.idx = j
+			t := p.queue[j]
+			p.state.Track = &t
+			p.state.Position = 0
+			p.state.Playing = true
+			st := p.state
+			p.mu.Unlock()
+			p.broadcast(st)
+			return nil
+		}
+	}
+	if cur >= 0 {
+		p.idx = cur
+	} else if currentID != "" || len(p.queue) == 0 {
+		p.idx = 0
+		p.state.Track = nil
+		p.state.Position = 0
+		p.state.Playing = false
+	}
+	st := p.state
+	p.mu.Unlock()
+	p.broadcast(st)
+	return nil
+}
+
 // PlayQueued jumps to the queued track at idx (or the one with the given id
 // when idx does not hold it) and plays it, leaving the queue as it is.
 func (p *Player) PlayQueued(idx int, id string) error {

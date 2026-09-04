@@ -454,7 +454,7 @@ func (a *AppleProvider) Search(ctx context.Context, query string) (*provider.Sea
 			catCollCh <- catCollOut{err: err}
 			return
 		}
-		ep := fmt.Sprintf("/catalog/%s/search?term=%s&types=albums,playlists&limit=10",
+		ep := fmt.Sprintf("/catalog/%s/search?term=%s&types=albums,playlists&limit=25",
 			sf, url.QueryEscape(query))
 		req, err := a.newRequest(ctx, http.MethodGet, ep)
 		if err != nil {

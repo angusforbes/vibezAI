@@ -63,6 +63,14 @@ type Player interface {
 	// SetQueueAt is SetQueue but starts playback at the entry whose track ID is
 	// startID (the first entry when empty or not found). The rest stays queued.
 	SetQueueAt(ids []string, startID string) error
+	// SyncQueue replaces the engine's queue with ids without touching the
+	// stream: the playing track is found again by currentID. When playID is
+	// set that track starts once the list is in place; when the playing track
+	// is no longer in ids and nothing is asked for, playback stops. This is
+	// the authoritative repair after removes, moves and inserts, since the
+	// engine may hold fewer entries than the caller (unplayable tracks are
+	// dropped on load), which makes index-based edits drift.
+	SyncQueue(ids []string, currentID, playID string) error
 	// PlayQueued jumps to the queue entry at idx, expected to hold track id,
 	// and plays it without changing the queue. Engines whose internal order
 	// differs from the caller's (shuffle) locate the entry by id instead.

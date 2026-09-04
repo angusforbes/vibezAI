@@ -435,6 +435,15 @@ func (p *Player) SetQueueAt(ids []string, startID string) error {
 	return nil
 }
 
+func (p *Player) SyncQueue(ids []string, currentID, playID string) error {
+	expr, err := buildSyncQueueJS(ids, currentID, playID)
+	if err != nil {
+		return err
+	}
+	p.dispatch(expr)
+	return nil
+}
+
 func (p *Player) PlayQueued(idx int, id string) error {
 	expr, err := buildPlayQueuedJS(idx, id)
 	if err != nil {

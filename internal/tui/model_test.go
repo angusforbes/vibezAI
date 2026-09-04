@@ -43,6 +43,7 @@ type mockPlayer struct {
 		Idx int
 		ID  string
 	}
+	syncCalls          []syncCall // every SyncQueue call, in order
 	appendQueueIDs     [][]string // all calls to AppendQueue (each call appended)
 	moveInQueueCalls   []struct{ From, To int }
 	removeFromQueueIdx []int // all calls to RemoveFromQueue, in call order
@@ -78,6 +79,18 @@ func (m *mockPlayer) SetQueueAt(ids []string, startID string) error {
 	m.setQueueAtStart = startID
 	return m.err
 }
+
+type syncCall struct {
+	IDs     []string
+	Current string
+	Play    string
+}
+
+func (m *mockPlayer) SyncQueue(ids []string, currentID, playID string) error {
+	m.syncCalls = append(m.syncCalls, syncCall{IDs: append([]string(nil), ids...), Current: currentID, Play: playID})
+	return m.err
+}
+
 func (m *mockPlayer) PlayQueued(idx int, id string) error {
 	m.playQueuedCalls = append(m.playQueuedCalls, struct {
 		Idx int
@@ -723,11 +736,9 @@ func TestHandleSearchKey_Enter_AppendsAndPlays(t *testing.T) {
 	if mp.setQueueIDs != nil {
 		t.Fatalf("Enter must never replace the queue, got SetQueue(%v)", mp.setQueueIDs)
 	}
-	if len(mp.appendQueueIDs) != 1 || mp.appendQueueIDs[0][0] != "99999" {
-		t.Fatalf("Enter should append the track, got %v", mp.appendQueueIDs)
-	}
-	if len(mp.playQueuedCalls) != 1 || mp.playQueuedCalls[0].Idx != 1 || mp.playQueuedCalls[0].ID != "99999" {
-		t.Fatalf("Enter should start the appended track, got %+v", mp.playQueuedCalls)
+	// The engine is re-synced to the new list in one step, starting the new track.
+	if len(mp.syncCalls) != 1 || len(mp.syncCalls[0].IDs) != 2 || mp.syncCalls[0].IDs[1] != "99999" || mp.syncCalls[0].Current != "1" || mp.syncCalls[0].Play != "99999" {
+		t.Fatalf("Enter should sync the queue and start the appended track, got %+v", mp.syncCalls)
 	}
 	if len(m.queueTracks) != 2 || m.queueTracks[0].Title != "Already" {
 		t.Fatalf("existing queue must be kept: %+v", m.queueTracks)
@@ -1263,8 +1274,8 @@ func TestModel_Update_PlayTracksMsg_WithPlaylistID_AppendsTracks(t *testing.T) {
 	if len(m.queueIDs) != 3 || m.queueIDs[0] != "k" {
 		t.Fatalf("playlist play must append, not replace: %v", m.queueIDs)
 	}
-	if len(mp.playQueuedCalls) != 1 || mp.playQueuedCalls[0].Idx != 2 || mp.playQueuedCalls[0].ID != "p2" {
-		t.Fatalf("should start at the playlist's start index within the appended block, got %+v", mp.playQueuedCalls)
+	if len(mp.syncCalls) != 1 || len(mp.syncCalls[0].IDs) != 3 || mp.syncCalls[0].Play != "p2" || mp.syncCalls[0].Current != "k" {
+		t.Fatalf("should sync and start at the playlist's start index within the appended block, got %+v", mp.syncCalls)
 	}
 }
 
@@ -1734,11 +1745,9 @@ func TestHandleNormalKey_R_StartRadio_SeedNotInQueue_InsertsAsPlayNext(t *testin
 		}
 	}
 
-	if len(mp.appendQueueIDs) != 1 || mp.appendQueueIDs[0][0] != "seedcat" {
-		t.Errorf("AppendQueue calls = %v, want [[seedcat]]", mp.appendQueueIDs)
-	}
-	if len(mp.moveInQueueCalls) != 1 || mp.moveInQueueCalls[0].From != 2 || mp.moveInQueueCalls[0].To != 0 {
-		t.Errorf("MoveInQueue calls = %v, want [{From:2 To:0}]", mp.moveInQueueCalls)
+	// Play-next re-syncs the engine with the seed inserted first.
+	if len(mp.syncCalls) != 1 || len(mp.syncCalls[0].IDs) != 3 || mp.syncCalls[0].IDs[0] != "seedcat" || mp.syncCalls[0].Play != "" {
+		t.Errorf("sync calls = %+v, want one with [seedcat qcat1 qcat2]", mp.syncCalls)
 	}
 }
 
@@ -3551,22 +3560,13 @@ func TestPlayNextCmd(t *testing.T) {
 		}
 	}
 
-	// Verify backend calls: AppendQueue followed by MoveInQueue calls
-	if len(plyr.appendQueueIDs) != 1 || plyr.appendQueueIDs[0][0] != "x2" || plyr.appendQueueIDs[0][1] != "y2" {
-		t.Errorf("expected AppendQueue([x2, y2]), got %v", plyr.appendQueueIDs)
+	// Verify the engine call: one sync with the new order, keeping B playing.
+	if len(plyr.syncCalls) != 1 {
+		t.Fatalf("expected one SyncQueue call, got %d", len(plyr.syncCalls))
 	}
-
-	// Track was originally 3 elements. New tracks appended at index 3 and 4.
-	// B is at index 1. Target insert index is 2.
-	// So we expect MoveInQueue(3, 2) followed by MoveInQueue(4, 3).
-	if len(plyr.moveInQueueCalls) != 2 {
-		t.Fatalf("expected 2 MoveInQueue calls, got %d", len(plyr.moveInQueueCalls))
-	}
-	if plyr.moveInQueueCalls[0].From != 3 || plyr.moveInQueueCalls[0].To != 2 {
-		t.Errorf("expected first MoveInQueue(3, 2), got MoveInQueue(%d, %d)", plyr.moveInQueueCalls[0].From, plyr.moveInQueueCalls[0].To)
-	}
-	if plyr.moveInQueueCalls[1].From != 4 || plyr.moveInQueueCalls[1].To != 3 {
-		t.Errorf("expected second MoveInQueue(4, 3), got MoveInQueue(%d, %d)", plyr.moveInQueueCalls[1].From, plyr.moveInQueueCalls[1].To)
+	sc := plyr.syncCalls[0]
+	if len(sc.IDs) != 5 || sc.IDs[2] != "x2" || sc.IDs[3] != "y2" || sc.Current != "b" || sc.Play != "" {
+		t.Errorf("unexpected sync call: %+v", sc)
 	}
 }
 

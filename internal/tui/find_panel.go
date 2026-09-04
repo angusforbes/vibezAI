@@ -117,17 +117,13 @@ func (m *Model) appendAndPlay(label string, tracks []provider.Track, ids []strin
 	m.queueFollow = true
 	m.queueCursor = target
 	m.ensureQueueCursorVisible()
-	appended := append([]string(nil), ids...)
 	targetID := ids[offset]
 	if m.playerState.Track == nil {
 		all := append([]string(nil), m.queueIDs...)
 		m.queueResumeIdx = noQueueCursor
 		return m.playerCmd(func(p player.Player) error { return p.SetQueueAt(all, targetID) })
 	}
-	return m.playerCmd(func(p player.Player) error {
-		if err := p.AppendQueue(appended); err != nil {
-			return err
-		}
-		return p.PlayQueued(target, targetID)
-	})
+	// One engine step: the list is re-synced by id and the new track starts
+	// only once it is in place (an append followed by a play-by-index raced).
+	return m.syncEngineQueue(targetID)
 }

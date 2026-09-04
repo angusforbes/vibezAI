@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/simone-vibes/vibez/internal/player"
+	"github.com/simone-vibes/vibez/internal/tui/views"
 )
 
 // Queue navigation in the main view.
@@ -119,6 +120,17 @@ func (m *Model) jumpToRandomQueued() tea.Cmd {
 	return m.jumpToQueueIndex(idx)
 }
 
+// syncEngineQueue makes the engine's queue match the model's after an edit.
+// The playing track is kept by id; playID, when set, starts that track.
+func (m *Model) syncEngineQueue(playID string) tea.Cmd {
+	ids := append([]string(nil), m.queueIDs...)
+	currentID := ""
+	if m.playerState.Track != nil {
+		currentID = views.PlaybackID(*m.playerState.Track)
+	}
+	return m.playerCmd(func(p player.Player) error { return p.SyncQueue(ids, currentID, playID) })
+}
+
 // clampQueueCursor keeps the highlight valid after queue edits: inside the
 // queue, and on the playing track while it is following playback.
 func (m *Model) clampQueueCursor() {
@@ -189,12 +201,17 @@ func (m *Model) removeQueueAt(idx int) tea.Cmd {
 		return nil
 	}
 	t := m.queueTracks[idx]
+	wasPlaying := idx == m.currentQueueIndex() && m.playerState.Track != nil
 	m.queueTracks = append(m.queueTracks[:idx], m.queueTracks[idx+1:]...)
 	m.queueIDs = append(m.queueIDs[:idx], m.queueIDs[idx+1:]...)
 	m.syncQueue()
 	m.appendLog(fmt.Sprintf("[queue] removed #%d: %s — %s", idx+1, t.Artist, t.Title))
-	i := idx
-	return m.playerCmd(func(p player.Player) error { return p.RemoveFromQueue(i) })
+	// Removing the playing track moves on to the one that took its place.
+	playID := ""
+	if wasPlaying && idx < len(m.queueIDs) {
+		playID = m.queueIDs[idx]
+	}
+	return m.syncEngineQueue(playID)
 }
 
 // moveQueueTrack swaps entry idx with its neighbour (delta -1 up, +1 down) in
@@ -212,8 +229,7 @@ func (m *Model) moveQueueTrack(idx, delta int) (int, tea.Cmd) {
 	} else {
 		m.appendLog(fmt.Sprintf("[queue] moved #%d down", idx+1))
 	}
-	from, dest := idx, to
-	return to, m.playerCmd(func(p player.Player) error { return p.MoveInQueue(from, dest) })
+	return to, m.syncEngineQueue("")
 }
 
 // handleQueueCursorKey handles the main-view keys that act on the highlighted
@@ -260,14 +276,14 @@ func (m *Model) handleQueueCursorKey(k string) (tea.Cmd, bool) {
 }
 
 // deleteQueueHead (ctrl+shift+d) removes everything above the highlighted
-// entry, which becomes the first in the queue. Entries are removed from the
-// engine highest index first; if the playing track is among them the engine
-// slides the highlighted entry into its slot and plays it, so playback moves
-// to the highlighted track rather than stopping.
+// entry, which becomes the first in the queue. If the playing track is among
+// them, playback moves to the highlighted entry.
 func (m *Model) deleteQueueHead(before int) tea.Cmd {
 	if before <= 0 || before >= len(m.queueTracks) || before >= len(m.queueIDs) {
 		return nil
 	}
+	cur := m.currentQueueIndex()
+	playingRemoved := m.playerState.Track != nil && cur >= 0 && cur < before
 	m.queueTracks = m.queueTracks[before:]
 	m.queueIDs = m.queueIDs[before:]
 	m.syncQueue()
@@ -275,14 +291,13 @@ func (m *Model) deleteQueueHead(before int) tea.Cmd {
 		m.setQueueCursor(0)
 	}
 	m.appendLog(fmt.Sprintf("[queue] removed the %d track(s) above position %d", before, before+1))
-	return m.playerCmd(func(p player.Player) error {
-		for i := before - 1; i >= 0; i-- {
-			if err := p.RemoveFromQueue(i); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	// If the playing track was among them, playback moves to the highlighted
+	// entry, now first in the queue.
+	playID := ""
+	if playingRemoved && len(m.queueIDs) > 0 {
+		playID = m.queueIDs[0]
+	}
+	return m.syncEngineQueue(playID)
 }
 
 // deleteQueueTail (shift+d) removes the highlighted entry and everything
@@ -292,7 +307,6 @@ func (m *Model) deleteQueueTail(from int) tea.Cmd {
 	if from < 0 || from >= len(m.queueTracks) || from >= len(m.queueIDs) {
 		return nil
 	}
-	last := len(m.queueTracks) - 1
 	includesPlaying := false
 	if cur := m.currentQueueIndex(); cur >= from && m.playerState.Track != nil {
 		includesPlaying = true
@@ -305,15 +319,6 @@ func (m *Model) deleteQueueTail(from int) tea.Cmd {
 		m.setQueueCursor(from - 1)
 	}
 	m.appendLog(fmt.Sprintf("[queue] removed %d track(s) from position %d to the end", removed, from+1))
-	return m.playerCmd(func(p player.Player) error {
-		for i := last; i >= from; i-- {
-			if err := p.RemoveFromQueue(i); err != nil {
-				return err
-			}
-		}
-		if includesPlaying {
-			return p.Stop()
-		}
-		return nil
-	})
+	// The engine stops by itself when the playing track is among the removed.
+	return m.syncEngineQueue("")
 }

@@ -112,6 +112,10 @@ func (m *MPRISPlayer) SetQueueAt(_ []string, _ string) error {
 	return errors.New("SetQueueAt is not supported via MPRIS")
 }
 
+func (m *MPRISPlayer) SyncQueue(_ []string, _, _ string) error {
+	return errors.New("SyncQueue is not supported via MPRIS")
+}
+
 func (m *MPRISPlayer) PlayQueued(_ int, _ string) error {
 	return errors.New("PlayQueued is not supported via MPRIS")
 }

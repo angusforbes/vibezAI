@@ -139,8 +139,8 @@ func TestQueueCursor_DRemovesHighlighted_EvenThePlayingOne(t *testing.T) {
 	if len(m.queueTracks) != 3 || m.queueTracks[2].Title != "Four" {
 		t.Fatalf("queue after d = %+v", m.queueTracks)
 	}
-	if len(mock.removeFromQueueIdx) != 1 || mock.removeFromQueueIdx[0] != 2 {
-		t.Fatalf("RemoveFromQueue calls = %v, want [2]", mock.removeFromQueueIdx)
+	if len(mock.syncCalls) != 1 || len(mock.syncCalls[0].IDs) != 3 || mock.syncCalls[0].Current != "2" || mock.syncCalls[0].Play != "" {
+		t.Fatalf("removing a non-playing track should just re-sync the engine, got %+v", mock.syncCalls)
 	}
 	if m.queueCursor != 2 {
 		t.Fatalf("cursor should stay on the next entry (2), got %d", m.queueCursor)
@@ -153,8 +153,8 @@ func TestQueueCursor_DRemovesHighlighted_EvenThePlayingOne(t *testing.T) {
 	if cmd := key(m, "d"); cmd != nil {
 		_ = cmd()
 	}
-	if len(m.queueTracks) != 2 || mock.removeFromQueueIdx[1] != 1 {
-		t.Fatalf("d on the playing track should remove it too: %+v / %v", m.queueTracks, mock.removeFromQueueIdx)
+	if len(m.queueTracks) != 2 || len(mock.syncCalls) != 2 || mock.syncCalls[1].Play != "4" {
+		t.Fatalf("d on the playing track should remove it and move on to the track that took its place: %+v / %+v", m.queueTracks, mock.syncCalls)
 	}
 }
 
@@ -167,8 +167,8 @@ func TestQueueCursor_KJMoveHighlightedTrack(t *testing.T) {
 	if m.queueTracks[1].Title != "Three" || m.queueIDs[1] != "3" || m.queueCursor != 1 {
 		t.Fatalf("K should move the entry up and follow it: %v cursor=%d", m.queueIDs, m.queueCursor)
 	}
-	if len(mock.moveInQueueCalls) != 1 || mock.moveInQueueCalls[0].From != 2 || mock.moveInQueueCalls[0].To != 1 {
-		t.Fatalf("MoveInQueue calls = %+v", mock.moveInQueueCalls)
+	if len(mock.syncCalls) != 1 || len(mock.syncCalls[0].IDs) != 4 || mock.syncCalls[0].IDs[1] != "3" || mock.syncCalls[0].Current != "2" {
+		t.Fatalf("moving should re-sync the engine with the new order, got %+v", mock.syncCalls)
 	}
 	if cmd := key(m, "J"); cmd != nil {
 		_ = cmd()
@@ -295,11 +295,8 @@ func TestR_InsertsFiveRelatedAfterHighlightedTrack(t *testing.T) {
 			t.Fatalf("queue ids = %v, want %v", m.queueIDs, want)
 		}
 	}
-	if len(mock.appendQueueIDs) != 1 || len(mock.appendQueueIDs[0]) != 5 {
-		t.Fatalf("engine should get one AppendQueue of 5 ids, got %v", mock.appendQueueIDs)
-	}
-	if len(mock.moveInQueueCalls) != 5 || mock.moveInQueueCalls[0].From != 4 || mock.moveInQueueCalls[0].To != 3 {
-		t.Fatalf("picks should be moved into place after the seed, got %+v", mock.moveInQueueCalls)
+	if len(mock.syncCalls) != 1 || len(mock.syncCalls[0].IDs) != 9 || mock.syncCalls[0].IDs[3] != "r1" || mock.syncCalls[0].Current != "2" || mock.syncCalls[0].Play != "" {
+		t.Fatalf("the insert should re-sync the engine with the picks after the seed, got %+v", mock.syncCalls)
 	}
 	if m.queueCursor != 2 {
 		t.Fatalf("highlight should stay on the seed (2), got %d", m.queueCursor)
@@ -367,11 +364,8 @@ func TestShiftD_CutsFromHighlightToEnd(t *testing.T) {
 	if len(m.queueTracks) != 2 || m.queueTracks[1].Title != "Two" {
 		t.Fatalf("queue after D = %+v, want [One Two]", m.queueTracks)
 	}
-	if len(mock.removeFromQueueIdx) != 2 || mock.removeFromQueueIdx[0] != 3 || mock.removeFromQueueIdx[1] != 2 {
-		t.Fatalf("RemoveFromQueue calls = %v, want [3 2] (highest first)", mock.removeFromQueueIdx)
-	}
-	if mock.stopCalled {
-		t.Fatal("playback must continue when the playing track was above the cut")
+	if len(mock.syncCalls) != 1 || len(mock.syncCalls[0].IDs) != 2 || mock.syncCalls[0].Current != "2" || mock.syncCalls[0].Play != "" {
+		t.Fatalf("the cut should re-sync the engine keeping the playing track, got %+v", mock.syncCalls)
 	}
 	if m.queueCursor != 1 {
 		t.Fatalf("highlight should move to the new last entry (1), got %d", m.queueCursor)
@@ -387,8 +381,10 @@ func TestShiftD_IncludingPlayingTrackStopsPlayback(t *testing.T) {
 	if len(m.queueTracks) != 1 || m.queueTracks[0].Title != "One" {
 		t.Fatalf("queue after D = %+v, want [One]", m.queueTracks)
 	}
-	if !mock.stopCalled {
-		t.Fatal("removing the playing track and everything below it should stop playback")
+	// The playing track is not in the synced list and nothing is asked to
+	// play, which is how the engine knows to stop.
+	if len(mock.syncCalls) != 1 || len(mock.syncCalls[0].IDs) != 1 || mock.syncCalls[0].Current != "2" || mock.syncCalls[0].Play != "" {
+		t.Fatalf("expected a sync without the playing track and no play id, got %+v", mock.syncCalls)
 	}
 	if m.queueCursor != 0 {
 		t.Fatalf("highlight should rest on the remaining entry, got %d", m.queueCursor)
@@ -404,11 +400,10 @@ func TestCtrlShiftD_CutsEverythingAboveHighlight(t *testing.T) {
 	if len(m.queueTracks) != 2 || m.queueTracks[0].Title != "Three" || m.queueTracks[1].Title != "Four" {
 		t.Fatalf("queue after ctrl+shift+d = %+v, want [Three Four]", m.queueTracks)
 	}
-	if len(mock.removeFromQueueIdx) != 2 || mock.removeFromQueueIdx[0] != 1 || mock.removeFromQueueIdx[1] != 0 {
-		t.Fatalf("RemoveFromQueue calls = %v, want [1 0] (highest first)", mock.removeFromQueueIdx)
-	}
-	if mock.stopCalled {
-		t.Fatal("cutting above must not stop playback")
+	// The playing track ("Two") was above the cut, so playback moves to the
+	// highlighted entry, now first.
+	if len(mock.syncCalls) != 1 || len(mock.syncCalls[0].IDs) != 2 || mock.syncCalls[0].Play != "3" {
+		t.Fatalf("expected a sync that starts the new first entry, got %+v", mock.syncCalls)
 	}
 	if m.queueCursor != 0 {
 		t.Fatalf("highlight should stay on the kept entry, now first (0), got %d", m.queueCursor)
@@ -421,7 +416,7 @@ func TestCtrlShiftD_OnFirstEntryIsNoop(t *testing.T) {
 	if cmd := key(m, "ctrl+shift+d"); cmd != nil {
 		_ = cmd()
 	}
-	if len(m.queueTracks) != 4 || len(mock.removeFromQueueIdx) != 0 {
+	if len(m.queueTracks) != 4 || len(mock.syncCalls) != 0 {
 		t.Fatal("nothing is above the first entry, so nothing should change")
 	}
 }

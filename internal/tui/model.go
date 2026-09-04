@@ -2805,19 +2805,7 @@ func (m *Model) playNextCmd(label string, tracks []provider.Track, ids []string)
 
 	m.appendLog(fmt.Sprintf("[queue] play next: %s (%d track(s))", label, len(tracks)))
 
-	return m.playerCmd(func(p player.Player) error {
-		if err := p.AppendQueue(ids); err != nil {
-			return err
-		}
-		for i := range len(ids) {
-			from := origLen + i
-			to := insertIdx + i
-			if err := p.MoveInQueue(from, to); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return m.syncEngineQueue("")
 }
 
 func (m *Model) adjustVolume(delta float64) tea.Cmd {

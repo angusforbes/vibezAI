@@ -7,7 +7,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/simone-vibes/vibez/internal/player"
 	"github.com/simone-vibes/vibez/internal/provider"
 	"github.com/simone-vibes/vibez/internal/tui/views"
 )
@@ -126,21 +125,5 @@ func (m *Model) insertQueueAt(insertIdx int, tracks []provider.Track, ids []stri
 		m.queueCursor += len(tracks)
 	}
 	m.syncQueue()
-	appended := append([]string(nil), ids...)
-	return m.playerCmd(func(p player.Player) error {
-		if err := p.AppendQueue(appended); err != nil {
-			return err
-		}
-		for i := range appended {
-			from := origLen + i
-			to := insertIdx + i
-			if from == to {
-				continue
-			}
-			if err := p.MoveInQueue(from, to); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return m.syncEngineQueue("")
 }
