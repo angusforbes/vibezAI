@@ -1179,9 +1179,13 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		m.mode = modeNormal
 		return nil
 	case "enter":
-		// "+ N more" / "− less" rows expand or collapse their section.
-		if section, ok := m.search.SelectedToggle(); ok {
-			m.search.ToggleSection(section)
+		// "+ 5 more" / "− 5 less" rows grow or shrink their section.
+		if section, more, ok := m.search.SelectedToggle(); ok {
+			if more {
+				m.search.ShowMore(section)
+			} else {
+				m.search.ShowLess(section)
+			}
 			return nil
 		}
 		// Track: add to the end of the queue and start it. Never replaces the queue.

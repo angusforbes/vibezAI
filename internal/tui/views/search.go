@@ -65,8 +65,9 @@ type searchRow struct {
 	track    *provider.Track
 	album    *provider.Album
 	playlist *provider.Playlist
-	toggle   bool // "+ N more" / "− less" row for a capped section
-	hidden   int  // items hidden behind the cap (toggle rows while collapsed)
+	toggle   bool // "+ 5 more" / "− 5 less" control row of a section
+	more     bool // toggle rows: true = the "more" control, false = "less"
+	step     int  // toggle rows: how many items the control would add or remove (0 = nothing to do)
 }
 
 // isItem reports whether this row is selectable (an item or a more/less toggle).
@@ -88,7 +89,7 @@ func rowLines(r searchRow) int {
 type SearchModel struct {
 	provider provider.Provider
 	results  *provider.SearchResult
-	expanded map[string]bool // sections showing everything instead of the first few
+	shown    map[string]int // items shown per section; absent = searchSectionCap
 	rows     []searchRow
 	cursor   int // row index of the currently highlighted item
 	scroll   int // index of the first rendered row
@@ -114,54 +115,10 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.loading = loading
 	m.err = err
 	m.results = result
-	m.expanded = nil // a new result set starts collapsed
+	m.shown = nil // a new result set starts at the default count per section
 	m.rebuildRows()
 	m.cursor = m.advance(-1, 1)
 	m.scroll = 0
-}
-
-// SelectedToggle reports the section whose more/less row is highlighted.
-func (m *SearchModel) SelectedToggle() (string, bool) {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || !m.rows[m.cursor].toggle {
-		return "", false
-	}
-	return m.rows[m.cursor].label, true
-}
-
-// ToggleSection expands or collapses a section and keeps the highlight on
-// its more/less row.
-func (m *SearchModel) ToggleSection(section string) {
-	if m.expanded == nil {
-		m.expanded = map[string]bool{}
-	}
-	m.expanded[section] = !m.expanded[section]
-	m.rebuildRows()
-	for i, r := range m.rows {
-		if r.toggle && r.label == section {
-			m.cursor = i
-			break
-		}
-	}
-	m.ensureCursorVisible()
-}
-
-// sectionRows appends a header, the visible items and, when the section is
-// capped, its more/less toggle.
-func (m *SearchModel) sectionRows(label string, total int, item func(i int) searchRow) {
-	if total == 0 {
-		return
-	}
-	n := total
-	if !m.expanded[label] {
-		n = min(total, searchSectionCap)
-	}
-	m.rows = append(m.rows, searchRow{header: true, label: label})
-	for i := range n {
-		m.rows = append(m.rows, item(i))
-	}
-	if total > searchSectionCap {
-		m.rows = append(m.rows, searchRow{toggle: true, label: label, hidden: total - n})
-	}
 }
 
 // SetState is kept for backward compatibility with callers that only have tracks.
@@ -173,8 +130,95 @@ func (m *SearchModel) SetState(tracks []provider.Track, loading bool, err error)
 	m.SetResults(result, loading, err)
 }
 
-// searchSectionCap is the most items shown per section. The panel is a
-// narrow column, so each section shows its best few matches.
+// SelectedToggle reports whether a section's "+ 5 more" (more=true) or
+// "− 5 less" (more=false) row is highlighted.
+func (m *SearchModel) SelectedToggle() (section string, more bool, ok bool) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || !m.rows[m.cursor].toggle {
+		return "", false, false
+	}
+	r := m.rows[m.cursor]
+	return r.label, r.more, true
+}
+
+// sectionTotal returns how many results a section has.
+func (m *SearchModel) sectionTotal(section string) int {
+	if m.results == nil {
+		return 0
+	}
+	switch section {
+	case "Playlists":
+		return len(m.results.Playlists)
+	case "Albums":
+		return len(m.results.Albums)
+	}
+	lib, cat := 0, 0
+	for _, t := range m.results.Tracks {
+		if isLibraryTrack(t) {
+			lib++
+		} else {
+			cat++
+		}
+	}
+	if section == "Library" {
+		return lib
+	}
+	return cat
+}
+
+// shownCount returns how many items of a section are currently shown.
+func (m *SearchModel) shownCount(section string, total int) int {
+	n, ok := m.shown[section]
+	if !ok {
+		n = searchSectionCap
+	}
+	return max(0, min(n, total))
+}
+
+// ShowMore reveals up to searchSectionCap further items of a section.
+func (m *SearchModel) ShowMore(section string) { m.adjustShown(section, searchSectionCap) }
+
+// ShowLess hides the last up-to-searchSectionCap items of a section; a
+// section can fold down to just its header and controls.
+func (m *SearchModel) ShowLess(section string) { m.adjustShown(section, -searchSectionCap) }
+
+func (m *SearchModel) adjustShown(section string, delta int) {
+	total := m.sectionTotal(section)
+	if total == 0 {
+		return
+	}
+	if m.shown == nil {
+		m.shown = map[string]int{}
+	}
+	m.shown[section] = max(0, min(total, m.shownCount(section, total)+delta))
+	more := delta > 0
+	m.rebuildRows()
+	for i, r := range m.rows {
+		if r.toggle && r.label == section && r.more == more {
+			m.cursor = i
+			break
+		}
+	}
+	m.ensureCursorVisible()
+}
+
+// sectionRows appends a header, the shown items and the two control rows.
+func (m *SearchModel) sectionRows(label string, total int, item func(i int) searchRow) {
+	if total == 0 {
+		return
+	}
+	n := m.shownCount(label, total)
+	m.rows = append(m.rows, searchRow{header: true, label: label})
+	for i := range n {
+		m.rows = append(m.rows, item(i))
+	}
+	m.rows = append(m.rows,
+		searchRow{toggle: true, label: label, more: true, step: min(searchSectionCap, total-n)},
+		searchRow{toggle: true, label: label, more: false, step: min(searchSectionCap, n)},
+	)
+}
+
+// searchSectionCap is how many items a section shows by default and the step
+// its "+ more" / "− less" controls add or remove.
 const searchSectionCap = 5
 
 // isLibraryTrack reports whether a search hit is the user's own library copy.
@@ -183,8 +227,8 @@ func isLibraryTrack(t provider.Track) bool {
 }
 
 // rebuildRows lays the results out as Playlists, Albums, Library (tracks the
-// user owns) and Tracks (catalog). Each section shows searchSectionCap items
-// until its "+ N more" row is used.
+// user owns) and Tracks (catalog). Each section starts at searchSectionCap
+// items and grows or shrinks in steps of five through its control rows.
 func (m *SearchModel) rebuildRows() {
 	m.rows = nil
 	if m.results == nil {
@@ -417,11 +461,21 @@ func (m *SearchModel) View() string {
 
 		switch {
 		case row.toggle:
-			label := "− less"
-			if row.hidden > 0 {
-				label = fmt.Sprintf("+ %d more", row.hidden)
+			var label string
+			switch {
+			case row.more && row.step > 0:
+				label = fmt.Sprintf("+ %d more", row.step)
+			case row.more:
+				label = "+ more (all shown)"
+			case row.step > 0:
+				label = fmt.Sprintf("− %d less", row.step)
+			default:
+				label = "− less (none shown)"
 			}
 			ts := tagStyle
+			if row.step == 0 {
+				ts = ts.Faint(true)
+			}
 			if sel {
 				ts = lipgloss.NewStyle().Foreground(currentAccent).Bold(true)
 			}
