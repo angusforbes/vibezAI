@@ -58,7 +58,7 @@ func (a *AboutModel) View() string {
 		normal.Render("Apple Music in your terminal."),
 		normal.Render("Vibe-driven. Keyboard-first."),
 		"",
-		secondary.Render("made with ")+styles.FavoriteActive.Render("❤")+secondary.Render(" by simonepelosi"),
+		secondary.Render("made with ") + styles.FavoriteActive.Render("❤") + secondary.Render(" by simonepelosi"),
 		"",
 		muted.Render("If you enjoy vibez, consider supporting its development:"),
 		primary.Render("☕ Donate on Ko-fi: ") + lipgloss.NewStyle().Foreground(styles.ColorSubtle).Underline(true).Render("https://ko-fi.com/pelpsi"),
