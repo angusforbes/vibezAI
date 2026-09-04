@@ -3186,9 +3186,10 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 		}
 		lines[sil] = centerStr(muted.Render("silence is not a vibe"), contentW)
 		if credit > sil {
-			// "♥" instead of the "❤️" emoji: the variation-selector form is measured as one
-			// cell but drawn as two by some terminals, which shifted the right border.
-			lines[credit] = centerStr(muted.Render("made with ♥ by simonepelosi · press ? for about"), contentW)
+			// U+2764 without the emoji variation selector: the "❤️" form is measured
+			// as one cell but drawn as two by some terminals, which shifted the
+			// right border. Coloured like the favourite heart so it stays red.
+			lines[credit] = centerStr(muted.Render("made with ")+styles.FavoriteActive.Render("❤")+muted.Render(" by simonepelosi · press ? for about"), contentW)
 		}
 		if m.errMsg != "" {
 			var errRendered string
