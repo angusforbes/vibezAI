@@ -1201,6 +1201,11 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		// Ctrl+/ as ctrl+_ (0x1F), so both spellings are accepted.
 		m.searchVibe = !m.searchVibe
 		if m.searchVibe {
+			// Look the text already typed up as a vibe right away, just as the
+			// other direction re-runs the regular search on it.
+			if m.searchQuery != "" {
+				return m.startVibeSearch(m.searchQuery)
+			}
 			return nil
 		}
 		m.vibeShown = ""

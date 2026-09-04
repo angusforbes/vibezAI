@@ -3995,3 +3995,20 @@ func TestHandleSearchKey_EnterInVibesModeFindsSongsThenActsOnRows(t *testing.T) 
 		t.Fatalf("a changed description must be looked up on Enter (cmd=%v shown=%q)", cmd != nil, m.vibeShown)
 	}
 }
+
+func TestHandleSearchKey_CtrlSlashWithTextStartsVibeLookup(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &mockProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.searchQuery = "rainy afternoon"
+	m.searchCursor = len(m.searchQuery)
+	cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl})
+	if cmd == nil || !m.searchVibe || m.vibeShown != "rainy afternoon" || !m.search.Loading() {
+		t.Fatalf("switching to vibes with text present must look it up at once (cmd=%v vibe=%v shown=%q loading=%v)", cmd != nil, m.searchVibe, m.vibeShown, m.search.Loading())
+	}
+	footer := strings.Join(m.statusLines(200), " ")
+	if strings.Contains(footer, "find songs") {
+		t.Fatalf("the typed text is already being looked up, so Enter is not a lookup: %q", footer)
+	}
+}
