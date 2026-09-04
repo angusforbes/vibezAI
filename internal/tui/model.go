@@ -307,7 +307,9 @@ type Model struct {
 	queueResumeIdx   int              // restored queue: track to start from on first play, -1 = none
 	queueCursor      int              // highlighted queue entry (-1 only while the queue is empty)
 	queueFollow      bool             // highlight tracks the playing song until the user moves it
-	findTab          findTab          // right column: search (default) or library
+	libraryCache     []provider.Track // the whole library, for random picks (ctrl+shift+r)
+	libraryCacheAt   time.Time        // when libraryCache was fetched
+	randomGen        int              // generation of the latest random-library pick
 	relatedGen       int              // generation of the latest R (related songs) lookup
 
 	// Discovery mode
@@ -420,7 +422,9 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	m.search = views.NewSearch(prov)
 	m.favorites = make(map[string]bool)
 	m.aboutP = &aboutPanel{m: views.NewAbout()}
-	m.panels = []ContentView{m.library, m.lyricsP, m.feedP, m.eqP, m.aboutP}
+	// The library browser panel is not offered (search covers the library);
+	// m.library is kept for the engine-ready wiring and message forwarding.
+	m.panels = []ContentView{m.lyricsP, m.feedP, m.eqP, m.aboutP}
 	m.restoreQueue()
 	if opts.Backend != "" {
 		m.appendLog("[engine] backend: " + opts.Backend)
@@ -1109,6 +1113,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case relatedResultMsg:
 		cmds = append(cmds, m.handleRelatedResult(msg))
+
+	case randomLibraryResultMsg:
+		cmds = append(cmds, m.handleRandomLibraryResult(msg))
 
 	case RestartMsg:
 		m.flushQueueState()
@@ -1924,18 +1931,6 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		return m.vibe.Update(msg)
 	}
 
-	if k == "L" {
-		m.library.m.ResetTopLevel()
-		for i, p := range m.panels {
-			if p == m.library {
-				m.activePanel = i
-				m.findTab = findLibrary
-				m.lastKey = ""
-				return nil
-			}
-		}
-	}
-
 	// Panel nav keys toggle their panel (always checked first).
 	for i, p := range m.panels {
 		if k == p.NavKey() {
@@ -1943,9 +1938,6 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 				m.activePanel = -1 // toggle off
 			} else {
 				m.activePanel = i
-				if p == m.library {
-					m.findTab = findLibrary
-				}
 				// Trigger a feed load when opening the feed panel for the first time.
 				if p == m.feedP && m.feedP.m.NeedsLoad() {
 					m.feedP.m.SetLoading()
@@ -2071,6 +2063,15 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		}
 		return m.fetchRelatedCmd(seed)
 
+	case "ctrl+shift+r", "ctrl+shift+R":
+		m.lastKey = ""
+		seed := m.playerState.Track
+		if m.activePanel < 0 && m.queueCursorActive() {
+			t := m.queueTracks[m.queueCursor]
+			seed = &t
+		}
+		return m.fetchRandomLibraryCmd(seed)
+
 	case "left":
 		m.lastKey = ""
 		if m.activePanel >= 0 {
@@ -2117,7 +2118,6 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	switch k {
 	case "/":
 		m.mode = modeSearch
-		m.findTab = findSearch
 
 	case "j", "down":
 		m.lastKey = ""
@@ -3392,6 +3392,7 @@ func (m *Model) statusPlayLines(w int) []string {
 		accent.Render("D/^⇧D") + muted.Render(" cut below/above"),
 		accent.Render("K/J") + muted.Render(" move"),
 		accent.Render("R") + muted.Render(" +5 related"),
+		accent.Render("^⇧R") + muted.Render(" +5 library"),
 		accent.Render("s") + muted.Render(" random"),
 		accent.Render("r") + muted.Render(" repeat"),
 		accent.Render("c") + muted.Render(" clear"),

@@ -12,44 +12,31 @@ import (
 	"github.com/simone-vibes/vibez/internal/tui/styles"
 )
 
-// The Find panel is the right column of the main view. It shows either the
-// Apple Music search (default) or the library; the queue on the left stays
-// visible the whole time. "/" focuses the search box and "l" the library; esc
-// hands the keys back to the queue but leaves the panel as it is. In both
-// tabs Tab adds the selected item to the end of the queue without playing it
-// and Enter adds it and starts it. Nothing in this panel ever replaces the
-// queue. The vibe prompt and the discovery picker borrow the column while
-// they have focus.
-
-type findTab int
-
-const (
-	findSearch findTab = iota
-	findLibrary
-)
+// The Find panel is the right column of the main view: Apple Music search,
+// with the queue on the left staying visible the whole time. "/" focuses the
+// search box; esc hands the keys back to the queue but leaves the query and
+// results as they are. Tab adds the selected item to the end of the queue
+// without playing it and Enter adds it and starts it; a track already in the
+// queue is never added twice. Nothing in this panel ever replaces the queue.
+// The vibe prompt and the discovery picker borrow the column while they have
+// focus. (The library browser is not wired in; search covers the library.)
 
 // findLines renders the right column.
 func (m *Model) findLines(w, h int) []string {
 	if m.vibe.IsFocused() || m.vibe.PickerActive() {
 		return m.vibe.Lines(w, h, m.glowStep)
 	}
-	if m.findTab == findLibrary {
-		return m.libraryFindLines(w, h)
-	}
 	return m.searchFindLines(w, h)
 }
 
-// findHeader is the tab strip: "Search · Library" with the active tab lit.
+// findHeader is the column title with the keys that matter.
 func (m *Model) findHeader() string {
 	muted := styles.QueueItemMuted
-	search, library := muted, muted
-	if m.findTab == findLibrary {
-		library = styles.Header
-	} else {
-		search = styles.Header
-	}
-	return search.Render("Search") + muted.Render("  ·  ") + library.Render("Library") +
-		muted.Render("     ") + styles.KeyName.Render("/") + muted.Render(" search  ") + styles.KeyName.Render("l") + muted.Render(" library")
+	return styles.Header.Render("Search") + muted.Render("     ") +
+		styles.KeyName.Render("/") + muted.Render(" type  ") +
+		styles.KeyName.Render("tab") + muted.Render(" add  ") +
+		styles.KeyName.Render("enter") + muted.Render(" add & play  ") +
+		styles.KeyName.Render("esc") + muted.Render(" back")
 }
 
 func (m *Model) searchFindLines(w, h int) []string {
@@ -75,20 +62,10 @@ func (m *Model) searchFindLines(w, h int) []string {
 		if m.searchQuery != "" {
 			listView = "  " + muted.Render("no results")
 		} else {
-			listView = "  " + muted.Render("press / and type to search Apple Music")
+			listView = "  " + muted.Render("press / and type to search Apple Music and your library")
 		}
 	}
 	lines := append([]string{m.findHeader(), inputLine, sep}, toLines(listView, listH)...)
-	for len(lines) < h {
-		lines = append(lines, "")
-	}
-	return lines[:h]
-}
-
-func (m *Model) libraryFindLines(w, h int) []string {
-	bodyH := max(1, h-1)
-	m.library.SetSize(w, bodyH)
-	lines := append([]string{m.findHeader()}, toLines(m.library.View(), bodyH)...)
 	for len(lines) < h {
 		lines = append(lines, "")
 	}

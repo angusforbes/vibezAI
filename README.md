@@ -51,7 +51,7 @@ Full tracks stream via Chrome with Widevine DRM. On Linux amd64, Chrome is auto-
 - **Browse your library** — playlists, albums, and tracks all in one place
 - **Real-time catalog search** — find any song, album, or artist from the full Apple Music catalog as you type
 - **Secure authentication** — MusicKit OAuth flow via an embedded Chrome window
-- **Find panel** — the right column is Apple Music search (`/`) or your library (`l`); the queue stays on screen while you browse. Results come as Playlists, Albums, Library (your own copies) and Tracks, five per section to start; a section shows a "+ 5 more" row while matches are hidden and a "− 5 less" row while any are shown (Enter on them grows or shrinks it in steps of five). Enter on a section title folds the whole section or opens it again. A track already in your queue is never added twice: Tab points at the queued copy and Enter plays it. Tab adds without playing, Enter adds and plays, and nothing there ever replaces your queue
+- **Find panel** — the right column is Apple Music search (`/`), which covers your library too; the queue stays on screen while you browse. Results come as Playlists, Albums, Library (your own copies) and Tracks, five per section to start; a section shows a "+ 5 more" row while matches are hidden and a "− 5 less" row while any are shown (Enter on them grows or shrinks it in steps of five). Enter on a section title folds the whole section or opens it again. A track already in your queue is never added twice: Tab points at the queued copy and Enter plays it. Tab adds without playing, Enter adds and plays, and nothing there ever replaces your queue
 
 ### 📋 Queue Management
 
@@ -260,7 +260,6 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | `e` | Toggle equalizer panel |
 | `R` | Insert five related songs after the playing track (once) |
 | `/` | Open search |
-| `l` | Toggle library panel |
 | `q` | Put the queue highlight back on the playing track (it follows playback until you move it) |
 | `↑` / `↓` (`k` / `j`) | Move the queue highlight without changing playback |
 | `space` | Play / pause |
@@ -271,6 +270,7 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | `shift+d` (with a highlighted entry) | Remove the highlighted entry and everything below it (stops playback if the playing track is among them) |
 | `ctrl+shift+d` (with a highlighted entry) | Remove everything above the highlighted entry (if the playing track is among them, playback moves to the highlighted entry) |
 | `R` (with a highlighted entry) | Insert five related songs after the highlighted entry (once) |
+| `ctrl+shift+r` | Insert five random songs from your library after the highlighted entry |
 | `c` | Clear the queue |
 | `:q` / `ctrl+c` | Quit |
 
