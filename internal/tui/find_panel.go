@@ -29,14 +29,10 @@ func (m *Model) findLines(w, h int) []string {
 	return m.searchFindLines(w, h)
 }
 
-// findHeader is the column title with the keys that matter.
+// findHeader is the column title, underlined like the Queue's; the keys are
+// listed in the footer.
 func (m *Model) findHeader() string {
-	muted := styles.QueueItemMuted
-	return styles.Header.Render("Search") + muted.Render("     ") +
-		styles.KeyName.Render("/") + muted.Render(" type  ") +
-		styles.KeyName.Render("tab") + muted.Render(" add  ") +
-		styles.KeyName.Render("enter") + muted.Render(" add & play  ") +
-		styles.KeyName.Render("esc") + muted.Render(" back")
+	return styles.Header.Render("Search")
 }
 
 func (m *Model) searchFindLines(w, h int) []string {
@@ -53,19 +49,15 @@ func (m *Model) searchFindLines(w, h int) []string {
 		cursor = accent.Render("█")
 	}
 	inputLine := accent.Render("/") + " " + before + cursor + after
-	sep := muted.Render(strings.Repeat("─", max(1, w)))
+	sep := styles.QueueItemMuted.Render(strings.Repeat("─", 5))
 
-	listH := max(1, h-3) // header + input + rule
+	listH := max(1, h-3) // header + underline + input
 	m.search.SetSize(w, listH)
 	listView := m.search.View()
-	if listView == "" && !m.search.Loading() {
-		if m.searchQuery != "" {
-			listView = "  " + muted.Render("no results")
-		} else {
-			listView = "  " + muted.Render("press / and type to search Apple Music and your library")
-		}
+	if listView == "" && !m.search.Loading() && m.searchQuery != "" {
+		listView = "  " + muted.Render("no results")
 	}
-	lines := append([]string{m.findHeader(), inputLine, sep}, toLines(listView, listH)...)
+	lines := append([]string{m.findHeader(), sep, inputLine}, toLines(listView, listH)...)
 	for len(lines) < h {
 		lines = append(lines, "")
 	}

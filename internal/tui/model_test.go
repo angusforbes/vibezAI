@@ -3796,3 +3796,26 @@ func TestHandleSearchKey_EnterOnTracksMore_ProviderCannotPage(t *testing.T) {
 		t.Fatal("a provider without paging must leave the panel as it is")
 	}
 }
+
+func TestSearchFindLines_TitleUnderlineInputOnly(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.search.SetSize(40, 10)
+	lines := m.searchFindLines(40, 8)
+	if len(lines) != 8 {
+		t.Fatalf("want 8 lines, got %d", len(lines))
+	}
+	if !strings.Contains(lines[0], "Search") || strings.Contains(lines[0], "tab") || strings.Contains(lines[0], "enter") {
+		t.Fatalf("header must be the bare title (keys live in the footer): %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "─────") || strings.Contains(lines[1], strings.Repeat("─", 6)) {
+		t.Fatalf("second line should be the five-dash underline like the Queue's: %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "/") {
+		t.Fatalf("third line should be the query input: %q", lines[2])
+	}
+	for _, l := range lines[3:] {
+		if strings.Contains(l, "press /") || strings.Contains(l, "type to search") {
+			t.Fatalf("no usage hint below the input: %q", l)
+		}
+	}
+}
