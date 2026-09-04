@@ -12,7 +12,7 @@ import (
 	"github.com/simone-vibes/vibez/internal/tui/views"
 )
 
-// Random songs from the user's library (ctrl+shift+r): pick randomLibraryCount
+// Random songs from the user's library (T): pick randomLibraryCount
 // library songs that are not queued yet and insert them right after the
 // highlighted track, the way R inserts related songs. The whole library list
 // is fetched once and cached for libraryCacheTTL so repeat presses are instant.
@@ -23,7 +23,7 @@ const (
 )
 
 // randomLibraryResultMsg carries the picks (and, after a fetch, the library
-// list to cache) for one ctrl+shift+r press.
+// list to cache) for one T press.
 type randomLibraryResultMsg struct {
 	gen    int
 	seed   *provider.Track

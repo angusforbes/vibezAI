@@ -436,7 +436,7 @@ func (p *libraryProvider) GetLibraryTracks(_ context.Context) ([]provider.Track,
 	return p.tracks, nil
 }
 
-func TestCtrlShiftR_InsertsFiveRandomLibrarySongsAfterHighlight(t *testing.T) {
+func TestShiftT_InsertsFiveRandomLibrarySongsAfterHighlight(t *testing.T) {
 	m, mock := navModel(t) // queue One Two Three Four, playing Two
 	lib := &libraryProvider{}
 	for i := range 12 {
@@ -446,9 +446,9 @@ func TestCtrlShiftR_InsertsFiveRandomLibrarySongsAfterHighlight(t *testing.T) {
 	m.provider = lib
 	key(m, "down") // highlight "Three" (index 2)
 
-	cmd := key(m, "ctrl+shift+r")
+	cmd := key(m, "T")
 	if cmd == nil {
-		t.Fatal("ctrl+shift+r should start a library pick")
+		t.Fatal("T should start a library pick")
 	}
 	msg := cmd()
 	res, ok := msg.(randomLibraryResultMsg)
@@ -481,7 +481,7 @@ func TestCtrlShiftR_InsertsFiveRandomLibrarySongsAfterHighlight(t *testing.T) {
 
 	// A second press within the cache window does not refetch and skips the
 	// five already added.
-	cmd = key(m, "ctrl+shift+r")
+	cmd = key(m, "T")
 	res2, _ := cmd().(randomLibraryResultMsg)
 	if lib.calls != 1 || res2.all != nil {
 		t.Fatalf("the cached library should be reused, fetch calls=%d", lib.calls)

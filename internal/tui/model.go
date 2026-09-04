@@ -319,7 +319,7 @@ type Model struct {
 	queueResumeIdx   int              // restored queue: track to start from on first play, -1 = none
 	queueCursor      int              // highlighted queue entry (-1 only while the queue is empty)
 	queueFollow      bool             // highlight tracks the playing song until the user moves it
-	libraryCache     []provider.Track // the whole library, for random picks (ctrl+shift+r)
+	libraryCache     []provider.Track // the whole library, for random picks (T)
 	libraryCacheAt   time.Time        // when libraryCache was fetched
 	randomGen        int              // generation of the latest random-library pick
 	relatedGen       int              // generation of the latest R (related songs) lookup
@@ -2099,7 +2099,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		}
 		return m.fetchRelatedCmd(seed)
 
-	case "ctrl+shift+r", "ctrl+shift+R":
+	case "T":
 		m.lastKey = ""
 		seed := m.playerState.Track
 		if m.activePanel < 0 && m.queueCursorActive() {
@@ -3449,7 +3449,7 @@ func (m *Model) statusPlayLines(w int) []string {
 		accent.Render("D/^⇧D") + muted.Render(" cut below/above"),
 		accent.Render("K/J") + muted.Render(" move"),
 		accent.Render("R") + muted.Render(" +5 related"),
-		accent.Render("^⇧R") + muted.Render(" +5 library"),
+		accent.Render("⇧T") + muted.Render(" +5 library"),
 		accent.Render("s") + muted.Render(" random"),
 		accent.Render("r") + muted.Render(" repeat"),
 		accent.Render("c") + muted.Render(" clear"),
