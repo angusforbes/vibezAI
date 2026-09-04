@@ -9,8 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The separate queue panel is gone** — its keys rerouted everything (`s` became "save", `space` did nothing, `R` seeded from the row), which made the same-looking list behave differently depending on how you got there. The queue under Now Playing is now the only queue view; its former extras live on as `c` (clear) and `:save <name>`.
+- **Radio no longer drops queued tracks** — starting a station used to remove everything queued after the seed. It now leaves the queue alone and appends its picks after what is already lined up; a seed that is not queued is still inserted as the next track.
+
 ### Added
-- **Navigate the queue from the main view** — the mini-queue under Now Playing has a cursor: `↑`/`↓` (or `k`/`j`) highlight an entry without touching playback, `space` or `enter` jumps to the highlighted track with the whole queue left in place (the queue panel's `enter` still drops the entries above), `d` (also `x`/`delete`) removes it, `K`/`J` move it, `gg`/`G` jump to the ends and `esc` drops the highlight so the list follows the playing track again. `n`/`p` still skip immediately. `d` without a highlighted entry keeps toggling discovery mode. The dedicated queue panel (`q`) is unchanged and shares the same code paths.
+- **Navigate the queue from the main view** — the mini-queue under Now Playing has a cursor: `↑`/`↓` (or `k`/`j`) highlight an entry without touching playback, `space` or `enter` jumps to the highlighted track with the whole queue left in place (the queue panel's `enter` still drops the entries above), `d` (also `x`/`delete`) removes it, `K`/`J` move it, `gg`/`G` jump to the ends and `esc` drops the highlight so the list follows the playing track again. `n`/`p` still skip immediately, and every other key behaves exactly as without a highlight. `d` without a highlighted entry keeps toggling discovery mode. `q` highlights the playing track (or drops the highlight) and `c` clears the queue.
 - **The queue survives quitting vibez** — the playback queue is saved to `~/.config/vibez/queue.json` (next to `config.json`, owner-only permissions, written atomically) whenever it changes and again on exit, and is shown again on the next launch without starting playback. Press `space` to resume from the track that was playing with the whole queue intact. The engine's queue is only filled on that first play, so a relaunch never plays by itself. Radio and discovery modes are session state and are not restored.
 
 ## [0.7.0] — 2026-08-29

@@ -416,7 +416,7 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	m.search = views.NewSearch(prov)
 	m.favorites = make(map[string]bool)
 	m.aboutP = &aboutPanel{m: views.NewAbout()}
-	m.panels = []ContentView{m.library, m.queue, m.lyricsP, m.feedP, m.eqP, m.aboutP}
+	m.panels = []ContentView{m.library, m.lyricsP, m.feedP, m.eqP, m.aboutP}
 	m.restoreQueue()
 	if opts.Backend != "" {
 		m.appendLog("[engine] backend: " + opts.Backend)
@@ -1779,55 +1779,21 @@ func (m *Model) startRadioFrom(seed *provider.Track) tea.Cmd {
 	m.radio.triggeredForID = ""
 	m.radio.retries = 0
 	m.appendLog(fmt.Sprintf("[radio] started from %q", seed.Title))
-	return tea.Batch(m.dropQueueAfter(seed), m.runRadioSearch())
+	return tea.Batch(m.ensureSeedQueued(seed), m.runRadioSearch())
 }
 
-// dropQueueAfter removes any tracks queued after seed's position so a
-// freshly started radio session plays next, rather than waiting for
-// whatever was already lined up (e.g. the rest of an album) to finish —
-// the last-track refill trigger otherwise never fires until that happens.
-// Tracks up to and including seed are left alone. If seed isn't in the
-// queue at all (e.g. seeded from a search result), it's inserted as the
-// next track to play instead.
-func (m *Model) dropQueueAfter(seed *provider.Track) tea.Cmd {
+// ensureSeedQueued makes sure the radio seed is in the queue. A seed that is
+// already queued (usually the playing track) is left where it is and nothing
+// else is touched: radio picks are appended after whatever is lined up. A seed
+// that is not queued (e.g. from a search result) is inserted as the next track.
+func (m *Model) ensureSeedQueued(seed *provider.Track) tea.Cmd {
 	seedID := views.PlaybackID(*seed)
-	seedIdx := -1
-	for i, t := range m.queueTracks {
+	for _, t := range m.queueTracks {
 		if views.PlaybackID(t) == seedID {
-			seedIdx = i
-			break
+			return nil
 		}
 	}
-	if seedIdx < 0 {
-		return m.playNextCmd(seed.Artist+" — "+seed.Title, []provider.Track{*seed}, []string{seedID})
-	}
-	origLen := len(m.queueTracks)
-	if seedIdx == origLen-1 {
-		return nil
-	}
-	// Blacklist the dropped tracks so the imminent radio refill can't hand
-	// them right back — station results are often the very same tracks
-	// (same album/playlist context as the seed), and the refill's dedup
-	// only checks what's still in the queue.
-	if m.radio.skipped == nil {
-		m.radio.skipped = make(map[string]bool)
-	}
-	for _, t := range m.queueTracks[seedIdx+1:] {
-		m.radio.skipped[views.PlaybackID(t)] = true
-		m.radio.skipped[strings.ToLower(t.Artist+"||"+t.Title)] = true
-	}
-	m.queueTracks = m.queueTracks[:seedIdx+1]
-	m.queueIDs = m.queueIDs[:seedIdx+1]
-	m.syncQueue()
-	m.appendLog(fmt.Sprintf("[radio] dropped %d queued track(s) ahead of the seed", origLen-seedIdx-1))
-	return m.playerCmd(func(p player.Player) error {
-		for i := origLen - 1; i > seedIdx; i-- {
-			if err := p.RemoveFromQueue(i); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return m.playNextCmd(seed.Artist+" — "+seed.Title, []provider.Track{*seed}, []string{seedID})
 }
 
 // stopRadio disables radio mode and clears its state.
@@ -1998,64 +1964,6 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		return nil
 	}
 
-	// Queue panel keys take priority over global controls when queue is active.
-	if m.activePanel >= 0 && m.panels[m.activePanel] == m.queue {
-		if k == "esc" {
-			m.activePanel = -1
-			m.lastKey = ""
-			return nil
-		}
-		switch k {
-		case "enter":
-			if idx, t := m.queue.SelectedTrack(); t != nil {
-				return m.playQueueFrom(idx)
-			}
-		case "d":
-			if idx, _ := m.queue.SelectedTrack(); idx >= 0 {
-				return m.removeQueueAt(idx)
-			}
-		case "K", "shift+up", "ctrl+up":
-			if idx, _ := m.queue.SelectedTrack(); idx > 0 {
-				newIdx, cmd := m.moveQueueTrack(idx, -1)
-				m.queue.Select(newIdx)
-				return cmd
-			}
-		case "J", "shift+down", "ctrl+down":
-			if idx, _ := m.queue.SelectedTrack(); idx >= 0 && idx < len(m.queueTracks)-1 {
-				newIdx, cmd := m.moveQueueTrack(idx, 1)
-				m.queue.Select(newIdx)
-				return cmd
-			}
-		case "c":
-			m.appendLog("[queue] cleared")
-			m.queueTracks = nil
-			m.queueIDs = nil
-			m.syncQueue()
-			return m.playerCmd(func(p player.Player) error { return p.ClearQueue() })
-		case "s":
-			m.mode = modeCommand
-			m.cmdBuf = "save "
-			return nil
-		case "p":
-			// Open the playlist picker for the highlighted queue track.
-			if _, t := m.queue.SelectedTrack(); t != nil {
-				return m.openPlaylistPicker(t)
-			}
-		case "R":
-			if m.radio.enabled {
-				m.stopRadio()
-				return nil
-			}
-			// Start radio seeded by the highlighted queue track.
-			if _, t := m.queue.SelectedTrack(); t != nil {
-				return m.startRadioFrom(t)
-			}
-		default:
-			return m.queue.Update(msg)
-		}
-		return nil
-	}
-
 	if m.activePanel >= 0 && m.panels[m.activePanel] == m.eqP {
 		switch k {
 		case "esc":
@@ -2181,7 +2089,12 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 			m.stopRadio()
 			return nil
 		}
-		return m.startRadioFrom(m.playerState.Track)
+		seed := m.playerState.Track
+		if m.activePanel < 0 && m.queueCursorActive() {
+			t := m.queueTracks[m.queueCursor]
+			seed = &t
+		}
+		return m.startRadioFrom(seed)
 
 	case "left":
 		m.lastKey = ""
@@ -2244,6 +2157,14 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	case "esc":
 		m.lastKey = ""
 		m.clearQueueCursor()
+
+	case "q":
+		m.lastKey = ""
+		m.toggleQueueHighlight()
+
+	case "c":
+		m.lastKey = ""
+		return m.clearQueue()
 
 	case "g":
 		if m.lastKey == "g" {
@@ -2968,12 +2889,11 @@ func (m *Model) renderBoxLayout() string {
 	rightW := inner - splitW - 1 // right column inner width (-1 for │ divider)
 
 	libraryActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.library
-	queueActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.queue
 	lyricsActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.lyricsP
 	feedActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.feedP
 	eqActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.eqP
 	aboutActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.aboutP
-	fullWidth := libraryActive || queueActive || lyricsActive || feedActive || eqActive || aboutActive || m.mode == modeSearch || m.mode == modeCommand || m.debugView
+	fullWidth := libraryActive || lyricsActive || feedActive || eqActive || aboutActive || m.mode == modeSearch || m.mode == modeCommand || m.debugView
 
 	var sb strings.Builder
 
@@ -3015,11 +2935,6 @@ func (m *Model) renderBoxLayout() string {
 	case libraryActive:
 		m.library.SetSize(inner-2, panelH)
 		for _, line := range toLines(m.library.View(), panelH) {
-			sb.WriteString("│ " + padRight(line, inner-2) + " │\n")
-		}
-	case queueActive:
-		m.queue.m.SetSize(inner-2, panelH)
-		for _, line := range toLines(m.queue.View(), panelH) {
 			sb.WriteString("│ " + padRight(line, inner-2) + " │\n")
 		}
 	case lyricsActive:
@@ -3515,17 +3430,6 @@ func (m *Model) statusNavLines(w int) []string {
 				accent.Render("Enter") + muted.Render(" search"),
 				accent.Render("esc") + muted.Render(" cancel"),
 			}
-		case m.activePanel >= 0 && m.panels[m.activePanel] == m.queue:
-			parts = []string{
-				styles.ModeNormal.Render("QUEUE"),
-				accent.Render("Enter") + muted.Render(" play"),
-				accent.Render("d") + muted.Render(" remove"),
-				accent.Render("Shift+↑/↓ / K/J") + muted.Render(" move"),
-				accent.Render("p") + muted.Render(" add to playlist"),
-				accent.Render("c") + muted.Render(" clear"),
-				accent.Render("s") + muted.Render(" :save"),
-				accent.Render("esc") + muted.Render(" close"),
-			}
 		case m.activePanel >= 0 && m.panels[m.activePanel] == m.library:
 			parts = []string{
 				styles.ModeNormal.Render("LIBRARY"),
@@ -3611,7 +3515,8 @@ func (m *Model) statusPlayLines(w int) []string {
 			accent.Render("spc/enter") + muted.Render(" play it"),
 			accent.Render("d") + muted.Render(" remove"),
 			accent.Render("K/J") + muted.Render(" move"),
-			accent.Render("gg/G") + muted.Render(" top/end"),
+			accent.Render("R") + muted.Render(" radio from it"),
+			accent.Render("c") + muted.Render(" clear all"),
 			accent.Render("esc") + muted.Render(" done"),
 		}
 		return wrapFit(parts, dot, w)
@@ -3620,7 +3525,7 @@ func (m *Model) statusPlayLines(w int) []string {
 	parts := []string{
 		accent.Render("spc") + muted.Render(" play/pause"),
 		accent.Render("n/p") + muted.Render(" next/prev"),
-		accent.Render("↑/↓") + muted.Render(" queue"),
+		accent.Render("↑/↓ q") + muted.Render(" queue"),
 		accent.Render("←/→") + muted.Render(" seek ±10s"),
 		accent.Render("f") + muted.Render(" fav"),
 		accent.Render("s") + muted.Render(" shuffle"),

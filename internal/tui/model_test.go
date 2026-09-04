@@ -356,10 +356,11 @@ func TestModel_Update_KeySearchSetsContent(t *testing.T) {
 
 func TestModel_Update_KeyQuit_NilPlayer(t *testing.T) {
 	m := newModel(nil)
-	// 'q' now opens the queue panel (not quit)
+	// 'q' highlights the playing queue entry; it neither quits nor opens a
+	// panel, and with nothing queued it is a no-op.
 	m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
-	if m.activePanel < 0 {
-		t.Error("q key should activate the queue panel")
+	if m.activePanel >= 0 || m.queueCursorActive() {
+		t.Error("q with an empty queue should do nothing")
 	}
 }
 
@@ -1654,7 +1655,7 @@ func TestHandleNormalKey_R_StartRadio(t *testing.T) {
 // because radio only appended new tracks once the current track became the
 // *last* queued item. Radio should instead drop everything queued after the
 // seed so its picks play next.
-func TestHandleNormalKey_R_StartRadio_DropsRestOfQueue(t *testing.T) {
+func TestHandleNormalKey_R_StartRadio_KeepsRestOfQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	track2 := provider.Track{Title: "Track 2", Artist: "Artist", ID: "t2", CatalogID: "cat2"}
@@ -1672,30 +1673,15 @@ func TestHandleNormalKey_R_StartRadio_DropsRestOfQueue(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a cmd")
 	}
-	// startRadioFrom batches dropQueueAfter's RemoveFromQueue command with
-	// runRadioSearch's — drive both from the resulting BatchMsg.
-	msg := cmd()
-	batch, ok := msg.(tea.BatchMsg)
-	if !ok {
-		t.Fatalf("cmd() = %T, want tea.BatchMsg", msg)
+	if !m.radio.enabled || m.radio.seed == nil || m.radio.seed.ID != "t2" {
+		t.Fatalf("radio should be enabled and seeded by the playing track, got enabled=%v seed=%+v", m.radio.enabled, m.radio.seed)
 	}
-	for _, sub := range batch {
-		if sub != nil {
-			sub()
-		}
+	// Radio only appends: everything already queued stays, nothing is removed.
+	if len(m.queueTracks) != 4 || len(m.queueIDs) != 4 {
+		t.Errorf("queue must be untouched, got %d tracks / %d ids", len(m.queueTracks), len(m.queueIDs))
 	}
-
-	if len(m.queueTracks) != 2 || m.queueTracks[1].ID != "t2" {
-		t.Errorf("queueTracks = %+v, want only the played-through tracks (t1, t2) kept", m.queueTracks)
-	}
-	if len(m.queueIDs) != 2 {
-		t.Errorf("queueIDs = %v, want 2 remaining", m.queueIDs)
-	}
-	if len(mp.removeFromQueueIdx) != 2 {
-		t.Fatalf("RemoveFromQueue calls = %v, want 2 (indices 3 then 2)", mp.removeFromQueueIdx)
-	}
-	if mp.removeFromQueueIdx[0] != 3 || mp.removeFromQueueIdx[1] != 2 {
-		t.Errorf("RemoveFromQueue calls = %v, want [3, 2] (highest index first)", mp.removeFromQueueIdx)
+	if len(mp.removeFromQueueIdx) != 0 {
+		t.Errorf("RemoveFromQueue must not be called, got %v", mp.removeFromQueueIdx)
 	}
 }
 
@@ -1707,7 +1693,7 @@ func TestHandleNormalKey_R_StartRadio_DropsRestOfQueue(t *testing.T) {
 // the seed's album/playlist context) handed them right back — radio looked
 // like it was doing nothing. Dropped tracks must be blacklisted so a refill
 // can't re-add them.
-func TestHandleNormalKey_R_StartRadio_DroppedTracksExcludedFromRefill(t *testing.T) {
+func TestHandleNormalKey_R_StartRadio_RefillSkipsTracksAlreadyQueued(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	track2 := provider.Track{Title: "Track 2", Artist: "Artist", ID: "t2", CatalogID: "cat2"}
@@ -1726,15 +1712,12 @@ func TestHandleNormalKey_R_StartRadio_DroppedTracksExcludedFromRefill(t *testing
 	if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R"); cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a cmd")
 	}
-
-	for _, dropped := range []provider.Track{track3, track4} {
-		if !m.radio.skipped[views.PlaybackID(dropped)] {
-			t.Errorf("radio.skipped missing dropped track %q (id=%s)", dropped.Title, views.PlaybackID(dropped))
-		}
+	if len(m.radio.skipped) != 0 {
+		t.Errorf("nothing is dropped any more, so nothing should be blacklisted: %v", m.radio.skipped)
 	}
 
-	// Simulate the imminent refill's station response echoing the two
-	// dropped tracks back alongside one genuinely new pick.
+	// The station response echoes two tracks that are still queued plus one
+	// new pick: only the new pick is appended, after everything lined up.
 	newTrack := provider.Track{Title: "New Pick", Artist: "Artist", ID: "t5", CatalogID: "cat5"}
 	m.Update(vibeResultMsg{
 		radio:    true,
@@ -1742,11 +1725,11 @@ func TestHandleNormalKey_R_StartRadio_DroppedTracksExcludedFromRefill(t *testing
 		tracks:   []provider.Track{track3, track4, newTrack},
 	})
 
-	if len(m.queueTracks) != 3 {
-		t.Fatalf("queueTracks = %+v, want 3 (t1, t2, New Pick) — dropped tracks must not return", m.queueTracks)
+	if len(m.queueTracks) != 5 {
+		t.Fatalf("queueTracks = %+v, want 5 (t1..t4 kept, New Pick appended)", m.queueTracks)
 	}
-	if got := m.queueTracks[2].Title; got != "New Pick" {
-		t.Errorf("queueTracks[2] = %q, want %q", got, "New Pick")
+	if got := m.queueTracks[4].Title; got != "New Pick" {
+		t.Errorf("queueTracks[4] = %q, want %q", got, "New Pick")
 	}
 }
 
@@ -1875,52 +1858,6 @@ func TestHandleNormalKey_R_StopsDiscovery(t *testing.T) {
 	}
 }
 
-func TestHandleNormalKey_QueuePanel_R_StartRadioFromSelected(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	m.queueTracks = []provider.Track{
-		{Title: "A", Artist: "AA", ID: "a1", CatalogID: "cat1"},
-		{Title: "B", Artist: "BB", ID: "b1", CatalogID: "cat2"},
-	}
-	m.queueIDs = []string{"cat1", "cat2"}
-	m.queue.SetTracks(m.queueTracks)
-
-	// Open queue panel.
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'q', Text: "q"}, "q")
-
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R")
-	if cmd == nil {
-		t.Fatal("R on a selected queue track should start radio")
-	}
-	if !m.radio.enabled {
-		t.Error("radio should be enabled after R on a queue track")
-	}
-	if m.radio.seed == nil || m.radio.seed.Title != "A" {
-		t.Errorf("radio.seed = %+v, want the selected queue track", m.radio.seed)
-	}
-}
-
-func TestHandleNormalKey_QueuePanel_R_StopRadioWhenActive(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	m.radio.enabled = true
-	m.radio.seed = &provider.Track{ID: "seed"}
-	m.queueTracks = []provider.Track{{Title: "A", Artist: "AA", ID: "a1", CatalogID: "cat1"}}
-	m.queueIDs = []string{"cat1"}
-	m.queue.SetTracks(m.queueTracks)
-
-	// Open queue panel.
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'q', Text: "q"}, "q")
-
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R")
-	if cmd != nil {
-		t.Error("R in queue panel while radio is active should stop radio without starting a search")
-	}
-	if m.radio.enabled {
-		t.Error("R in queue panel should stop active radio")
-	}
-}
-
 func TestHandleSearchKey_CtrlR_StartRadioFromSelected(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
@@ -1982,14 +1919,6 @@ func TestHandleNormalKey_L_ToggleOff(t *testing.T) {
 	}
 }
 
-func TestHandleNormalKey_Q_ToggleQueuePanel(t *testing.T) {
-	m := newModel(newMockPlayer())
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'q', Text: "q"}, "q")
-	if m.activePanel < 0 {
-		t.Error("q key should open queue panel")
-	}
-}
-
 func TestHandleNormalKey_DebugView_J_ScrollDown(t *testing.T) {
 	m := newModel(nil)
 	m.debugView = true
@@ -2026,43 +1955,6 @@ func TestHandleNormalKey_DebugView_Esc_CloseView(t *testing.T) {
 	m.handleNormalKey(tea.KeyPressMsg{Code: tea.KeyEsc}, "esc")
 	if m.debugView {
 		t.Error("esc in debug view should close it")
-	}
-}
-
-func TestHandleNormalKey_QueuePanel_Esc_ClosePanel(t *testing.T) {
-	m := newModel(newMockPlayer())
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'q', Text: "q"}, "q") // open queue
-	idx := m.activePanel
-	if idx < 0 {
-		t.Skip("queue panel not available")
-	}
-	m.handleNormalKey(tea.KeyPressMsg{Code: tea.KeyEsc}, "esc")
-	if m.activePanel >= 0 {
-		t.Error("esc should close queue panel")
-	}
-}
-
-func TestHandleNormalKey_QueuePanel_C_ClearQueue(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	m.queueTracks = []provider.Track{{Title: "T", ID: "1"}}
-	m.queueIDs = []string{"1"}
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'q', Text: "q"}, "q") // open queue
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'c', Text: "c"}, "c")
-	if cmd != nil {
-		cmd()
-	}
-	if len(m.queueTracks) != 0 {
-		t.Error("c in queue panel should clear queue tracks")
-	}
-}
-
-func TestHandleNormalKey_QueuePanel_S_OpenSaveCommand(t *testing.T) {
-	m := newModel(newMockPlayer())
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'q', Text: "q"}, "q")
-	m.handleNormalKey(tea.KeyPressMsg{Code: 's', Text: "s"}, "s")
-	if m.mode != modeCommand || !strings.HasPrefix(m.cmdBuf, "save ") {
-		t.Error("s in queue panel should open command mode with 'save ' prefilled")
 	}
 }
 
@@ -3171,21 +3063,6 @@ func TestModel_View_DebugLog(t *testing.T) {
 	_ = view // should not panic
 }
 
-func TestModel_View_WithQueuePanel(t *testing.T) {
-	m := newModel(newMockPlayer())
-	m.width = 120
-	m.height = 30
-	// Activate queue panel.
-	for i, p := range m.panels {
-		if p.NavKey() == "q" {
-			m.activePanel = i
-			break
-		}
-	}
-	view := m.View()
-	_ = view // should not panic
-}
-
 func TestModel_View_WithLibraryPanel(t *testing.T) {
 	m := newModel(nil)
 	m.width = 120
@@ -3220,47 +3097,6 @@ func TestModel_Init_WithPlayer(t *testing.T) {
 }
 
 // ─── handleNormalKey queue panel: enter, d, K, J ──────────────────────────────
-
-func TestHandleNormalKey_QueuePanel_Enter_WithSelection(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	// Set up a queue.
-	m.queueTracks = []provider.Track{
-		{Title: "A", Artist: "AA", CatalogID: "cat1"},
-		{Title: "B", Artist: "BB", CatalogID: "cat2"},
-	}
-	m.queueIDs = []string{"cat1", "cat2"}
-
-	// Open queue panel.
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'q', Text: "q"}, "q")
-
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: tea.KeyEnter}, "enter")
-	if cmd != nil {
-		cmd()
-	}
-}
-
-func TestHandleNormalKey_QueuePanel_D_RemoveTrack(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	m.queueTracks = []provider.Track{
-		{Title: "Remove Me", Artist: "A", ID: "r1", CatalogID: "cat1"},
-		{Title: "Keep Me", Artist: "B", ID: "r2", CatalogID: "cat2"},
-	}
-	m.queueIDs = []string{"cat1", "cat2"}
-	m.queue.SetTracks(m.queueTracks)
-
-	// Open queue panel.
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'q', Text: "q"}, "q")
-
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'd', Text: "d"}, "d")
-	if cmd != nil {
-		cmd()
-	}
-	if len(m.queueTracks) != 1 {
-		t.Errorf("queue should have 1 track after d-delete, got %d", len(m.queueTracks))
-	}
-}
 
 func TestHandleNormalKey_G_DoubleTap(t *testing.T) {
 	m := newModel(nil)
@@ -3359,37 +3195,6 @@ func TestQualityLabel(t *testing.T) {
 
 // TestPlaylistPicker_OpenFromQueue verifies that pressing 'p' in the queue panel
 // when a track is selected transitions to modePlaylistPicker.
-func TestPlaylistPicker_OpenFromQueue(t *testing.T) {
-	m := newModel(newMockPlayer())
-	track := provider.Track{ID: "t1", Title: "Bohemian Rhapsody", Artist: "Queen"}
-	m.queueTracks = []provider.Track{track}
-	m.queueIDs = []string{"t1"}
-	m.queue.m.SetTracks(m.queueTracks)
-
-	// Activate queue panel.
-	m2, _ := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
-	m = m2.(*Model)
-	if m.mode != modeNormal {
-		t.Fatalf("expected modeNormal after activating queue, got %d", m.mode)
-	}
-
-	// Press 'p' to open playlist picker.
-	m3, _ := m.Update(tea.KeyPressMsg{Code: 'p', Text: "p"})
-	m = m3.(*Model)
-
-	if m.mode != modePlaylistPicker {
-		t.Fatalf("expected modePlaylistPicker after pressing p in queue, got %d", m.mode)
-	}
-	if m.playlistPickerTrack == nil || m.playlistPickerTrack.ID != "t1" {
-		t.Errorf("expected picker track ID t1, got %v", m.playlistPickerTrack)
-	}
-	if m.playlistPickerReturnMode != modeNormal {
-		t.Errorf("expected return mode modeNormal, got %d", m.playlistPickerReturnMode)
-	}
-	if !m.playlistPickerLoading {
-		t.Error("expected playlistPickerLoading=true immediately after open")
-	}
-}
 
 // TestPlaylistPicker_EscRestoresMode verifies that pressing Esc in the picker
 // restores the previous mode.
@@ -3823,56 +3628,6 @@ func TestPlayNextCmd(t *testing.T) {
 	}
 	if plyr.moveInQueueCalls[1].From != 4 || plyr.moveInQueueCalls[1].To != 3 {
 		t.Errorf("expected second MoveInQueue(4, 3), got MoveInQueue(%d, %d)", plyr.moveInQueueCalls[1].From, plyr.moveInQueueCalls[1].To)
-	}
-}
-
-func TestQueueReordering(t *testing.T) {
-	plyr := newMockPlayer()
-	m := newModel(plyr)
-
-	m.queueTracks = []provider.Track{
-		{ID: "a", Title: "A"},
-		{ID: "b", Title: "B"},
-		{ID: "c", Title: "C"},
-	}
-	m.queueIDs = []string{"a", "b", "c"}
-	m.queue.SetTracks(m.queueTracks)
-
-	m.activePanel = 0
-	m.panels = []ContentView{m.queue}
-
-	m.queue.Select(1)
-
-	// Move B up using "shift+up"
-	m2, cmd := m.Update(tea.KeyPressMsg{Text: "shift+up"})
-	m = m2.(*Model)
-	if cmd != nil {
-		cmd()
-	}
-
-	if m.queueTracks[0].ID != "b" || m.queueTracks[1].ID != "a" {
-		t.Errorf("expected B at index 0 and A at index 1, got queue: %v", m.queueTracks)
-	}
-
-	idx, _ := m.queue.SelectedTrack()
-	if idx != 0 {
-		t.Errorf("expected selected index to be 0 after moving up, got %d", idx)
-	}
-
-	// Move B down using "shift+down"
-	m3, cmd2 := m.Update(tea.KeyPressMsg{Text: "shift+down"})
-	m = m3.(*Model)
-	if cmd2 != nil {
-		cmd2()
-	}
-
-	if m.queueTracks[0].ID != "a" || m.queueTracks[1].ID != "b" {
-		t.Errorf("expected A at index 0 and B at index 1, got queue: %v", m.queueTracks)
-	}
-
-	idx, _ = m.queue.SelectedTrack()
-	if idx != 1 {
-		t.Errorf("expected selected index to be 1 after moving down, got %d", idx)
 	}
 }
 

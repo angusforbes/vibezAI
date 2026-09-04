@@ -9,13 +9,13 @@ import (
 
 // Queue navigation in the main view.
 //
-// The mini-queue under "Now Playing" used to be display-only (j/k scrolled it,
-// n/p skipped tracks immediately). It now has a cursor: ↑/↓ (or k/j) highlight
-// an entry without touching playback, space or enter jumps to the highlighted
-// track with the whole queue left in place (unlike the queue panel's enter,
-// which drops the entries above), d (also x/delete) removes it, K/J move it,
-// gg/G jump to the ends and esc drops the cursor so the list follows the
-// playing track again. The remove/move helpers are shared with the queue panel.
+// The queue lives under "Now Playing"; there is no separate queue panel. The
+// list has a cursor: ↑/↓ (or k/j) highlight an entry without touching
+// playback, q highlights the playing track (or drops the highlight), space or
+// enter jumps to the highlighted track with the whole queue left in place, d
+// (also x/delete) removes it, K/J move it, R seeds radio from it, c clears the
+// queue, gg/G jump to the ends and esc drops the cursor so the list follows the
+// playing track again. Every other key behaves exactly as without a highlight.
 
 // noQueueCursor means no entry is highlighted; the list follows playback.
 const noQueueCursor = -1
@@ -71,6 +71,33 @@ func (m *Model) ensureQueueCursorVisible() {
 		m.queueMiniOffset = m.queueCursor - visibleRows + 1
 	}
 	m.queueMiniOffset = max(0, m.queueMiniOffset)
+}
+
+// toggleQueueHighlight (the q key) puts the highlight on the playing track,
+// or drops it when something is already highlighted.
+func (m *Model) toggleQueueHighlight() {
+	if m.queueCursorActive() {
+		m.clearQueueCursor()
+		return
+	}
+	if cur := m.currentQueueIndex(); cur >= 0 {
+		m.setQueueCursor(cur)
+		return
+	}
+	m.setQueueCursor(m.queueMiniOffset)
+}
+
+// clearQueue (the c key) empties the queue in the model and the engine.
+func (m *Model) clearQueue() tea.Cmd {
+	if len(m.queueTracks) == 0 && len(m.queueIDs) == 0 {
+		return nil
+	}
+	m.appendLog("[queue] cleared")
+	m.queueTracks = nil
+	m.queueIDs = nil
+	m.clearQueueCursor()
+	m.syncQueue()
+	return m.playerCmd(func(p player.Player) error { return p.ClearQueue() })
 }
 
 // clampQueueCursor keeps the cursor inside the queue after edits.

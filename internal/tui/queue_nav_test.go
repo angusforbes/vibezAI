@@ -206,3 +206,67 @@ func TestQueueCursor_AutoScrollOnlyWhenNoCursor(t *testing.T) {
 		t.Fatalf("auto-scroll must not move the list while a cursor is active (offset %d -> %d)", offset, m.queueMiniOffset)
 	}
 }
+
+func TestQ_TogglesHighlightOnPlayingTrack(t *testing.T) {
+	m, mock := navModel(t)
+	key(m, "q")
+	if m.queueCursor != 1 {
+		t.Fatalf("q should highlight the playing track (1), got %d", m.queueCursor)
+	}
+	key(m, "q")
+	if m.queueCursorActive() {
+		t.Fatal("q again should drop the highlight")
+	}
+	if m.activePanel >= 0 || mock.setQueueIDs != nil {
+		t.Fatal("q must not open a panel or touch playback")
+	}
+}
+
+func TestC_ClearsQueueFromMainView(t *testing.T) {
+	m, _ := navModel(t)
+	key(m, "down")
+	if cmd := key(m, "c"); cmd != nil {
+		_ = cmd()
+	}
+	if len(m.queueTracks) != 0 || len(m.queueIDs) != 0 || m.queueCursorActive() {
+		t.Fatalf("c should clear the queue and the highlight: %d tracks cursor=%d", len(m.queueTracks), m.queueCursor)
+	}
+}
+
+func TestR_WithHighlightSeedsRadioFromHighlightedAndKeepsQueue(t *testing.T) {
+	m, mock := navModel(t)
+	key(m, "down") // highlight "Three"
+	if cmd := key(m, "R"); cmd == nil {
+		t.Fatal("R should start radio")
+	}
+	if !m.radio.enabled || m.radio.seed == nil || m.radio.seed.Title != "Three" {
+		t.Fatalf("radio should be seeded by the highlighted track, got %+v", m.radio.seed)
+	}
+	if len(m.queueTracks) != 4 || len(mock.removeFromQueueIdx) != 0 {
+		t.Fatal("starting radio must not remove queued tracks")
+	}
+	key(m, "R")
+	if m.radio.enabled {
+		t.Fatal("R again should stop radio")
+	}
+}
+
+func TestPlayerKeysStillWorkWhileHighlighting(t *testing.T) {
+	m, mock := navModel(t)
+	key(m, "down")
+	if cmd := key(m, "s"); cmd != nil {
+		_ = cmd()
+	}
+	if !m.playerState.ShuffleMode {
+		t.Fatal("s should toggle shuffle with a highlight active")
+	}
+	if cmd := key(m, "n"); cmd != nil {
+		_ = cmd()
+	}
+	if !mock.nextCalled {
+		t.Fatal("n should still skip to the next track with a highlight active")
+	}
+	if !m.queueCursorActive() {
+		t.Fatal("player keys must not drop the highlight")
+	}
+}

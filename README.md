@@ -56,7 +56,7 @@ Full tracks stream via Chrome with Widevine DRM. On Linux amd64, Chrome is auto-
 - **Add tracks to queue** with `tab` from search, library, or recommendation feed
 - **Play next** — insert any song, album, playlist, or recommendation next in the queue with `shift+tab`
 - **Navigate the queue** — jump to any track or let it auto-advance
-- **Persistent queue panel** — toggle it on/off without losing your place
+- **One queue view** — the queue lives under Now Playing and is navigated in place; there is no separate panel to switch into
 - **Saved queue** — the queue is written to `~/.config/vibez/queue.json` and restored on the next launch; press `space` to pick up where you left off
 
 ### 🖥️ System Integration
@@ -85,7 +85,7 @@ Full tracks stream via Chrome with Widevine DRM. On Linux amd64, Chrome is auto-
 
 - **Seed a station from any track** — press `R` on the currently playing track, a highlighted queue track, or `ctrl+r` on a search result to start an endless station built around it
 - **Auto-refills like discovery** — vibez queues up new picks from the seed's station as the queue runs low, so the music never stops
-- **Clears the runway** — starting radio drops any tracks still queued after the seed (e.g. the rest of an album or playlist) so the station takes over immediately instead of waiting for them to finish
+- **Keeps your queue** — radio picks are appended after whatever is already lined up; nothing you queued is removed
 - **Toggle anytime** — press `R` again to stop radio and return to a manual queue
 
 ### ⌨️ Terminal UI
@@ -264,11 +264,13 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | `R` | Toggle radio mode (seeded by the currently playing track) |
 | `/` | Open search |
 | `l` | Toggle library panel |
-| `q` | Toggle queue panel |
+| `q` | Highlight the playing track in the queue (again: drop the highlight) |
 | `↑` / `↓` (`k` / `j`) | Highlight a queue entry in the main view without changing playback |
 | `space` / `enter` (with a highlighted entry) | Jump to the highlighted queue entry; the queue stays as it is |
 | `d` / `x` (with a highlighted entry) | Remove the highlighted queue entry |
 | `K` / `J` (with a highlighted entry) | Move the highlighted queue entry up / down |
+| `R` (with a highlighted entry) | Start radio seeded by the highlighted entry |
+| `c` | Clear the queue |
 | `esc` | Drop the highlight; the queue follows the playing track again |
 | `:q` / `ctrl+c` | Quit |
 
@@ -293,20 +295,6 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | `tab` | Add selected item/track to queue (when viewing albums/artists/playlists/tracks) or switch tab (when viewing library sections pane) |
 | `shift+tab` | Play next (insert selected item/track after current track) |
 | `esc` | Back / close |
-
-### Queue (`q`)
-
-| Key | Action |
-|-----|--------|
-| `↑` / `↓` | Navigate list |
-| `enter` | Play selected track |
-| `d` | Remove track from queue |
-| `K` / `shift+up` | Move track up |
-| `J` / `shift+down` | Move track down |
-| `c` | Clear entire queue |
-| `s` | Save queue as playlist (opens command prompt) |
-| `R` | Toggle radio mode (seeded by the highlighted track) |
-| `esc` | Close |
 
 ### Command mode (`:`)
 
