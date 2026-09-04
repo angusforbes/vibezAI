@@ -120,7 +120,7 @@ func (l *LyricsModel) View() string {
 	if l.errMsg != "" {
 		return header.Render("Lyrics") + "\n" +
 			strings.Repeat("─", 5) + "\n\n" +
-			muted.Render("You cannot sing this song :(")
+			muted.Render("no lyrics available for this song")
 	}
 
 	if len(l.lines) == 0 {

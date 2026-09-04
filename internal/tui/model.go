@@ -3378,13 +3378,6 @@ func (m *Model) statusNavLines(w int) []string {
 				accent.Render("Enter") + muted.Render(" search"),
 				accent.Render("esc") + muted.Render(" cancel"),
 			}
-		case m.activePanel >= 0 && m.panels[m.activePanel] == m.library:
-			parts = []string{
-				styles.ModeNormal.Render("LIBRARY"),
-				accent.Render("Enter") + muted.Render(" open / add & play"),
-				accent.Render("Tab") + muted.Render(" add to queue"),
-				accent.Render("esc") + muted.Render(" back"),
-			}
 		case m.activePanel >= 0 && m.panels[m.activePanel] == m.lyricsP:
 			parts = []string{
 				styles.ModeNormal.Render("LYRICS"),

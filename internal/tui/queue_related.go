@@ -31,6 +31,12 @@ func (m *Model) fetchRelatedCmd(seed *provider.Track) tea.Cmd {
 	if seed == nil || m.provider == nil {
 		return nil
 	}
+	// A library-only track (the user's own recording or upload) has no catalog
+	// counterpart, so Apple cannot build a station from it. Nothing to do.
+	if seed.CatalogID == "" && strings.HasPrefix(seed.ID, "i.") {
+		m.appendLog(fmt.Sprintf("[related] %q has no catalog match; skipping", seed.Title))
+		return nil
+	}
 	m.relatedGen++
 	gen := m.relatedGen
 	s := *seed
@@ -83,8 +89,8 @@ func (m *Model) handleRelatedResult(msg relatedResultMsg) tea.Cmd {
 		return nil
 	}
 	if msg.err != nil {
-		m.errMsg = "Related songs: " + msg.err.Error()
-		m.errExpiry = time.Now().Add(5 * time.Second)
+		// Fail quietly: just take down the "Finding songs…" notice and log it.
+		m.errMsg = ""
 		m.appendLog(fmt.Sprintf("[related] error: %v", msg.err))
 		return nil
 	}

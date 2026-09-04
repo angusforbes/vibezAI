@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -497,5 +498,24 @@ func TestShiftT_InsertsFiveRandomLibrarySongsAfterHighlight(t *testing.T) {
 		if seen[tr.ID] {
 			t.Fatalf("second pick repeated a queued track: %s", tr.ID)
 		}
+	}
+}
+
+func TestRelated_LibraryOnlySeedIsSkippedSilently(t *testing.T) {
+	m, _ := navModel(t)
+	m.provider = &mockProvider{}
+	own := provider.Track{ID: "i.MyRecording", Title: "Demo take", Artist: "Me"}
+	if cmd := m.fetchRelatedCmd(&own); cmd != nil || m.errMsg != "" {
+		t.Fatalf("a track without a catalog match must be skipped without any notice (cmd=%v err=%q)", cmd != nil, m.errMsg)
+	}
+}
+
+func TestHandleRelatedResult_ErrorIsSilent(t *testing.T) {
+	m, _ := navModel(t)
+	m.errMsg = "⏳ Finding songs related to X…"
+	m.relatedGen = 1
+	cmd := m.handleRelatedResult(relatedResultMsg{gen: 1, err: errors.New("station unavailable"), seed: provider.Track{Title: "X"}})
+	if cmd != nil || m.errMsg != "" {
+		t.Fatalf("a failed lookup must clear the notice and show nothing (cmd=%v err=%q)", cmd != nil, m.errMsg)
 	}
 }
