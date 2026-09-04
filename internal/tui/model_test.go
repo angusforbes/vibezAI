@@ -704,24 +704,33 @@ func seedSearchResults(m *Model, tracks ...provider.Track) {
 	m.search.SetState(tracks, false, nil)
 }
 
-func TestHandleSearchKey_Enter_CallsSetQueue(t *testing.T) {
+func TestHandleSearchKey_Enter_AppendsAndPlays(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
+	m.queueTracks = []provider.Track{{Title: "Already", CatalogID: "1"}}
+	m.queueIDs = []string{"1"}
+	cur := m.queueTracks[0]
+	m.playerState.Track = &cur
 	track := provider.Track{Title: "Hi", Artist: "There", CatalogID: "99999"}
 	seedSearchResults(m, track)
 
-	msg := tea.KeyPressMsg{Code: tea.KeyEnter}
-	cmd := m.handleSearchKey("enter", msg)
+	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatal("handleSearchKey(enter) returned nil cmd — expected SetQueue call")
+		t.Fatal("handleSearchKey(enter) returned nil cmd")
 	}
-	cmd() // execute the player call synchronously
+	cmd()
 
-	if len(mp.setQueueIDs) == 0 {
-		t.Fatal("SetQueue was not called after Enter")
+	if mp.setQueueIDs != nil {
+		t.Fatalf("Enter must never replace the queue, got SetQueue(%v)", mp.setQueueIDs)
 	}
-	if mp.setQueueIDs[0] != "99999" {
-		t.Errorf("SetQueue ID = %q, want %q", mp.setQueueIDs[0], "99999")
+	if len(mp.appendQueueIDs) != 1 || mp.appendQueueIDs[0][0] != "99999" {
+		t.Fatalf("Enter should append the track, got %v", mp.appendQueueIDs)
+	}
+	if len(mp.playQueuedCalls) != 1 || mp.playQueuedCalls[0].Idx != 1 || mp.playQueuedCalls[0].ID != "99999" {
+		t.Fatalf("Enter should start the appended track, got %+v", mp.playQueuedCalls)
+	}
+	if len(m.queueTracks) != 2 || m.queueTracks[0].Title != "Already" {
+		t.Fatalf("existing queue must be kept: %+v", m.queueTracks)
 	}
 }
 
@@ -735,8 +744,10 @@ func TestHandleSearchKey_Enter_UsesLibraryID_WhenNoCatalogID(t *testing.T) {
 	if cmd != nil {
 		cmd()
 	}
-	if len(mp.setQueueIDs) == 0 || mp.setQueueIDs[0] != "i.LibraryAbc123" {
-		t.Errorf("SetQueue ID = %v, want [i.LibraryAbc123]", mp.setQueueIDs)
+	// Nothing was loaded in the engine, so the whole (one-track) queue is handed
+	// over and started at the library ID.
+	if len(mp.setQueueAtIDs) != 1 || mp.setQueueAtIDs[0] != "i.LibraryAbc123" || mp.setQueueAtStart != "i.LibraryAbc123" {
+		t.Errorf("SetQueueAt = %v start %q, want [i.LibraryAbc123]", mp.setQueueAtIDs, mp.setQueueAtStart)
 	}
 }
 
@@ -853,18 +864,19 @@ func TestHandleNormalKey_CapitalLOpensTopLevelLibrary(t *testing.T) {
 	}
 }
 
-func TestHandleSearchKey_Esc_ResetsMode(t *testing.T) {
+func TestHandleSearchKey_Esc_ReturnsToQueueKeepingQuery(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
 	m.searchQuery = "test query"
+	m.searchCursor = 4
 
 	m.handleSearchKey("esc", tea.KeyPressMsg{Code: tea.KeyEsc})
 
 	if m.mode != modeNormal {
 		t.Errorf("mode after esc = %v, want modeNormal", m.mode)
 	}
-	if m.searchQuery != "" {
-		t.Errorf("searchQuery after esc = %q, want empty", m.searchQuery)
+	if m.searchQuery != "test query" || m.searchCursor != 4 {
+		t.Errorf("esc must keep the query and cursor (results stay visible), got %q/%d", m.searchQuery, m.searchCursor)
 	}
 }
 
@@ -894,7 +906,7 @@ func TestHandleSearchKey_Typing_AppendsToQuery(t *testing.T) {
 	}
 }
 
-func TestHandleSearchKey_Enter_SwitchesToNormalMode(t *testing.T) {
+func TestHandleSearchKey_Enter_StaysInSearch(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	seedSearchResults(m, provider.Track{Title: "T", CatalogID: "x"})
@@ -903,8 +915,8 @@ func TestHandleSearchKey_Enter_SwitchesToNormalMode(t *testing.T) {
 	if cmd != nil {
 		cmd()
 	}
-	if m.mode != modeNormal {
-		t.Errorf("mode after enter = %v, want modeNormal", m.mode)
+	if m.mode != modeSearch {
+		t.Errorf("mode after enter = %v, want modeSearch (keep browsing results)", m.mode)
 	}
 }
 
@@ -1062,19 +1074,6 @@ func TestHandleSearchKey_CtrlU_ClearsBeforeCursor(t *testing.T) {
 	}
 	if m.searchCursor != 0 {
 		t.Errorf("searchCursor = %d, want 0", m.searchCursor)
-	}
-}
-
-func TestHandleSearchKey_Esc_ResetsCursor(t *testing.T) {
-	m := newModel(nil)
-	m.mode = modeSearch
-	m.searchQuery = "test"
-	m.searchCursor = 4
-
-	m.handleSearchKey("esc", tea.KeyPressMsg{Code: tea.KeyEsc})
-
-	if m.searchCursor != 0 {
-		t.Errorf("searchCursor after esc = %d, want 0", m.searchCursor)
 	}
 }
 
@@ -1247,16 +1246,26 @@ func TestModel_Update_SongRatingMsg_EmptyID(t *testing.T) {
 	_ = cmd // empty ID → no-op
 }
 
-func TestModel_Update_PlayTracksMsg_WithPlaylistID(t *testing.T) {
+func TestModel_Update_PlayTracksMsg_WithPlaylistID_AppendsTracks(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
-	track := provider.Track{Title: "T", Artist: "A", CatalogID: "cat1"}
-	msg := views.PlayTracksMsg{IDs: []string{"cat1"}, Track: &track, PlaylistID: "pl.123", StartIdx: 0}
+	m.queueTracks = []provider.Track{{Title: "Keep", CatalogID: "k"}}
+	m.queueIDs = []string{"k"}
+	keep := m.queueTracks[0]
+	m.playerState.Track = &keep
+	tracks := []provider.Track{{Title: "P1", CatalogID: "p1"}, {Title: "P2", CatalogID: "p2"}}
+	msg := views.PlayTracksMsg{IDs: []string{"p1", "p2"}, Tracks: tracks, Track: &tracks[1], PlaylistID: "pl.123", StartIdx: 1}
 	_, cmd := m.Update(msg)
 	if cmd == nil {
 		t.Fatal("PlayTracksMsg should return a cmd")
 	}
-	cmd() // triggers SetPlaylist on player
+	cmd()
+	if len(m.queueIDs) != 3 || m.queueIDs[0] != "k" {
+		t.Fatalf("playlist play must append, not replace: %v", m.queueIDs)
+	}
+	if len(mp.playQueuedCalls) != 1 || mp.playQueuedCalls[0].Idx != 2 || mp.playQueuedCalls[0].ID != "p2" {
+		t.Fatalf("should start at the playlist's start index within the appended block, got %+v", mp.playQueuedCalls)
+	}
 }
 
 func TestModel_Update_PlayTracksMsg_WithoutPlaylistID(t *testing.T) {
@@ -1268,9 +1277,12 @@ func TestModel_Update_PlayTracksMsg_WithoutPlaylistID(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("PlayTracksMsg should return a cmd")
 	}
-	cmd() // triggers SetQueue on player
-	if len(mp.setQueueIDs) == 0 {
-		t.Error("PlayTracksMsg without playlist should call SetQueue")
+	cmd()
+	if mp.setQueueIDs != nil {
+		t.Error("PlayTracksMsg must not replace the queue")
+	}
+	if len(mp.setQueueAtIDs) != 1 || mp.setQueueAtIDs[0] != "cat2" {
+		t.Errorf("with an empty engine the track should be loaded via SetQueueAt, got %v", mp.setQueueAtIDs)
 	}
 }
 
@@ -1800,24 +1812,6 @@ func TestHandleNormalKey_R_StopsDiscovery(t *testing.T) {
 	}
 	if !m.radio.enabled {
 		t.Error("R key should have started radio")
-	}
-}
-
-func TestHandleSearchKey_CtrlR_StartRadioFromSelected(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	track := provider.Track{Title: "Search Hit", Artist: "Artist", CatalogID: "cat-search"}
-	seedSearchResults(m, track)
-
-	cmd := m.handleSearchKey("ctrl+r", tea.KeyPressMsg{})
-	if cmd == nil {
-		t.Fatal("ctrl+r on a selected search track should start radio")
-	}
-	if !m.radio.enabled {
-		t.Error("radio should be enabled after ctrl+r in search")
-	}
-	if m.mode != modeSearch {
-		t.Error("ctrl+r should not close the search overlay, matching tab/shift+tab")
 	}
 }
 
@@ -2643,9 +2637,9 @@ func TestSearchLines_WithResults(t *testing.T) {
 	m.mode = modeSearch
 	m.search.SetSize(80, 20)
 	m.search.SetState([]provider.Track{{Title: "Hit Song", Artist: "Artist"}}, false, nil)
-	lines := m.searchLines(76, 10)
+	lines := m.searchFindLines(45, 10)
 	if len(lines) != 10 {
-		t.Errorf("searchLines returned %d lines, want 10", len(lines))
+		t.Errorf("searchFindLines returned %d lines, want 10", len(lines))
 	}
 }
 
@@ -2653,9 +2647,9 @@ func TestSearchLines_Empty(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
 	m.searchQuery = "notfound"
-	lines := m.searchLines(76, 10)
+	lines := m.searchFindLines(45, 10)
 	if len(lines) != 10 {
-		t.Errorf("searchLines(empty) returned %d lines, want 10", len(lines))
+		t.Errorf("searchFindLines(empty) returned %d lines, want 10", len(lines))
 	}
 }
 

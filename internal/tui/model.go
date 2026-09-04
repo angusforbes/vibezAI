@@ -307,6 +307,7 @@ type Model struct {
 	queueResumeIdx   int              // restored queue: track to start from on first play, -1 = none
 	queueCursor      int              // highlighted queue entry (-1 only while the queue is empty)
 	queueFollow      bool             // highlight tracks the playing song until the user moves it
+	findTab          findTab          // right column: search (default) or library
 	relatedGen       int              // generation of the latest R (related songs) lookup
 
 	// Discovery mode
@@ -760,11 +761,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ids[i] = views.PlaybackID(t)
 		}
 		if msg.play {
-			m.queueTracks = msg.tracks
-			m.queueIDs = ids
-			m.syncQueue()
-			m.appendLog(fmt.Sprintf("[feed] playing %q (%d tracks)", msg.item.Title, len(ids)))
-			return m, m.playerCmd(func(p player.Player) error { return p.SetQueue(ids) })
+			return m, m.appendAndPlay(msg.item.Title, msg.tracks, ids, 0)
 		}
 		if msg.playNext {
 			return m, m.playNextCmd(msg.item.Title, msg.tracks, ids)
@@ -964,18 +961,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ids[i] = views.PlaybackID(t)
 		}
 		if msg.play {
-			m.queueTracks = msg.tracks
-			m.queueIDs = ids
-			m.syncQueue()
-			m.appendLog(fmt.Sprintf("[search] playing %q (%d tracks)", msg.label, len(ids)))
-			m.mode = modeNormal
-			m.playerState.Loading = true
-			m.playerState.Playing = false
-			m.playerState.Position = 0
-			return m, m.playerCmd(func(p player.Player) error { return p.SetQueue(ids) })
+			return m, m.appendAndPlay(msg.label, msg.tracks, ids, 0)
 		}
 		if msg.playNext {
-			m.mode = modeNormal
 			return m, m.playNextCmd(msg.label, msg.tracks, ids)
 		}
 		m.queueTracks = append(m.queueTracks, msg.tracks...)
@@ -998,27 +986,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.playerCmd(func(p player.Player) error { return p.AppendQueue(msg.IDs) })
 
 	case views.PlayTracksMsg:
+		// Library "play": add to the end of the queue and start there. Never
+		// replaces the queue (so playlists go through their track IDs too).
+		tracks := msg.Tracks
+		if len(tracks) == 0 && msg.Track != nil {
+			tracks = []provider.Track{*msg.Track}
+		}
+		label := "library"
 		if msg.Track != nil {
-			m.playerState.Track = msg.Track
+			label = msg.Track.Artist + " — " + msg.Track.Title
 		}
-		m.playerState.Loading = true
-		m.playerState.Playing = false
-		m.playerState.Position = 0
-		if len(msg.Tracks) > 0 {
-			m.queueTracks = msg.Tracks
-		} else if msg.Track != nil {
-			m.queueTracks = []provider.Track{*msg.Track}
-		}
-		m.queueIDs = msg.IDs
-		m.syncQueue()
-		cmds = append(cmds, m.playerCmd(func(p player.Player) error {
-			if msg.PlaylistID != "" {
-				return p.SetPlaylist(msg.PlaylistID, msg.StartIdx)
-			}
-			return p.SetQueue(msg.IDs)
-		}))
-		m.mode = modeNormal
-		m.activePanel = -1
+		cmds = append(cmds, m.appendAndPlay(label, tracks, msg.IDs, msg.StartIdx))
 
 	case InitStatusMsg:
 		m.initStatus = string(msg)
@@ -1197,24 +1175,14 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 	switch k {
 	case "esc":
+		// Hand the keys back to the queue; the query and results stay visible.
 		m.mode = modeNormal
-		m.searchQuery = ""
-		m.searchCursor = 0
 		return nil
 	case "enter":
-		// Track: play now — replaces queue and starts immediately.
+		// Track: add to the end of the queue and start it. Never replaces the queue.
 		if t := m.search.SelectedTrack(); t != nil {
 			tc := *t
-			m.appendLog(fmt.Sprintf("[queue] play now: %s — %s", tc.Artist, tc.Title))
-			m.queueTracks = []provider.Track{tc}
-			m.queueIDs = []string{views.PlaybackID(tc)}
-			m.playerState.Track = &tc
-			m.playerState.Loading = true
-			m.playerState.Playing = false
-			m.playerState.Position = 0
-			m.syncQueue()
-			m.mode = modeNormal
-			return m.playerCmd(func(p player.Player) error { return p.SetQueue(m.queueIDs) })
+			return m.appendAndPlay(tc.Artist+" — "+tc.Title, []provider.Track{tc}, []string{views.PlaybackID(tc)}, 0)
 		}
 		// Album: fetch all tracks then play.
 		if a := m.search.SelectedAlbum(); a != nil {
@@ -1259,14 +1227,6 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		// Playlist: fetch all tracks then play next.
 		if p := m.search.SelectedPlaylist(); p != nil {
 			return m.fetchSearchCollectionCmd(nil, p, false, true)
-		}
-		return nil
-	case "ctrl+r":
-		// Start radio seeded by the selected search track. A bare "r" would
-		// steal a letter from the live search query, so this mirrors ctrl+p
-		// (playlist picker) below.
-		if t := m.search.SelectedTrack(); t != nil {
-			return m.startRadioFrom(t)
 		}
 		return nil
 	case "up", "down", "pgup", "pgdown":
@@ -1325,12 +1285,6 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		m.searchQuery = string(runes[m.searchCursor:])
 		m.searchCursor = 0
 		return m.scheduleSearch(m.searchQuery)
-	case "ctrl+p":
-		// Open playlist picker for the currently selected search result.
-		if t := m.search.SelectedTrack(); t != nil {
-			return m.openPlaylistPicker(t)
-		}
-		return nil
 	case "space":
 		runes := []rune(m.searchQuery)
 		runes = append(runes[:m.searchCursor], append([]rune{' '}, runes[m.searchCursor:]...)...)
@@ -1976,6 +1930,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		for i, p := range m.panels {
 			if p == m.library {
 				m.activePanel = i
+				m.findTab = findLibrary
 				m.lastKey = ""
 				return nil
 			}
@@ -1989,6 +1944,9 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 				m.activePanel = -1 // toggle off
 			} else {
 				m.activePanel = i
+				if p == m.library {
+					m.findTab = findLibrary
+				}
 				// Trigger a feed load when opening the feed panel for the first time.
 				if p == m.feedP && m.feedP.m.NeedsLoad() {
 					m.feedP.m.SetLoading()
@@ -2160,9 +2118,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	switch k {
 	case "/":
 		m.mode = modeSearch
-		m.searchQuery = ""
-		m.searchCursor = 0
-		m.search.SetState(nil, false, nil)
+		m.findTab = findSearch
 
 	case "j", "down":
 		m.lastKey = ""
@@ -2910,12 +2866,11 @@ func (m *Model) renderBoxLayout() string {
 	splitW := inner / 2          // left column inner width (includes padding)
 	rightW := inner - splitW - 1 // right column inner width (-1 for │ divider)
 
-	libraryActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.library
 	lyricsActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.lyricsP
 	feedActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.feedP
 	eqActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.eqP
 	aboutActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.aboutP
-	fullWidth := libraryActive || lyricsActive || feedActive || eqActive || aboutActive || m.mode == modeSearch || m.mode == modeCommand || m.debugView
+	fullWidth := lyricsActive || feedActive || eqActive || aboutActive || m.mode == modeCommand || m.debugView
 
 	var sb strings.Builder
 
@@ -2940,17 +2895,8 @@ func (m *Model) renderBoxLayout() string {
 		for _, line := range m.debugLogLines(inner-2, panelH) {
 			sb.WriteString("│ " + padRight(line, inner-2) + " │\n")
 		}
-	case m.mode == modeSearch:
-		for _, line := range m.searchLines(inner-2, panelH) {
-			sb.WriteString("│ " + padRight(line, inner-2) + " │\n")
-		}
 	case m.mode == modeCommand:
 		for _, line := range m.commandLines(inner-2, panelH) {
-			sb.WriteString("│ " + padRight(line, inner-2) + " │\n")
-		}
-	case libraryActive:
-		m.library.SetSize(inner-2, panelH)
-		for _, line := range toLines(m.library.View(), panelH) {
 			sb.WriteString("│ " + padRight(line, inner-2) + " │\n")
 		}
 	case lyricsActive:
@@ -2975,7 +2921,7 @@ func (m *Model) renderBoxLayout() string {
 		}
 	default:
 		qLines := m.queuePanelLines(splitW-2, panelH)
-		vLines := m.vibe.Lines(rightW-2, panelH, m.glowStep)
+		vLines := m.findLines(rightW-2, panelH)
 		for i := range panelH {
 			left := safeIdx(qLines, i)
 			right := safeIdx(vLines, i)
@@ -3339,52 +3285,6 @@ func (m *Model) queuePanelLines(w, h int) []string {
 }
 
 // searchLines renders the search popup inline (full-width in the split area).
-func (m *Model) searchLines(contentW, h int) []string {
-	accent := lipgloss.NewStyle().Foreground(styles.ColorAccent)
-	muted := lipgloss.NewStyle().Foreground(styles.ColorMuted)
-	textStyle := lipgloss.NewStyle().Foreground(styles.ColorFg)
-	cursor := accent.Render("█")
-
-	runes := []rune(m.searchQuery)
-	cur := min(m.searchCursor, len(runes))
-	before := textStyle.Render(string(runes[:cur]))
-	after := textStyle.Render(string(runes[cur:]))
-
-	inputLine := accent.Render("/") + "  " + before + cursor + after
-	sep := muted.Render(strings.Repeat("─", contentW))
-
-	// Reserve input(1) + sep(1) + footerSep(1) + footer(1) = 4 lines.
-	listH := max(1, h-4)
-	m.search.SetSize(contentW, listH)
-	listView := m.search.View()
-	if listView == "" && !m.search.Loading() && m.searchQuery != "" {
-		listView = "  " + muted.Render("no results")
-	}
-
-	listLines := toLines(listView, listH)
-	footerSep := muted.Render(strings.Repeat("─", contentW))
-
-	// Make the footer hints context-sensitive to the selected item kind.
-	kind := "track"
-	if m.search.SelectedAlbum() != nil {
-		kind = "album"
-	} else if m.search.SelectedPlaylist() != nil {
-		kind = "playlist"
-	}
-	footer := "  " + accent.Render("Enter") + muted.Render(" play "+kind) +
-		"  ·  " + accent.Render("Tab") + muted.Render(" add to queue") +
-		"  ·  " + accent.Render("Shift+Tab") + muted.Render(" play next") +
-		"  ·  " + accent.Render("ctrl+p") + muted.Render(" add to playlist") +
-		"  ·  " + accent.Render("Esc") + muted.Render(" close")
-
-	result := append([]string{inputLine, sep}, listLines...)
-	result = append(result, footerSep, footer)
-	for len(result) < h {
-		result = append(result, "")
-	}
-	return result[:h]
-}
-
 // statusNavLines is the top status line: mode chip + context-aware shortcuts,
 // wrapped to fit width w.
 func (m *Model) statusNavLines(w int) []string {
@@ -3399,7 +3299,8 @@ func (m *Model) statusNavLines(w int) []string {
 		before := styles.Header.Render(string(runes[:cur]))
 		after := styles.Header.Render(string(runes[cur:]))
 		return []string{styles.ModeSearch.Render("SEARCH") + "  " +
-			accent.Render("/") + before + accent.Render("█") + after}
+			accent.Render("/") + before + accent.Render("█") + after + "   " +
+			accent.Render("Tab") + muted.Render(" add") + "  " + accent.Render("Enter") + muted.Render(" add & play") + "  " + accent.Render("esc") + muted.Render(" back to queue")}
 	case modeCommand:
 		return []string{styles.ModeCommand.Render("CMD") + "  " +
 			muted.Render(":") + m.cmdBuf + accent.Render("_") +
@@ -3422,10 +3323,9 @@ func (m *Model) statusNavLines(w int) []string {
 		case m.activePanel >= 0 && m.panels[m.activePanel] == m.library:
 			parts = []string{
 				styles.ModeNormal.Render("LIBRARY"),
-				accent.Render("Enter") + muted.Render(" browse/play"),
-				accent.Render("Tab") + muted.Render(" queue"),
-				accent.Render("Shift+Tab") + muted.Render(" next"),
-				accent.Render("esc") + muted.Render(" back/close"),
+				accent.Render("Enter") + muted.Render(" open / add & play"),
+				accent.Render("Tab") + muted.Render(" add to queue"),
+				accent.Render("esc") + muted.Render(" back"),
 			}
 		case m.activePanel >= 0 && m.panels[m.activePanel] == m.lyricsP:
 			parts = []string{
