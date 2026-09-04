@@ -1,4 +1,5 @@
-<p align="center">
+<p align="center">Use `↑` / `↓` (or `ctrl+p` / `ctrl+n`) to cycle through suggestions, and `tab` to autocomplete.
+
   <img src="assets/logo.png" width="160" alt="vibez logo">
 </p>
 
@@ -50,6 +51,7 @@ Full tracks stream via Chrome with Widevine DRM. On Linux amd64, Chrome is auto-
 - **Browse your library** — playlists, albums, and tracks all in one place
 - **Real-time catalog search** — find any song, album, or artist from the full Apple Music catalog as you type
 - **Secure authentication** — MusicKit OAuth flow via an embedded Chrome window
+- **Find panel** — the right column is Apple Music search (`/`) or your library (`l`); the queue stays on screen while you browse. Tab adds without playing, Enter adds and plays, and nothing there ever replaces your queue
 
 ### 📋 Queue Management
 
@@ -84,7 +86,7 @@ Full tracks stream via Chrome with Widevine DRM. On Linux amd64, Chrome is auto-
 ### 📻 Related Songs and Radio
 
 - **Five related songs, once** — press `R` on the playing track or a highlighted queue entry: vibez fetches that song's Apple Music station and inserts up to five new picks right after it. Nothing keeps refilling afterwards and nothing you queued is removed
-- **Continuous radio** — `:radio` toggles the endless-station mode seeded by the playing track (also `ctrl+r` on a search result); its picks are appended after whatever is already lined up
+- **Continuous radio** — `:radio` toggles the endless-station mode seeded by the playing track; its picks are appended after whatever is already lined up
 
 ### ⌨️ Terminal UI
 
@@ -278,10 +280,9 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 |-----|--------|
 | *(type)* | Filter results in real time |
 | `↑` / `↓` | Navigate results |
-| `enter` | Play now |
-| `tab` | Add to queue |
+| `enter` | Add to the end of the queue and start it (never replaces the queue) |
+| `tab` | Add to the end of the queue without playing |
 | `shift+tab` | Play next (insert after current track) |
-| `ctrl+r` | Start radio seeded by the selected track |
 | `esc` | Close |
 
 ### Library (`l`)
@@ -289,7 +290,7 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Navigate list |
-| `enter` | Open / play |
+| `enter` | Open, or add to the end of the queue and start it |
 | `tab` | Add selected item/track to queue (when viewing albums/artists/playlists/tracks) or switch tab (when viewing library sections pane) |
 | `shift+tab` | Play next (insert selected item/track after current track) |
 | `esc` | Back / close |
@@ -312,7 +313,6 @@ Vim-style command mode — press `:` from anywhere to open the command prompt.
 | `:debug-logs` | Toggle the debug log panel |
 | `:q` / `:quit` | Quit vibez |
 
-Use `↑` / `↓` (or `ctrl+p` / `ctrl+n`) to cycle through suggestions, and `tab` to autocomplete.
 
 ### Discovery mode (`d`)
 
