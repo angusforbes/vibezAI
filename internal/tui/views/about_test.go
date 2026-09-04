@@ -22,6 +22,9 @@ func TestAboutModel(t *testing.T) {
 	if !strings.Contains(plain, "made with ❤ by simonepelosi") {
 		t.Error("expected view to contain 'made with ❤ by simonepelosi'")
 	}
+	if !strings.Contains(plain, "updated with ❤ by agf and Claude") {
+		t.Error("expected view to credit the local update: 'updated with ❤ by agf and Claude'")
+	}
 	if !strings.Contains(plain, "https://ko-fi.com/pelpsi") {
 		t.Error("expected view to contain 'https://ko-fi.com/pelpsi'")
 	}

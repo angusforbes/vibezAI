@@ -3188,6 +3188,9 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 			// right border. Coloured like the favourite heart so it stays red.
 			lines[credit] = centerStr(muted.Render("made with ")+styles.FavoriteActive.Render("❤")+muted.Render(" by simonepelosi · press ? for about"), contentW)
 		}
+		if credit+1 < h {
+			lines[credit+1] = centerStr(muted.Render("updated with ")+styles.FavoriteActive.Render("❤")+muted.Render(" by agf and Claude"), contentW)
+		}
 		if m.errMsg != "" {
 			var errRendered string
 			if strings.HasPrefix(m.errMsg, "✓") {

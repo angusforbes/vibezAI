@@ -3878,3 +3878,18 @@ func TestPanelTitles_BoldFollowsFocus(t *testing.T) {
 		t.Fatal("an open overlay panel takes the focus from the queue")
 	}
 }
+
+func TestIdleBlock_CreditsOriginalAndUpdate(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.playerState.Track = nil
+	lines := m.nowPlayingTextLines(80, nowPlayingTextRows)
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"made with", "by simonepelosi", "updated with", "by agf and Claude"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("idle block should contain %q:\n%s", want, joined)
+		}
+	}
+	if len(lines) != nowPlayingTextRows {
+		t.Fatalf("the block must keep its %d rows, got %d", nowPlayingTextRows, len(lines))
+	}
+}
