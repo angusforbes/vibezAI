@@ -49,7 +49,7 @@ func (m *Model) fetchRelatedCmd(seed *provider.Track) tea.Cmd {
 	for _, t := range m.queueTracks {
 		exclude[strings.ToLower(t.Artist+"||"+t.Title)] = true
 	}
-	m.errMsg = fmt.Sprintf("Finding songs related to %s…", s.Title)
+	m.errMsg = fmt.Sprintf("⏳ Finding songs related to %s…", s.Title)
 	m.errExpiry = time.Now().Add(15 * time.Second)
 	m.appendLog(fmt.Sprintf("[related] fetching station picks for %q", s.Title))
 	return func() tea.Msg {
@@ -90,7 +90,7 @@ func (m *Model) handleRelatedResult(msg relatedResultMsg) tea.Cmd {
 		return nil
 	}
 	if len(msg.tracks) == 0 {
-		m.errMsg = "No new related songs found for " + msg.seed.Title
+		m.errMsg = "ℹ No new related songs found for " + msg.seed.Title
 		m.errExpiry = time.Now().Add(4 * time.Second)
 		return nil
 	}

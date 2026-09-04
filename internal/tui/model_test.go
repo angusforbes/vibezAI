@@ -9,7 +9,6 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -587,10 +586,10 @@ func TestModel_ContentHeight(t *testing.T) {
 	m := newModel(nil)
 	m.height = 26
 	got := m.panelHeight()
-	// fixed overhead = 12 lines (borders/header, the 4-row Now Playing block,
-	// two status lines)
-	if got != 14 {
-		t.Errorf("panelHeight() = %d, want 14", got)
+	// fixed overhead = 10 lines (4 border/divider rows, the 4-row Now Playing
+	// block, two status lines)
+	if got != 16 {
+		t.Errorf("panelHeight() = %d, want 16", got)
 	}
 }
 
@@ -600,18 +599,6 @@ func TestModel_ContentHeight_Small(t *testing.T) {
 	got := m.panelHeight()
 	if got < 0 {
 		t.Errorf("panelHeight() should not be negative, got %d", got)
-	}
-}
-
-// --- renderBoxHeader ---
-
-func TestModel_RenderHeader_ContainsVibez(t *testing.T) {
-	m := newModel(nil)
-	m.width = 80
-	got := m.renderBoxHeader(m.width - 2)
-	plain := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(got, "")
-	if !strings.Contains(plain, "vibez") {
-		t.Errorf("renderBoxHeader() should contain 'vibez', got %q", got)
 	}
 }
 

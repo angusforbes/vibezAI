@@ -1065,6 +1065,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.introStep = introDone
 
 	case saveVolumeMsg:
+		m.errMsg = fmt.Sprintf("♪ %d%%", int(msg.vol*100+0.5))
+		m.errExpiry = time.Now().Add(1500 * time.Millisecond)
 		m.cfg.SetVolume(msg.vol)
 		if err := m.cfg.Save(""); err != nil {
 			m.appendLog(fmt.Sprintf("[vol] config save error: %v", err))
@@ -2920,12 +2922,6 @@ func (m *Model) renderBoxLayout() string {
 	// ── Top border ──
 	sb.WriteString("┌" + strings.Repeat("─", inner) + "┐\n")
 
-	// ── Header ──
-	sb.WriteString(m.renderBoxHeader(inner) + "\n")
-
-	// ── Header divider ──
-	sb.WriteString("├" + strings.Repeat("─", inner) + "┤\n")
-
 	// ── Now Playing ──
 	for _, line := range m.nowPlayingLines(inner-2, npH) {
 		sb.WriteString("│ " + padRight(line, inner-2) + " │\n")
@@ -3039,39 +3035,6 @@ func (m *Model) renderIntro() string {
 }
 
 // renderBoxHeader builds the header line including the border chars.
-func (m *Model) renderBoxHeader(inner int) string {
-	bear := views.BearExpr(m.glowStep, m.playerState.Playing)
-	title := views.RenderGlowTitle("vibez ♪", m.glowStep)
-
-	vol := int(m.playerState.Volume * 100)
-	var volStr string
-	if m.preMuteVol >= 0 {
-		volStr = styles.Playing.Render("🔇 muted")
-	} else {
-		volStr = styles.QueueItemMuted.Render(fmt.Sprintf("♪ %d%%", vol))
-	}
-
-	if q := qualityLabel(m.playerState.Bitrate); q != "" {
-		volStr = styles.QueueItemMuted.Render(q+" ·") + " " + volStr
-	}
-
-	rightStr := volStr
-	if m.memStats != "" {
-		rightStr = styles.QueueItemMuted.Render(m.memStats) + "  " + volStr
-	}
-
-	bearW := lipgloss.Width(bear)
-	titleW := lipgloss.Width(title)
-	rightW := lipgloss.Width(rightStr)
-	contentW := inner - 2 // for " " padding on each side
-
-	// Place title at the horizontal centre of the header.
-	titleStart := max(bearW+1, (contentW-titleW)/2)
-	leftPad := titleStart - bearW
-	rightPad := max(1, contentW-bearW-leftPad-titleW-rightW)
-
-	return "│ " + bear + strings.Repeat(" ", leftPad) + title + strings.Repeat(" ", rightPad) + rightStr + " │"
-}
 
 // artModeActive reports whether the now-playing panel is currently showing
 // (or loading) the album-art view rather than the progress bar. Art mode
@@ -3191,9 +3154,11 @@ func (m *Model) statusLine(contentW int) string {
 	if m.errMsg == "" {
 		return ""
 	}
-	if strings.HasPrefix(m.errMsg, "✓") {
-		text := truncateStr(m.errMsg, max(10, contentW))
-		return centerStr(styles.ControlActive.Render(text), contentW)
+	for _, info := range []string{"✓", "♪", "🔇", "⏳", "ℹ"} {
+		if strings.HasPrefix(m.errMsg, info) {
+			text := truncateStr(m.errMsg, max(10, contentW))
+			return centerStr(styles.ControlActive.Render(text), contentW)
+		}
 	}
 	const prefix = "⚠  "
 	errText := truncateStr(m.errMsg, max(10, contentW-len([]rune(prefix))))
@@ -3283,15 +3248,20 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 		heartIcon, heartStyle = "♥", styles.FavoriteActive
 	}
 
-	controls := centerStr(
-		repeatStyle.Render(repeatIcon)+"   "+
-			shuffleStyle.Render("⇄")+"   "+
-			playStyle.Render(playIcon)+"   "+
-			heartStyle.Render(heartIcon),
-		contentW,
-	)
+	controlsStr := repeatStyle.Render(repeatIcon) + "   " +
+		shuffleStyle.Render("⇄") + "   " +
+		playStyle.Render(playIcon) + "   " +
+		heartStyle.Render(heartIcon)
+	if m.preMuteVol >= 0 {
+		controlsStr += "   " + styles.Playing.Render("🔇")
+	}
+	controls := centerStr(controlsStr, contentW)
 
 	errLine := m.statusLine(contentW)
+	if errLine == "" && m.memStats != "" {
+		// --mem-profiling used to live in the header row.
+		errLine = centerStr(muted.Render(m.memStats), contentW)
+	}
 
 	// Compact block: no "Now Playing" label, rule or progress bar; the icons
 	// sit right under the track info and the status line closes the block.
@@ -3607,7 +3577,8 @@ func (m *Model) statusLines(w int) []string {
 // which grow as hints wrap on a narrow terminal — so both are measured rather
 // than assumed.
 func (m *Model) panelHeight() int {
-	fixedOverhead := 6 + m.nowPlayingHeight() + len(m.statusLines(m.width-4))
+	// top border, split divider, join divider, bottom border
+	fixedOverhead := 4 + m.nowPlayingHeight() + len(m.statusLines(m.width-4))
 	return max(3, m.height-fixedOverhead)
 }
 

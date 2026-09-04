@@ -91,7 +91,6 @@ Full tracks stream via Chrome with Widevine DRM. On Linux amd64, Chrome is auto-
 - **Fully keyboard-driven** — every action reachable without touching the mouse
 - **Vim-style command mode** — press `:` to run commands like `:save <name>`, `:vol 80`, `:mute`, or `:q` / `:quit` to exit
 - **Vim-style navigation** — `gg` to jump to top, `G` to jump to bottom, `j`/`k` for list scrolling in panels
-- **Animated bear mascot** 🐻 — sleeps when idle, dances when music is playing
 - **Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea)** — a modern, composable TUI framework
 
 ### 🔌 Extensibility

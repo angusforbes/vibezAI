@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The separate queue panel is gone** — its keys rerouted everything (`s` became "save", `space` did nothing, `R` seeded from the row), which made the same-looking list behave differently depending on how you got there. The queue under Now Playing is now the only queue view; its former extras live on as `c` (clear) and `:save <name>`.
 - **Radio no longer drops queued tracks** — starting a station used to remove everything queued after the seed. It now leaves the queue alone and appends its picks after what is already lined up; a seed that is not queued is still inserted as the next track.
 - **`R` is now a one-shot "five related songs"** — it fetches the seed's station once and inserts up to five new picks right after the highlighted (or playing) track; the continuous station mode moved to `:radio`.
+- **Header row removed** — the bear animation, the glowing title and the bitrate/volume readout are gone, freeing two more rows for the panels. Volume changes now flash the new level on the status line for a moment, a 🔇 appears next to the transport icons while muted, and `--mem-profiling` prints into the status row instead.
+- **Compact Now Playing block** — the "Now Playing" label, its rule and the progress bar are gone; the block is now "Artist — Title", "Album • elapsed / total", the transport icons and the status line, four rows instead of twelve, so the queue and vibe panels gain eight rows. The album-art view is unchanged.
 - **`s` jumps to a random queued song** — it starts a random other track from the queue immediately; the engine's shuffled play order moved to `:shuffle`.
 
 ### Added
