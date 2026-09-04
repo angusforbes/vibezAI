@@ -149,6 +149,18 @@ type searchResultMsg struct {
 	err    error
 }
 
+// searchMoreMsg carries a further page of catalog songs for the Tracks section.
+type searchMoreMsg struct {
+	gen  int // searchGen the page was requested for; stale pages are dropped
+	hops int // pages already chained for one "+ 5 more" press
+	page provider.SongPage
+	err  error
+}
+
+// maxSearchPageHops bounds how many pages one "+ 5 more" press may chain
+// through when Apple's pages are full of songs already listed (library copies).
+const maxSearchPageHops = 3
+
 // searchDebounceMsg is emitted after the debounce delay. The gen field lets
 // Update discard messages that belong to earlier keystrokes.
 type searchDebounceMsg struct {
@@ -343,8 +355,9 @@ type Model struct {
 
 	// Search accumulation (mode == modeSearch)
 	searchQuery  string
-	searchCursor int // rune index of the cursor within searchQuery
-	searchGen    int // incremented on every keystroke; used to discard stale results
+	searchCursor int    // rune index of the cursor within searchQuery
+	searchGen    int    // incremented on every keystroke; used to discard stale results
+	searchShown  string // query whose results the search panel currently lists
 
 	// Command accumulation (mode == modeCommand)
 	cmdBuf     string
@@ -942,7 +955,27 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					len(msg.result.Tracks), len(msg.result.Albums), len(msg.result.Playlists)))
 			}
 			m.search.SetResults(msg.result, false, nil)
+			m.searchShown = msg.query
 		}
+
+	case searchMoreMsg:
+		if msg.gen != m.searchGen { // a newer query replaced these results
+			return m, nil
+		}
+		if msg.err != nil {
+			m.search.EndPaging()
+			m.appendLog(fmt.Sprintf("[search] more tracks: %v", msg.err))
+			m.errMsg = fmt.Sprintf("search: %v", msg.err)
+			m.errExpiry = time.Now().Add(4 * time.Second)
+			return m, nil
+		}
+		still := m.search.AppendCatalogTracks(msg.page)
+		m.appendLog(fmt.Sprintf("[search] +%d catalog track(s) (next offset %d, more=%v)",
+			len(msg.page.Tracks), msg.page.Next, msg.page.More))
+		if still > 0 && msg.hops < maxSearchPageHops {
+			return m, m.fetchMoreTracksCmd(still, msg.hops+1)
+		}
+		return m, nil
 
 	case searchCollectionTracksMsg:
 		if msg.err != nil {
@@ -1181,10 +1214,13 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		}
 		// "+ 5 more" / "− 5 less" rows grow or shrink their section.
 		if section, more, ok := m.search.SelectedToggle(); ok {
-			if more {
-				m.search.ShowMore(section)
-			} else {
+			if !more {
 				m.search.ShowLess(section)
+				return nil
+			}
+			// "+ 5 more" past the loaded catalog songs pages Apple's results.
+			if wanted := m.search.ShowMore(section); wanted > 0 {
+				return m.fetchMoreTracksCmd(wanted, 0)
 			}
 			return nil
 		}
@@ -2181,6 +2217,27 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	}
 
 	return nil
+}
+
+// fetchMoreTracksCmd requests the next page of catalog songs for the Tracks
+// section so it can grow past Apple's 25-per-request cap. wanted is how many
+// items the user is owed from the page; hops counts pages already chained.
+func (m *Model) fetchMoreTracksCmd(wanted, hops int) tea.Cmd {
+	pager, ok := m.provider.(provider.SongPager)
+	if !ok {
+		return nil
+	}
+	offset, ok := m.search.BeginPaging(wanted)
+	if !ok {
+		return nil
+	}
+	gen, query := m.searchGen, m.searchShown
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		page, err := pager.SearchSongsPage(ctx, query, offset)
+		return searchMoreMsg{gen: gen, hops: hops, page: page, err: err}
+	}
 }
 
 func (m *Model) scheduleSearch(query string) tea.Cmd {

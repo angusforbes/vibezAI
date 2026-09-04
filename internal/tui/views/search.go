@@ -98,6 +98,13 @@ type SearchModel struct {
 	height   int
 	loading  bool
 	err      error
+
+	// Catalog Tracks paging: Apple answers at most 25 songs per request, so
+	// "+ 5 more" fetches the next page once the loaded ones run out.
+	catalogNext   int  // offset of the next page
+	catalogMore   bool // a further page may exist
+	paging        bool // a page fetch is in flight
+	pendingReveal int  // items the in-flight page should reveal on arrival
 }
 
 func NewSearch(prov provider.Provider) *SearchModel {
@@ -117,6 +124,11 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.err = err
 	m.results = result
 	m.shown = nil // a new result set starts at the default count per section
+	m.catalogNext, m.catalogMore = 0, false
+	m.paging, m.pendingReveal = false, 0
+	if result != nil {
+		m.catalogNext, m.catalogMore = result.CatalogNext, result.CatalogMore
+	}
 	m.rebuildRows()
 	m.cursor = m.firstEntryRow()
 	m.scroll = 0
@@ -219,8 +231,157 @@ func (m *SearchModel) shownCount(section string, total int) int {
 	return max(0, min(n, total))
 }
 
-// ShowMore reveals up to searchSectionCap further items of a section.
-func (m *SearchModel) ShowMore(section string) { m.adjustShown(section, searchSectionCap) }
+// ShowMore reveals up to searchSectionCap further items of a section. For
+// the catalog Tracks section it reports how many of those it could not
+// reveal because they have to come from Apple's next page (0 when the loaded
+// results sufficed or no further page can exist); the caller then starts
+// that fetch with BeginPaging.
+func (m *SearchModel) ShowMore(section string) (wanted int) {
+	total := m.sectionTotal(section)
+	before := m.shownCount(section, total)
+	m.adjustShown(section, searchSectionCap)
+	revealed := m.shownCount(section, total) - before
+	if section != "Tracks" || !m.catalogMore || m.paging {
+		return 0
+	}
+	return searchSectionCap - revealed
+}
+
+// BeginPaging marks a catalog page fetch as in flight and returns the offset
+// to request; ok is false when no page can exist or one is already loading.
+func (m *SearchModel) BeginPaging(wanted int) (offset int, ok bool) {
+	if !m.catalogMore || m.paging || m.results == nil {
+		return 0, false
+	}
+	m.paging = true
+	m.pendingReveal = wanted
+	m.rebuildRows()
+	return m.catalogNext, true
+}
+
+// EndPaging clears the in-flight state after a failed page fetch.
+func (m *SearchModel) EndPaging() {
+	m.paging, m.pendingReveal = false, 0
+	m.rebuildRows()
+	m.clampCursor()
+}
+
+// Paging reports whether a catalog page fetch is in flight.
+func (m *SearchModel) Paging() bool { return m.paging }
+
+// AppendCatalogTracks merges a further page into the Tracks section, skipping
+// songs already listed (by id or artist/title), reveals what the user asked
+// for with "+ 5 more" and returns how many of those are still owed because
+// the page did not carry enough new songs (0 when satisfied or exhausted).
+func (m *SearchModel) AppendCatalogTracks(page provider.SongPage) (stillWanted int) {
+	m.paging = false
+	if m.results == nil { // a new query replaced these results meanwhile
+		m.pendingReveal = 0
+		return 0
+	}
+	seen := make(map[string]bool, 2*len(m.results.Tracks))
+	for _, t := range m.results.Tracks {
+		seen[trackKey(t)] = true
+		seen[PlaybackID(t)] = true
+	}
+	added := 0
+	for _, t := range page.Tracks {
+		if seen[trackKey(t)] || seen[PlaybackID(t)] || isLibraryTrack(t) {
+			continue
+		}
+		seen[trackKey(t)] = true
+		seen[PlaybackID(t)] = true
+		m.results.Tracks = append(m.results.Tracks, t)
+		added++
+	}
+	m.catalogNext, m.catalogMore = page.Next, page.More
+	if reveal := min(m.pendingReveal, added); reveal > 0 {
+		total := m.sectionTotal("Tracks")
+		if m.shown == nil {
+			m.shown = map[string]int{}
+		}
+		m.shown["Tracks"] = min(total, m.shownCount("Tracks", total-added)+reveal)
+		m.pendingReveal -= reveal
+	}
+	if !m.catalogMore {
+		m.pendingReveal = 0
+	}
+	key := ""
+	if m.cursor >= 0 && m.cursor < len(m.rows) {
+		key = m.rows[m.cursor].key()
+	}
+	m.rebuildRows()
+	m.reselect(key)
+	return m.pendingReveal
+}
+
+// trackKey identifies a song across library and catalog copies.
+func trackKey(t provider.Track) string {
+	return strings.ToLower(t.Artist) + "§" + strings.ToLower(t.Title)
+}
+
+// key names a row so the highlight can find it again after rows are rebuilt.
+func (r searchRow) key() string {
+	switch {
+	case r.header:
+		return "h:" + r.label
+	case r.toggle:
+		if r.more {
+			return "+:" + r.label
+		}
+		return "-:" + r.label
+	case r.track != nil:
+		return "t:" + PlaybackID(*r.track)
+	case r.album != nil:
+		return "a:" + r.album.ID
+	case r.playlist != nil:
+		return "p:" + r.playlist.ID
+	}
+	return ""
+}
+
+// reselect puts the highlight back on the row named by key; a vanished
+// "+ more" control falls back to its section's "− less" control, anything
+// else stays where it was (clamped).
+func (m *SearchModel) reselect(key string) {
+	if key != "" {
+		for i, r := range m.rows {
+			if r.key() == key {
+				m.cursor = i
+				m.ensureCursorVisible()
+				return
+			}
+		}
+		if strings.HasPrefix(key, "+:") {
+			for i, r := range m.rows {
+				if r.toggle && !r.more && r.label == key[2:] {
+					m.cursor = i
+					m.ensureCursorVisible()
+					return
+				}
+			}
+		}
+	}
+	m.clampCursor()
+}
+
+// clampCursor keeps the highlight on an existing selectable row.
+func (m *SearchModel) clampCursor() {
+	if len(m.rows) == 0 {
+		m.cursor, m.scroll = 0, 0
+		return
+	}
+	if m.cursor >= len(m.rows) {
+		m.cursor = len(m.rows) - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if !m.rows[m.cursor].isItem() {
+		m.cursor = m.advance(m.cursor, -1)
+	}
+	m.ensureCursorVisible()
+}
 
 // ShowLess hides the last up-to-searchSectionCap items of a section; a
 // section can fold down to just its header and controls.
@@ -265,8 +426,12 @@ func (m *SearchModel) adjustShown(section string, delta int) {
 // more" only while something is hidden and the section is open, "− 5 less"
 // only while something is shown. A folded section is just its header; enter
 // on it opens it again.
+//
+// The catalog Tracks section keeps its "+ 5 more" while Apple may hold a
+// further page, even when everything loaded so far is on screen.
 func (m *SearchModel) sectionRows(label string, total int, item func(i int) searchRow) {
-	if total == 0 {
+	pageable := label == "Tracks" && m.catalogMore
+	if total == 0 && !pageable {
 		return
 	}
 	n := m.shownCount(label, total)
@@ -274,8 +439,15 @@ func (m *SearchModel) sectionRows(label string, total int, item func(i int) sear
 	for i := range n {
 		m.rows = append(m.rows, item(i))
 	}
-	if n > 0 && n < total {
-		m.rows = append(m.rows, searchRow{toggle: true, label: label, more: true, step: min(searchSectionCap, total-n)})
+	switch {
+	case n > 0 && n < total:
+		step := min(searchSectionCap, total-n)
+		if pageable {
+			step = searchSectionCap
+		}
+		m.rows = append(m.rows, searchRow{toggle: true, label: label, more: true, step: step})
+	case pageable && (n > 0 || total == 0):
+		m.rows = append(m.rows, searchRow{toggle: true, label: label, more: true, step: searchSectionCap})
 	}
 	if n > 0 {
 		m.rows = append(m.rows, searchRow{toggle: true, label: label, more: false, step: min(searchSectionCap, n)})
@@ -533,6 +705,9 @@ func (m *SearchModel) View() string {
 			label := fmt.Sprintf("− %d less", row.step)
 			if row.more {
 				label = fmt.Sprintf("+ %d more", row.step)
+				if m.paging && row.label == "Tracks" {
+					label = "⏳ loading more…"
+				}
 			}
 			ts := tagStyle
 			if sel {

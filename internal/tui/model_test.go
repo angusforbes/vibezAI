@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -3688,5 +3689,110 @@ func TestHandleNormalKey_F_IsDisabled(t *testing.T) {
 	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'f', Text: "f"}, "f")
 	if cmd != nil || m.favorites["fav-id"] {
 		t.Error("f is disabled and must not toggle a favourite")
+	}
+}
+
+// pagingProvider is a mockProvider that can page catalog songs.
+type pagingProvider struct {
+	mockProvider
+	offsets []int
+	page    provider.SongPage
+	err     error
+}
+
+func (p *pagingProvider) SearchSongsPage(_ context.Context, _ string, offset int) (provider.SongPage, error) {
+	p.offsets = append(p.offsets, offset)
+	return p.page, p.err
+}
+
+// searchAtTracksMore plants a pageable Tracks section and puts the cursor on
+// its "+ 5 more" row.
+func searchAtTracksMore(m *Model, tracks int) {
+	m.mode = modeSearch
+	m.search.SetSize(80, 40)
+	var ts []provider.Track
+	for i := range tracks {
+		ts = append(ts, provider.Track{ID: fmt.Sprintf("c%d", i), CatalogID: fmt.Sprintf("c%d", i), Title: fmt.Sprintf("Song %d", i), Artist: "Band"})
+	}
+	m.search.SetResults(&provider.SearchResult{Tracks: ts, CatalogNext: 25, CatalogMore: true}, false, nil)
+	m.searchShown = "band"
+	for range tracks {
+		m.search, _ = m.search.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+}
+
+func TestHandleSearchKey_EnterOnTracksMore_PagesApple(t *testing.T) {
+	prov := &pagingProvider{page: provider.SongPage{Tracks: []provider.Track{
+		{ID: "c9", CatalogID: "c9", Title: "Song 9", Artist: "Band"},
+		{ID: "c10", CatalogID: "c10", Title: "Song 10", Artist: "Band"},
+	}, Next: 50, More: true}}
+	m := newModel(newMockPlayer())
+	m.provider = prov
+	searchAtTracksMore(m, 3)
+	if sec, more, ok := m.search.SelectedToggle(); !ok || sec != "Tracks" || !more {
+		t.Fatalf("setup: cursor should be on the Tracks more row, got %q more=%v ok=%v", sec, more, ok)
+	}
+
+	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on a pageable more row must fetch the next page")
+	}
+	if !m.search.Paging() {
+		t.Fatal("the panel should show the page as loading")
+	}
+	msg := cmd()
+	if len(prov.offsets) != 1 || prov.offsets[0] != 25 {
+		t.Fatalf("provider should be asked for offset 25, got %v", prov.offsets)
+	}
+	_, next := m.Update(msg)
+	if len(m.search.Results()) != 5 {
+		t.Fatalf("page should be merged into the results: %d tracks", len(m.search.Results()))
+	}
+	// Two new songs arrived but five were owed, so the model chains one more page.
+	if next == nil {
+		t.Fatal("still owed 3 items with more pages available: expected a chained fetch")
+	}
+	if !m.search.Paging() {
+		t.Fatal("chained fetch should be marked in flight")
+	}
+	next()
+	if len(prov.offsets) != 2 || prov.offsets[1] != 50 {
+		t.Fatalf("chained fetch should use the new offset 50, got %v", prov.offsets)
+	}
+}
+
+func TestSearchMoreMsg_StaleOrFailedPages(t *testing.T) {
+	prov := &pagingProvider{err: errors.New("boom")}
+	m := newModel(newMockPlayer())
+	m.provider = prov
+	searchAtTracksMore(m, 3)
+	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected a fetch")
+	}
+	msg := cmd()
+	// The user typed on before the page came back: the stale page is ignored.
+	m.searchGen++
+	m.Update(msg)
+	if m.errMsg != "" {
+		t.Fatalf("a stale page must be dropped silently, got error %q", m.errMsg)
+	}
+	// A failed page for the current query clears the loading state and reports.
+	m.searchGen--
+	_, next := m.Update(msg)
+	if m.search.Paging() || next != nil || !strings.Contains(m.errMsg, "boom") {
+		t.Fatalf("failed page: paging=%v next=%v err=%q", m.search.Paging(), next != nil, m.errMsg)
+	}
+	if len(m.search.Results()) != 3 {
+		t.Fatalf("results must be untouched by a failed page, got %d", len(m.search.Results()))
+	}
+}
+
+func TestHandleSearchKey_EnterOnTracksMore_ProviderCannotPage(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &mockProvider{}
+	searchAtTracksMore(m, 3)
+	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || m.search.Paging() {
+		t.Fatal("a provider without paging must leave the panel as it is")
 	}
 }

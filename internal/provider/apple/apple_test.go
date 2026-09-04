@@ -3,6 +3,7 @@ package apple_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1561,4 +1562,78 @@ func songJSONWithCatalog(id, catalogID, name, artist, album string, durationMs i
 	s := songJSON(id, name, artist, album, durationMs, artURL)
 	s["attributes"].(map[string]any)["playParams"] = map[string]any{"id": id, "kind": "song", "catalogId": catalogID}
 	return s
+}
+
+// fullSongPage returns catalogSongPageSize (25) playable songs so a search
+// looks like it has a further page.
+func fullSongPage(prefix string) []any {
+	var songs []any
+	for i := range 25 {
+		id := fmt.Sprintf("%s%d", prefix, i)
+		songs = append(songs, songJSON(id, "Song "+id, "Band", "Album", 180000, ""))
+	}
+	return songs
+}
+
+func TestSearch_ReportsFurtherCatalogPage(t *testing.T) {
+	libEmpty := map[string]any{"results": map[string]any{}}
+	catResp := map[string]any{"results": map[string]any{
+		"songs":     map[string]any{"data": fullSongPage("s")},
+		"albums":    map[string]any{"data": []any{}},
+		"playlists": map[string]any{"data": []any{}},
+	}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		searchHandler(t, w, r, libEmpty, catResp)
+	}))
+	defer srv.Close()
+
+	result, err := newTestProvider(t, srv).Search(context.Background(), "band")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(result.Tracks) != 25 || result.CatalogNext != 25 || !result.CatalogMore {
+		t.Fatalf("a full page should announce a further one: tracks=%d next=%d more=%v", len(result.Tracks), result.CatalogNext, result.CatalogMore)
+	}
+
+	// A short page is the last one.
+	catResp["results"].(map[string]any)["songs"] = map[string]any{"data": []any{songJSON("1", "Only", "Band", "Album", 1000, "")}}
+	result, err = newTestProvider(t, srv).Search(context.Background(), "band")
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if result.CatalogMore || result.CatalogNext != 1 {
+		t.Fatalf("a short page must not announce a further one: next=%d more=%v", result.CatalogNext, result.CatalogMore)
+	}
+}
+
+func TestSearchSongsPage_RequestsOffsetAndFilters(t *testing.T) {
+	var gotOffset, gotLimit string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "/catalog/us/search") {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		gotOffset = r.URL.Query().Get("offset")
+		gotLimit = r.URL.Query().Get("limit")
+		writeJSON(t, w, map[string]any{"results": map[string]any{"songs": map[string]any{"data": []any{
+			songJSON("10", "Ten", "Band", "Album", 1000, ""),
+			songJSONNoPlay("11", "Radio Only", "Band", "Album", 1000),
+			songJSONNoStream("12", "Purchase Only", "Band", "Album", 1000),
+			songJSON("13", "Thirteen", "Band", "Album", 1000, ""),
+		}}}})
+	}))
+	defer srv.Close()
+
+	page, err := newTestProvider(t, srv).SearchSongsPage(context.Background(), "band", 25)
+	if err != nil {
+		t.Fatalf("SearchSongsPage: %v", err)
+	}
+	if gotOffset != "25" || gotLimit != "25" {
+		t.Fatalf("request should carry offset=25 limit=25, got offset=%q limit=%q", gotOffset, gotLimit)
+	}
+	if len(page.Tracks) != 2 || page.Tracks[0].ID != "10" || page.Tracks[1].ID != "13" {
+		t.Fatalf("unplayable songs must be filtered like Search does, got %+v", page.Tracks)
+	}
+	if page.Next != 29 || page.More {
+		t.Fatalf("4 raw songs: next offset 29 and no further page, got next=%d more=%v", page.Next, page.More)
+	}
 }

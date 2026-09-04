@@ -59,6 +59,26 @@ type SearchResult struct {
 	// cannot distinguish "nothing matched the query" from "one backend is
 	// down and these results are incomplete".
 	Warnings []string
+
+	// CatalogNext is the offset of the next page of catalog songs and
+	// CatalogMore reports whether such a page may exist. Providers that page
+	// (see SongPager) fill these in so a UI can offer "more" past the first
+	// response.
+	CatalogNext int
+	CatalogMore bool
+}
+
+// SongPage is one further page of catalog song matches.
+type SongPage struct {
+	Tracks []Track
+	Next   int  // offset to request the page after this one
+	More   bool // whether a further page may exist
+}
+
+// SongPager is implemented by providers that can page through catalog song
+// matches beyond the first Search response.
+type SongPager interface {
+	SearchSongsPage(ctx context.Context, query string, offset int) (SongPage, error)
 }
 
 type Provider interface {

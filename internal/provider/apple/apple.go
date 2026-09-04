@@ -356,6 +356,96 @@ func toPlaylist(r playlistResource) provider.Playlist {
 
 // --- Provider interface ---
 
+// catalogSongPageSize is Apple's maximum for a song search request; a full
+// page means a further page may exist.
+const catalogSongPageSize = 25
+
+// catSongsOut is one page of raw catalog song matches.
+type catSongsOut struct {
+	songs           []songResource
+	verifiedStreams bool
+	err             error
+}
+
+// playable converts the page to tracks, dropping songs MusicKit cannot play
+// and (artist, title) pairs already present in seen, which it extends.
+// Songs without PlayParams are radio-only / unavailable and will always fail
+// in MusicKit, so we drop them here before they can pollute the queue.
+// We also require kind == "song" to exclude music videos, radio episodes, etc.
+// Finally, when the page came from amp-api we require extendedAssetUrls to be
+// present and non-empty: songs that lack streaming URLs are purchase-only or
+// unavailable in the user's storefront, so they would fail on playback too.
+func (c catSongsOut) playable(seen map[string]bool) []provider.Track {
+	var out []provider.Track
+	for _, s := range c.songs {
+		if s.Attributes.PlayParams == nil || s.Attributes.PlayParams.Kind != "song" {
+			continue
+		}
+		if c.verifiedStreams && !s.Attributes.ExtendedAssetURLs.hasStream() {
+			continue
+		}
+		t := toTrack(s)
+		key := strings.ToLower(t.Artist) + "§" + strings.ToLower(t.Title)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// catalogSongPage fetches one page of catalog songs matching query.
+//
+// It asks amp-api first: that returns extendedAssetUrls so purchase-only /
+// region-locked tracks can be filtered before they reach the queue. amp-api
+// is an undocumented web-player endpoint and can reject otherwise valid
+// developer/user tokens, so on failure it falls back to Apple's supported
+// catalog search, which omits extendedAssetUrls; playback then remains the
+// final authority for storefront availability.
+func (a *AppleProvider) catalogSongPage(ctx context.Context, query string, offset int) catSongsOut {
+	sf, err := a.storefront(ctx)
+	if err != nil {
+		return catSongsOut{err: err}
+	}
+	params := fmt.Sprintf("term=%s&types=songs&limit=%d", url.QueryEscape(query), catalogSongPageSize)
+	if offset > 0 {
+		params += fmt.Sprintf("&offset=%d", offset)
+	}
+	req, err := a.newCatalogRequest(ctx, http.MethodGet, fmt.Sprintf("/catalog/%s/search?%s&extend=extendedAssetUrls", sf, params))
+	if err != nil {
+		return catSongsOut{err: err}
+	}
+	var resp searchResponse
+	if err := a.do(req, &resp); err == nil {
+		return catSongsOut{songs: resp.Results.Songs.Data, verifiedStreams: true}
+	}
+	fallbackReq, err := a.newRequest(ctx, http.MethodGet, fmt.Sprintf("/catalog/%s/search?%s", sf, params))
+	if err != nil {
+		return catSongsOut{err: err}
+	}
+	resp = searchResponse{}
+	if err := a.do(fallbackReq, &resp); err != nil {
+		return catSongsOut{err: err}
+	}
+	return catSongsOut{songs: resp.Results.Songs.Data}
+}
+
+// SearchSongsPage returns the catalog songs matching query from offset on,
+// filtered like Search's Tracks. The caller dedupes against what it already
+// shows; a full page reports More so the UI can offer the next one.
+func (a *AppleProvider) SearchSongsPage(ctx context.Context, query string, offset int) (provider.SongPage, error) {
+	page := a.catalogSongPage(ctx, query, offset)
+	if page.err != nil {
+		return provider.SongPage{}, page.err
+	}
+	return provider.SongPage{
+		Tracks: page.playable(map[string]bool{}),
+		Next:   offset + len(page.songs),
+		More:   len(page.songs) >= catalogSongPageSize,
+	}, nil
+}
+
 // Search returns results from both the user's library and the catalog.
 // Library tracks appear first (guaranteed playable); catalog tracks follow,
 // deduplicated by (artist, title).  Any catalog track that MusicKit.js
@@ -365,11 +455,6 @@ func (a *AppleProvider) Search(ctx context.Context, query string) (*provider.Sea
 		songs     []songResource
 		playlists []playlistResource
 		err       error
-	}
-	type catSongsOut struct {
-		songs           []songResource
-		verifiedStreams bool
-		err             error
 	}
 	type catCollOut struct {
 		albums    []albumResource
@@ -404,45 +489,9 @@ func (a *AppleProvider) Search(ctx context.Context, query string) (*provider.Sea
 		}
 	}()
 
-	// Catalog songs via amp-api: returns extendedAssetUrls so we can filter
-	// purchase-only / region-locked tracks before they reach the queue.
-	go func() {
-		sf, err := a.storefront(ctx)
-		if err != nil {
-			catSongsCh <- catSongsOut{err: err}
-			return
-		}
-		ep := fmt.Sprintf("/catalog/%s/search?term=%s&types=songs&limit=25&extend=extendedAssetUrls",
-			sf, url.QueryEscape(query))
-		req, err := a.newCatalogRequest(ctx, http.MethodGet, ep)
-		if err != nil {
-			catSongsCh <- catSongsOut{err: err}
-			return
-		}
-		var resp searchResponse
-		if err := a.do(req, &resp); err == nil {
-			catSongsCh <- catSongsOut{songs: resp.Results.Songs.Data, verifiedStreams: true}
-			return
-		}
-
-		// amp-api is an undocumented web-player endpoint and can reject otherwise
-		// valid developer/user tokens. Fall back to Apple's supported catalog
-		// search. It omits extendedAssetUrls, so playback remains the final
-		// authority for storefront availability.
-		fallbackEP := fmt.Sprintf("/catalog/%s/search?term=%s&types=songs&limit=25",
-			sf, url.QueryEscape(query))
-		fallbackReq, fallbackErr := a.newRequest(ctx, http.MethodGet, fallbackEP)
-		if fallbackErr != nil {
-			catSongsCh <- catSongsOut{err: fallbackErr}
-			return
-		}
-		resp = searchResponse{}
-		if fallbackErr = a.do(fallbackReq, &resp); fallbackErr != nil {
-			catSongsCh <- catSongsOut{err: fallbackErr}
-			return
-		}
-		catSongsCh <- catSongsOut{songs: resp.Results.Songs.Data}
-	}()
+	// Catalog songs (first page); see catalogSongPage for the amp-api /
+	// fallback dance.
+	go func() { catSongsCh <- a.catalogSongPage(ctx, query, 0) }()
 
 	// Catalog albums + playlists via the standard API.
 	// amp-api.music.apple.com is a web-player endpoint that only reliably
@@ -516,23 +565,9 @@ func (a *AppleProvider) Search(ctx context.Context, query string) (*provider.Sea
 	// that lack streaming URLs are purchase-only or unavailable in the user's
 	// storefront, so they would fail on playback too.
 	if catSongs.err == nil {
-		for _, s := range catSongs.songs {
-			if s.Attributes.PlayParams == nil {
-				continue
-			}
-			if s.Attributes.PlayParams.Kind != "song" {
-				continue
-			}
-			if catSongs.verifiedStreams && !s.Attributes.ExtendedAssetURLs.hasStream() {
-				continue
-			}
-			t := toTrack(s)
-			key := strings.ToLower(t.Artist) + "§" + strings.ToLower(t.Title)
-			if !seen[key] {
-				result.Tracks = append(result.Tracks, t)
-				seen[key] = true
-			}
-		}
+		result.Tracks = append(result.Tracks, catSongs.playable(seen)...)
+		result.CatalogNext = len(catSongs.songs)
+		result.CatalogMore = len(catSongs.songs) >= catalogSongPageSize
 	}
 
 	// Catalog albums + playlists — deduplicate against library playlists.

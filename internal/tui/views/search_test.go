@@ -1021,3 +1021,140 @@ func TestPlaybackID_LibraryID(t *testing.T) {
 		t.Errorf("PlaybackID(no catalogID) = %q, want %q", got, "i.library-id")
 	}
 }
+
+// catalogPage builds n catalog tracks named from `from` for paging tests.
+func catalogPage(from, n int) []provider.Track {
+	var out []provider.Track
+	for i := from; i < from+n; i++ {
+		out = append(out, provider.Track{ID: fmt.Sprintf("c%d", i), CatalogID: fmt.Sprintf("c%d", i), Title: fmt.Sprintf("Song %d", i), Artist: "Band"})
+	}
+	return out
+}
+
+func tracksSection(s *SearchModel) (items int, more, less bool) {
+	for _, r := range s.rows {
+		if r.label != "Tracks" && r.track == nil {
+			continue
+		}
+		switch {
+		case r.track != nil && !isLibraryTrack(*r.track):
+			items++
+		case r.toggle && r.more:
+			more = true
+		case r.toggle && !r.more:
+			less = true
+		}
+	}
+	return
+}
+
+func TestSearch_TracksKeepMoreRowWhileApplePagesRemain(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 60)
+	s.SetResults(&provider.SearchResult{Tracks: catalogPage(0, 3), CatalogNext: 25, CatalogMore: true}, false, nil)
+	if items, more, less := tracksSection(s); items != 3 || !more || !less {
+		t.Fatalf("all 3 shown but a further page exists: want more+less rows, got items=%d more=%v less=%v", items, more, less)
+	}
+	for range 3 {
+		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	if sec, more, ok := s.SelectedToggle(); !ok || sec != "Tracks" || !more {
+		t.Fatalf("cursor should be on the Tracks more row, got %q more=%v ok=%v", sec, more, ok)
+	}
+	// Nothing loaded is hidden, so all five have to come from the next page.
+	if wanted := s.ShowMore("Tracks"); wanted != 5 {
+		t.Fatalf("ShowMore should ask for 5 from the next page, got %d", wanted)
+	}
+	offset, ok := s.BeginPaging(5)
+	if !ok || offset != 25 || !s.Paging() {
+		t.Fatalf("BeginPaging: offset=%d ok=%v paging=%v, want 25/true/true", offset, ok, s.Paging())
+	}
+	if !strings.Contains(s.View(), "loading more") {
+		t.Fatalf("the more row should say it is loading: %q", s.View())
+	}
+	if _, ok := s.BeginPaging(5); ok {
+		t.Fatal("a second BeginPaging while one is in flight must be refused")
+	}
+	// The page repeats one song by artist/title and one by id; both are skipped.
+	page := append(catalogPage(3, 7), provider.Track{ID: "x", CatalogID: "x", Title: "song 1", Artist: "band"}, provider.Track{ID: "c4", CatalogID: "c4", Title: "Other", Artist: "Band"})
+	if still := s.AppendCatalogTracks(provider.SongPage{Tracks: page, Next: 50, More: true}); still != 0 {
+		t.Fatalf("the page carried enough songs; still wanted %d", still)
+	}
+	if len(s.results.Tracks) != 10 {
+		t.Fatalf("3 + 7 new tracks expected, got %d", len(s.results.Tracks))
+	}
+	if items, more, less := tracksSection(s); items != 8 || !more || !less || s.Paging() {
+		t.Fatalf("want 3+5 shown with both controls after the page, got items=%d more=%v less=%v paging=%v", items, more, less, s.Paging())
+	}
+	if sec, more, ok := s.SelectedToggle(); !ok || sec != "Tracks" || !more {
+		t.Fatal("highlight should stay on the Tracks more row after the page arrives")
+	}
+	// "+ 5 more" now reveals the two loaded ones and owes three from the next page.
+	if wanted := s.ShowMore("Tracks"); wanted != 3 {
+		t.Fatalf("ShowMore should reveal 2 loaded and want 3 more, got %d", wanted)
+	}
+	if _, ok := s.BeginPaging(3); !ok {
+		t.Fatal("BeginPaging should start the next page")
+	}
+	// The last page is short: everything is revealed and the more row goes away.
+	if still := s.AppendCatalogTracks(provider.SongPage{Tracks: catalogPage(20, 2), Next: 52, More: false}); still != 0 {
+		t.Fatalf("no further page exists, nothing can still be owed: %d", still)
+	}
+	if items, more, less := tracksSection(s); items != 12 || more || !less {
+		t.Fatalf("want all 12 shown and no more row, got items=%d more=%v less=%v", items, more, less)
+	}
+	if sec, more, ok := s.SelectedToggle(); !ok || sec != "Tracks" || more {
+		t.Fatalf("vanished more row should hand the highlight to less, got %q more=%v ok=%v", sec, more, ok)
+	}
+}
+
+func TestSearch_ShowMoreRevealsLoadedTracksBeforePaging(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 60)
+	s.SetResults(&provider.SearchResult{Tracks: catalogPage(0, 12), CatalogNext: 25, CatalogMore: true}, false, nil)
+	if wanted := s.ShowMore("Tracks"); wanted != 0 {
+		t.Fatalf("5 hidden tracks are loaded, no page needed, got wanted=%d", wanted)
+	}
+	if items, _, _ := tracksSection(s); items != 10 {
+		t.Fatalf("10 shown expected, got %d", items)
+	}
+	if wanted := s.ShowMore("Tracks"); wanted != 3 {
+		t.Fatalf("2 revealed, 3 owed from the next page, got %d", wanted)
+	}
+}
+
+func TestSearch_NoPagingWithoutFurtherPage(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 60)
+	s.SetResults(&provider.SearchResult{Tracks: catalogPage(0, 3)}, false, nil)
+	if _, more, _ := tracksSection(s); more {
+		t.Fatal("all shown and no further page: no more row")
+	}
+	if wanted := s.ShowMore("Tracks"); wanted != 0 {
+		t.Fatalf("nothing to page, got wanted=%d", wanted)
+	}
+	if _, ok := s.BeginPaging(5); ok {
+		t.Fatal("BeginPaging must refuse when no page can exist")
+	}
+	// Only the catalog Tracks section pages.
+	s.SetResults(&provider.SearchResult{Tracks: []provider.Track{{ID: "i.1", Title: "Mine"}}, CatalogNext: 25, CatalogMore: true}, false, nil)
+	if wanted := s.ShowMore("Library"); wanted != 0 {
+		t.Fatalf("Library never pages, got wanted=%d", wanted)
+	}
+	if items, more, _ := tracksSection(s); items != 0 || !more {
+		t.Fatalf("an empty Tracks section with a further page should still offer more, got items=%d more=%v", items, more)
+	}
+}
+
+func TestSearch_PageAfterNewQueryIsDropped(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 60)
+	s.SetResults(&provider.SearchResult{Tracks: catalogPage(0, 3), CatalogNext: 25, CatalogMore: true}, false, nil)
+	if _, ok := s.BeginPaging(5); !ok {
+		t.Fatal("BeginPaging should start")
+	}
+	s.SetResults(nil, true, nil) // the user typed on: results cleared, loading again
+	if still := s.AppendCatalogTracks(provider.SongPage{Tracks: catalogPage(3, 5), More: true}); still != 0 || s.Paging() || s.results != nil {
+		t.Fatalf("a late page must not resurrect old results: still=%d paging=%v results=%v", still, s.Paging(), s.results)
+	}
+}
