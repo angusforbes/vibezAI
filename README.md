@@ -269,6 +269,8 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | `space` / `enter` (with a highlighted entry) | Jump to the highlighted queue entry; the queue stays as it is |
 | `d` / `x` (with a highlighted entry) | Remove the highlighted queue entry |
 | `K` / `J` (with a highlighted entry) | Move the highlighted queue entry up / down |
+| `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom of the queue |
+| `shift+d` (with a highlighted entry) | Remove the highlighted entry and everything below it (stops playback if the playing track is among them) |
 | `R` (with a highlighted entry) | Start radio seeded by the highlighted entry |
 | `c` | Clear the queue |
 | `esc` | Drop the highlight; the queue follows the playing track again |

@@ -2158,6 +2158,14 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		m.lastKey = ""
 		m.clearQueueCursor()
 
+	case "shift+up":
+		m.lastKey = ""
+		m.setQueueCursor(0)
+
+	case "shift+down":
+		m.lastKey = ""
+		m.setQueueCursor(len(m.queueTracks) - 1)
+
 	case "q":
 		m.lastKey = ""
 		m.toggleQueueHighlight()
@@ -3515,6 +3523,8 @@ func (m *Model) statusPlayLines(w int) []string {
 			accent.Render("spc/enter") + muted.Render(" play it"),
 			accent.Render("d") + muted.Render(" remove"),
 			accent.Render("K/J") + muted.Render(" move"),
+			accent.Render("⇧↑/⇧↓") + muted.Render(" top/end"),
+			accent.Render("D") + muted.Render(" cut to end"),
 			accent.Render("R") + muted.Render(" radio from it"),
 			accent.Render("c") + muted.Render(" clear all"),
 			accent.Render("esc") + muted.Render(" done"),

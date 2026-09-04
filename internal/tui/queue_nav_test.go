@@ -270,3 +270,55 @@ func TestPlayerKeysStillWorkWhileHighlighting(t *testing.T) {
 		t.Fatal("player keys must not drop the highlight")
 	}
 }
+
+func TestShiftUpDown_JumpToTopAndBottom(t *testing.T) {
+	m, mock := navModel(t)
+	key(m, "shift+down")
+	if m.queueCursor != 3 {
+		t.Fatalf("shift+down should jump to the last entry, got %d", m.queueCursor)
+	}
+	key(m, "shift+up")
+	if m.queueCursor != 0 {
+		t.Fatalf("shift+up should jump to the first entry, got %d", m.queueCursor)
+	}
+	if len(mock.moveInQueueCalls) != 0 || len(m.queueTracks) != 4 {
+		t.Fatal("shift+up/down must only move the highlight, not the tracks")
+	}
+}
+
+func TestShiftD_CutsFromHighlightToEnd(t *testing.T) {
+	m, mock := navModel(t) // playing "Two" (index 1)
+	key(m, "down")         // highlight "Three" (index 2)
+	if cmd := key(m, "D"); cmd != nil {
+		_ = cmd()
+	}
+	if len(m.queueTracks) != 2 || m.queueTracks[1].Title != "Two" {
+		t.Fatalf("queue after D = %+v, want [One Two]", m.queueTracks)
+	}
+	if len(mock.removeFromQueueIdx) != 2 || mock.removeFromQueueIdx[0] != 3 || mock.removeFromQueueIdx[1] != 2 {
+		t.Fatalf("RemoveFromQueue calls = %v, want [3 2] (highest first)", mock.removeFromQueueIdx)
+	}
+	if mock.stopCalled {
+		t.Fatal("playback must continue when the playing track was above the cut")
+	}
+	if m.queueCursor != 1 {
+		t.Fatalf("highlight should move to the new last entry (1), got %d", m.queueCursor)
+	}
+}
+
+func TestShiftD_IncludingPlayingTrackStopsPlayback(t *testing.T) {
+	m, mock := navModel(t) // playing "Two" (index 1)
+	key(m, "q")            // highlight the playing track
+	if cmd := key(m, "D"); cmd != nil {
+		_ = cmd()
+	}
+	if len(m.queueTracks) != 1 || m.queueTracks[0].Title != "One" {
+		t.Fatalf("queue after D = %+v, want [One]", m.queueTracks)
+	}
+	if !mock.stopCalled {
+		t.Fatal("removing the playing track and everything below it should stop playback")
+	}
+	if m.queueCursor != 0 {
+		t.Fatalf("highlight should rest on the remaining entry, got %d", m.queueCursor)
+	}
+}

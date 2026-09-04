@@ -15,7 +15,9 @@ import (
 // enter jumps to the highlighted track with the whole queue left in place, d
 // (also x/delete) removes it, K/J move it, R seeds radio from it, c clears the
 // queue, gg/G jump to the ends and esc drops the cursor so the list follows the
-// playing track again. Every other key behaves exactly as without a highlight.
+// playing track again. shift+↑/↓ jump to the top/bottom of the list and
+// shift+d removes the highlighted entry and everything below it. Every other
+// key behaves exactly as without a highlight.
 
 // noQueueCursor means no entry is highlighted; the list follows playback.
 const noQueueCursor = -1
@@ -186,7 +188,7 @@ func (m *Model) moveQueueTrack(idx, delta int) (int, tea.Cmd) {
 // handleNormalKey's no-panel switch; this covers the actions.
 func (m *Model) handleQueueCursorKey(k string) (tea.Cmd, bool) {
 	switch k {
-	case "K", "shift+up", "ctrl+up", "J", "shift+down", "ctrl+down":
+	case "K", "ctrl+up", "J", "ctrl+down":
 		if !m.queueCursorActive() {
 			// Nothing highlighted yet: highlight the playing track so the
 			// next press moves it.
@@ -197,7 +199,7 @@ func (m *Model) handleQueueCursorKey(k string) (tea.Cmd, bool) {
 			return nil, true
 		}
 		delta := 1
-		if k == "K" || k == "shift+up" || k == "ctrl+up" {
+		if k == "K" || k == "ctrl+up" {
 			delta = -1
 		}
 		newIdx, cmd := m.moveQueueTrack(m.queueCursor, delta)
@@ -227,6 +229,44 @@ func (m *Model) handleQueueCursorKey(k string) (tea.Cmd, bool) {
 		}
 		m.lastKey = ""
 		return cmd, true
+	case "D":
+		m.lastKey = ""
+		return m.deleteQueueTail(m.queueCursor), true
 	}
 	return nil, false
+}
+
+// deleteQueueTail (shift+d) removes the highlighted entry and everything
+// below it. If the playing track is among them, playback stops as well, since
+// nothing is left to play after it.
+func (m *Model) deleteQueueTail(from int) tea.Cmd {
+	if from < 0 || from >= len(m.queueTracks) || from >= len(m.queueIDs) {
+		return nil
+	}
+	last := len(m.queueTracks) - 1
+	includesPlaying := false
+	if cur := m.currentQueueIndex(); cur >= from && m.playerState.Track != nil {
+		includesPlaying = true
+	}
+	removed := len(m.queueTracks) - from
+	m.queueTracks = m.queueTracks[:from]
+	m.queueIDs = m.queueIDs[:from]
+	m.syncQueue()
+	if from > 0 {
+		m.setQueueCursor(from - 1)
+	} else {
+		m.clearQueueCursor()
+	}
+	m.appendLog(fmt.Sprintf("[queue] removed %d track(s) from position %d to the end", removed, from+1))
+	return m.playerCmd(func(p player.Player) error {
+		for i := last; i >= from; i-- {
+			if err := p.RemoveFromQueue(i); err != nil {
+				return err
+			}
+		}
+		if includesPlaying {
+			return p.Stop()
+		}
+		return nil
+	})
 }
