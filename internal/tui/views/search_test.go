@@ -655,19 +655,76 @@ func TestSearch_SectionsCappedAtFive(t *testing.T) {
 		albums = append(albums, provider.Album{ID: fmt.Sprintf("a%d", i), Title: fmt.Sprintf("Album %d", i)})
 	}
 	s.SetResults(&provider.SearchResult{Tracks: tracks, Albums: albums}, false, nil)
-	items, headers := 0, 0
+	items, headers, toggles := 0, 0, 0
 	for _, r := range s.rows {
-		if r.header {
+		switch {
+		case r.header:
 			headers++
-		} else {
+		case r.toggle:
+			toggles++
+		default:
 			items++
 		}
 	}
-	if headers != 3 || items != 15 {
-		t.Fatalf("expected 3 sections of 5 items (albums, library, tracks), got %d headers / %d items", headers, items)
+	if headers != 3 || items != 15 || toggles != 3 {
+		t.Fatalf("expected 3 sections of 5 items plus a more-row each (albums, library, tracks), got %d headers / %d items / %d toggles", headers, items, toggles)
 	}
-	if s.rows[0].label != "Albums" || s.rows[6].label != "Library" || s.rows[12].label != "Tracks" {
-		t.Fatalf("unexpected section order: %q %q %q", s.rows[0].label, s.rows[6].label, s.rows[12].label)
+	// header, 5 items, toggle = 7 rows per section
+	if s.rows[0].label != "Albums" || s.rows[7].label != "Library" || s.rows[14].label != "Tracks" {
+		t.Fatalf("unexpected section order: %q %q %q", s.rows[0].label, s.rows[7].label, s.rows[14].label)
+	}
+	if !s.rows[6].toggle || s.rows[6].hidden != 2 || s.rows[13].hidden != 3 {
+		t.Fatalf("more-rows should count the hidden items: albums %+v, library %+v", s.rows[6], s.rows[13])
+	}
+}
+
+func TestSearch_MoreLessTogglesSection(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 60)
+	var albums []provider.Album
+	for i := range 8 {
+		albums = append(albums, provider.Album{ID: fmt.Sprintf("a%d", i), Title: fmt.Sprintf("Album %d", i)})
+	}
+	s.SetResults(&provider.SearchResult{Albums: albums}, false, nil)
+	if len(s.rows) != 1+5+1 {
+		t.Fatalf("collapsed: rows = %d, want header + 5 + more", len(s.rows))
+	}
+	for range 5 {
+		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	section, ok := s.SelectedToggle()
+	if !ok || section != "Albums" {
+		t.Fatalf("expected the more-row to be selectable at the end of the section, got %q %v", section, ok)
+	}
+	s.ToggleSection(section)
+	if len(s.rows) != 1+8+1 {
+		t.Fatalf("expanded: rows = %d, want header + 8 + less", len(s.rows))
+	}
+	if sec, ok := s.SelectedToggle(); !ok || sec != "Albums" || s.rows[s.cursor].hidden != 0 {
+		t.Fatalf("highlight should stay on the (now less) toggle, got %q %v hidden=%d", sec, ok, s.rows[s.cursor].hidden)
+	}
+	if v := s.View(); !strings.Contains(v, "less") || !strings.Contains(v, "Album 7") {
+		t.Fatalf("expanded view should show all albums and a less row: %q", v)
+	}
+	s.ToggleSection("Albums")
+	if len(s.rows) != 7 || !strings.Contains(s.View(), "+ 3 more") {
+		t.Fatalf("collapsing should restore the cap and the more row: rows=%d view=%q", len(s.rows), s.View())
+	}
+}
+
+func TestSearch_PlaylistRowsAreOneLine(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 60)
+	s.SetResults(&provider.SearchResult{Playlists: []provider.Playlist{{ID: "p1", Name: "Chill", TrackCount: 12}, {ID: "p2", Name: "Focus"}}}, false, nil)
+	if rowLines(s.rows[1]) != 1 || rowLines(s.rows[2]) != 1 {
+		t.Fatal("playlist rows should take one line")
+	}
+	lines := strings.Split(strings.TrimRight(s.View(), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("header + 2 playlists should render as 3 lines, got %d: %q", len(lines), lines)
+	}
+	if !strings.Contains(lines[1], "Chill") || !strings.Contains(lines[1], "12 tracks") {
+		t.Fatalf("playlist line should carry the count inline: %q", lines[1])
 	}
 }
 

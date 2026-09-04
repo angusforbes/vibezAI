@@ -61,20 +61,23 @@ type searchResultMsg struct {
 // Section headers are non-selectable; item rows (track/album/playlist) are selectable.
 type searchRow struct {
 	header   bool
-	label    string // header text (only when header=true)
+	label    string // header text (only when header=true); section name for toggle rows
 	track    *provider.Track
 	album    *provider.Album
 	playlist *provider.Playlist
+	toggle   bool // "+ N more" / "− less" row for a capped section
+	hidden   int  // items hidden behind the cap (toggle rows while collapsed)
 }
 
-// isItem reports whether this row is a selectable item (not a header).
+// isItem reports whether this row is selectable (an item or a more/less toggle).
 func (r searchRow) isItem() bool {
-	return r.track != nil || r.album != nil || r.playlist != nil
+	return r.track != nil || r.album != nil || r.playlist != nil || r.toggle
 }
 
-// rowLines returns the number of visual lines a row occupies.
+// rowLines returns the number of visual lines a row occupies. Playlists and
+// the more/less toggles are one line; tracks and albums carry a detail line.
 func rowLines(r searchRow) int {
-	if r.header {
+	if r.header || r.toggle || r.playlist != nil {
 		return 1
 	}
 	return 2
@@ -85,6 +88,7 @@ func rowLines(r searchRow) int {
 type SearchModel struct {
 	provider provider.Provider
 	results  *provider.SearchResult
+	expanded map[string]bool // sections showing everything instead of the first few
 	rows     []searchRow
 	cursor   int // row index of the currently highlighted item
 	scroll   int // index of the first rendered row
@@ -110,9 +114,54 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.loading = loading
 	m.err = err
 	m.results = result
+	m.expanded = nil // a new result set starts collapsed
 	m.rebuildRows()
 	m.cursor = m.advance(-1, 1)
 	m.scroll = 0
+}
+
+// SelectedToggle reports the section whose more/less row is highlighted.
+func (m *SearchModel) SelectedToggle() (string, bool) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || !m.rows[m.cursor].toggle {
+		return "", false
+	}
+	return m.rows[m.cursor].label, true
+}
+
+// ToggleSection expands or collapses a section and keeps the highlight on
+// its more/less row.
+func (m *SearchModel) ToggleSection(section string) {
+	if m.expanded == nil {
+		m.expanded = map[string]bool{}
+	}
+	m.expanded[section] = !m.expanded[section]
+	m.rebuildRows()
+	for i, r := range m.rows {
+		if r.toggle && r.label == section {
+			m.cursor = i
+			break
+		}
+	}
+	m.ensureCursorVisible()
+}
+
+// sectionRows appends a header, the visible items and, when the section is
+// capped, its more/less toggle.
+func (m *SearchModel) sectionRows(label string, total int, item func(i int) searchRow) {
+	if total == 0 {
+		return
+	}
+	n := total
+	if !m.expanded[label] {
+		n = min(total, searchSectionCap)
+	}
+	m.rows = append(m.rows, searchRow{header: true, label: label})
+	for i := range n {
+		m.rows = append(m.rows, item(i))
+	}
+	if total > searchSectionCap {
+		m.rows = append(m.rows, searchRow{toggle: true, label: label, hidden: total - n})
+	}
 }
 
 // SetState is kept for backward compatibility with callers that only have tracks.
@@ -134,45 +183,27 @@ func isLibraryTrack(t provider.Track) bool {
 }
 
 // rebuildRows lays the results out as Playlists, Albums, Library (tracks the
-// user owns) and Tracks (catalog), each capped at searchSectionCap.
+// user owns) and Tracks (catalog). Each section shows searchSectionCap items
+// until its "+ N more" row is used.
 func (m *SearchModel) rebuildRows() {
 	m.rows = nil
 	if m.results == nil {
 		return
 	}
-	if n := min(len(m.results.Playlists), searchSectionCap); n > 0 {
-		m.rows = append(m.rows, searchRow{header: true, label: "Playlists"})
-		for i := range n {
-			m.rows = append(m.rows, searchRow{playlist: &m.results.Playlists[i]})
-		}
-	}
-	if n := min(len(m.results.Albums), searchSectionCap); n > 0 {
-		m.rows = append(m.rows, searchRow{header: true, label: "Albums"})
-		for i := range n {
-			m.rows = append(m.rows, searchRow{album: &m.results.Albums[i]})
-		}
-	}
+	res := m.results
+	m.sectionRows("Playlists", len(res.Playlists), func(i int) searchRow { return searchRow{playlist: &res.Playlists[i]} })
+	m.sectionRows("Albums", len(res.Albums), func(i int) searchRow { return searchRow{album: &res.Albums[i]} })
 	var library, catalog []*provider.Track
-	for i := range m.results.Tracks {
-		t := &m.results.Tracks[i]
+	for i := range res.Tracks {
+		t := &res.Tracks[i]
 		if isLibraryTrack(*t) {
 			library = append(library, t)
 		} else {
 			catalog = append(catalog, t)
 		}
 	}
-	if n := min(len(library), searchSectionCap); n > 0 {
-		m.rows = append(m.rows, searchRow{header: true, label: "Library"})
-		for _, t := range library[:n] {
-			m.rows = append(m.rows, searchRow{track: t})
-		}
-	}
-	if n := min(len(catalog), searchSectionCap); n > 0 {
-		m.rows = append(m.rows, searchRow{header: true, label: "Tracks"})
-		for _, t := range catalog[:n] {
-			m.rows = append(m.rows, searchRow{track: t})
-		}
-	}
+	m.sectionRows("Library", len(library), func(i int) searchRow { return searchRow{track: library[i]} })
+	m.sectionRows("Tracks", len(catalog), func(i int) searchRow { return searchRow{track: catalog[i]} })
 }
 
 // advance returns the index of the next selectable row in direction dir (+1/-1)
@@ -367,8 +398,8 @@ func (m *SearchModel) View() string {
 			continue
 		}
 
-		// Item rows require 2 lines; skip if there is not enough room.
-		if linesLeft < 2 {
+		// Skip rows that no longer fit.
+		if linesLeft < rowLines(row) {
 			break
 		}
 
@@ -385,6 +416,19 @@ func (m *SearchModel) View() string {
 		}
 
 		switch {
+		case row.toggle:
+			label := "− less"
+			if row.hidden > 0 {
+				label = fmt.Sprintf("+ %d more", row.hidden)
+			}
+			ts := tagStyle
+			if sel {
+				ts = lipgloss.NewStyle().Foreground(currentAccent).Bold(true)
+			}
+			sb.WriteString(cur + ts.Render(label) + "\n")
+			linesLeft--
+			continue
+
 		case row.track != nil:
 			t := row.track
 			sb.WriteString(cur + tStyle.Render(t.Title) + "\n")
@@ -400,13 +444,15 @@ func (m *SearchModel) View() string {
 			sb.WriteString("    " + dStyle.Render(desc) + "\n")
 
 		case row.playlist != nil:
+			// One line per playlist: name, tag and track count together.
 			p := row.playlist
-			desc := ""
+			line := cur + tStyle.Render(p.Name) + tagStyle.Render(" [playlist]")
 			if p.TrackCount > 0 {
-				desc = fmt.Sprintf("%d tracks", p.TrackCount)
+				line += dStyle.Render(fmt.Sprintf("  ·  %d tracks", p.TrackCount))
 			}
-			sb.WriteString(cur + tStyle.Render(p.Name) + tagStyle.Render(" [playlist]") + "\n")
-			sb.WriteString("    " + dStyle.Render(desc) + "\n")
+			sb.WriteString(line + "\n")
+			linesLeft--
+			continue
 		}
 		linesLeft -= 2
 	}
