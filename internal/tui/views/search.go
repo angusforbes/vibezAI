@@ -99,6 +99,10 @@ type SearchModel struct {
 	loading  bool
 	err      error
 
+	// vibe marks a result set produced by a vibe description: one "Vibes"
+	// section instead of the Playlists/Albums/Library/Tracks split.
+	vibe bool
+
 	// Catalog Tracks paging: Apple answers at most 25 songs per request, so
 	// "+ 5 more" fetches the next page once the loaded ones run out.
 	catalogNext   int  // offset of the next page
@@ -123,6 +127,7 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.loading = loading
 	m.err = err
 	m.results = result
+	m.vibe = false
 	m.shown = nil // a new result set starts at the default count per section
 	m.catalogNext, m.catalogMore = 0, false
 	m.paging, m.pendingReveal = false, 0
@@ -133,6 +138,24 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.cursor = m.firstEntryRow()
 	m.scroll = 0
 }
+
+// SetVibeResults shows the songs found for a vibe description as a single
+// "Vibes" section with the usual "+ 5 more" / "− 5 less" controls.
+func (m *SearchModel) SetVibeResults(tracks []provider.Track) {
+	m.loading = false
+	m.err = nil
+	m.results = &provider.SearchResult{Tracks: tracks}
+	m.vibe = true
+	m.shown = nil
+	m.catalogNext, m.catalogMore = 0, false
+	m.paging, m.pendingReveal = false, 0
+	m.rebuildRows()
+	m.cursor = m.firstEntryRow()
+	m.scroll = 0
+}
+
+// VibeResults reports whether the list shows a vibe result set.
+func (m *SearchModel) VibeResults() bool { return m.vibe }
 
 // firstEntryRow is the first selectable row that is not a header, so a new
 // result set starts on its first match rather than on a section title.
@@ -207,6 +230,8 @@ func (m *SearchModel) sectionTotal(section string) int {
 		return len(m.results.Playlists)
 	case "Albums":
 		return len(m.results.Albums)
+	case "Vibes":
+		return len(m.results.Tracks)
 	}
 	lib, cat := 0, 0
 	for _, t := range m.results.Tracks {
@@ -472,6 +497,10 @@ func (m *SearchModel) rebuildRows() {
 		return
 	}
 	res := m.results
+	if m.vibe {
+		m.sectionRows("Vibes", len(res.Tracks), func(i int) searchRow { return searchRow{track: &res.Tracks[i]} })
+		return
+	}
 	m.sectionRows("Playlists", len(res.Playlists), func(i int) searchRow { return searchRow{playlist: &res.Playlists[i]} })
 	m.sectionRows("Albums", len(res.Albums), func(i int) searchRow { return searchRow{album: &res.Albums[i]} })
 	var library, catalog []*provider.Track

@@ -336,7 +336,7 @@ func TestModel_Update_ErrMsg(t *testing.T) {
 
 func TestModel_Update_KeySearch(t *testing.T) {
 	m := newModel(nil)
-	m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.mode != modeSearch {
 		t.Errorf("mode = %d, want modeSearch(%d)", m.mode, modeSearch)
 	}
@@ -365,7 +365,7 @@ func TestModel_Update_KeyLibrary_IsNotAPanelAnyMore(t *testing.T) {
 
 func TestModel_Update_KeySearchSetsContent(t *testing.T) {
 	m := newModel(nil)
-	m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.mode != modeSearch {
 		t.Errorf("mode = %d, want modeSearch(%d)", m.mode, modeSearch)
 	}
@@ -1136,32 +1136,40 @@ func TestHandleSearchKey_CtrlU_ClearsBeforeCursor(t *testing.T) {
 	}
 }
 
-func TestModel_Update_VibeQueryMsg(t *testing.T) {
-	m := newModel(newMockPlayer())
-	_, cmd := m.Update(views.VibeQueryMsg{Query: "chill coding"})
-	// Should transition vibe panel to searching state (SetSearching called internally).
-	// runVibeSearch returns a cmd — we just verify no panic.
-	_ = cmd
-}
-
 func TestModel_Update_VibeResultMsg_Success(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.searchVibe, m.vibeShown = true, "chill"
 	tracks := []provider.Track{
 		{Title: "Song A", Artist: "Artist A", ID: "111", CatalogID: "cat111"},
 	}
-	_, cmd := m.Update(vibeResultMsg{tracks: tracks, query: "chill"})
-	_ = cmd
-	// Tracks should be appended to queue.
-	if len(mp.appendQueueIDs) == 0 {
-		t.Error("vibeResultMsg should call AppendQueue")
+	m.Update(vibeResultMsg{tracks: tracks, query: "chill"})
+	// The songs are offered in the panel's Vibes section, never queued by themselves.
+	if len(mp.appendQueueIDs) != 0 || len(m.queueIDs) != 0 {
+		t.Fatalf("a vibe result must not touch the queue: appends=%v queue=%v", mp.appendQueueIDs, m.queueIDs)
+	}
+	if !m.search.VibeResults() || len(m.search.Results()) != 1 || !strings.Contains(m.search.View(), "Vibes") {
+		t.Fatalf("expected a Vibes section with the song, got vibe=%v results=%d view=%q", m.search.VibeResults(), len(m.search.Results()), m.search.View())
+	}
+	// A late result for an older description is ignored.
+	m.Update(vibeResultMsg{tracks: tracks[:0], query: "something else"})
+	if len(m.search.Results()) != 1 {
+		t.Fatal("a result for another description must be dropped")
 	}
 }
 
 func TestModel_Update_VibeResultMsg_Error(t *testing.T) {
 	m := newModel(newMockPlayer())
-	_, cmd := m.Update(vibeResultMsg{err: errors.New("search failed")})
-	_ = cmd
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.searchVibe, m.vibeShown = true, "chill"
+	m.search.SetResults(nil, true, nil)
+	m.Update(vibeResultMsg{err: errors.New("search failed"), query: "chill"})
+	if m.search.Loading() || len(m.search.Results()) != 0 || m.errMsg != "" {
+		t.Fatalf("a failed vibe search should just leave an empty list (loading=%v results=%d err=%q)", m.search.Loading(), len(m.search.Results()), m.errMsg)
+	}
 }
 
 func TestModel_Update_VibeResultMsg_Discovery(t *testing.T) {
@@ -1873,11 +1881,11 @@ func TestHandleNormalKey_R_StopsDiscovery(t *testing.T) {
 	}
 }
 
-func TestHandleNormalKey_V_FocusVibe(t *testing.T) {
+func TestHandleNormalKey_V_DoesNothing(t *testing.T) {
 	m := newModel(nil)
 	m.handleNormalKey(tea.KeyPressMsg{Code: 'v', Text: "v"}, "v")
-	if !m.vibe.IsFocused() {
-		t.Error("v key should focus the vibe panel")
+	if m.vibe.IsFocused() || m.mode != modeNormal {
+		t.Error("the separate vibe prompt is gone; v must not focus anything")
 	}
 }
 
@@ -1889,11 +1897,10 @@ func TestHandleNormalKey_Colon_OpenCommandMode(t *testing.T) {
 	}
 }
 
-func TestHandleNormalKey_Slash_OpenSearch(t *testing.T) {
+func TestHandleNormalKey_Slash_DoesNothing(t *testing.T) {
 	m := newModel(nil)
-	m.handleNormalKey(tea.KeyPressMsg{Code: '/', Text: "/"}, "/")
-	if m.mode != modeSearch {
-		t.Error("/ key should switch to search mode")
+	if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: '/', Text: "/"}, "/"); cmd != nil || m.mode != modeNormal {
+		t.Fatalf("/ in the queue must do nothing: Tab is the way to Search (mode=%d cmd=%v)", m.mode, cmd != nil)
 	}
 }
 
@@ -3123,14 +3130,6 @@ func TestHandleNormalKey_ActivePanel_ForwardKey(t *testing.T) {
 	_ = cmd
 }
 
-func TestHandleNormalKey_VibeFocused_RoutesToVibe(t *testing.T) {
-	m := newModel(nil)
-	m.vibe.Focus()
-	// Keys should go to vibe panel when it's focused.
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: tea.KeyEsc}, "esc")
-	_ = cmd
-}
-
 func TestHandleSearchKey_Space_InsertsSpaceInQuery(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
@@ -3891,5 +3890,97 @@ func TestIdleBlock_CreditsOriginalAndUpdate(t *testing.T) {
 	}
 	if len(lines) != nowPlayingTextRows {
 		t.Fatalf("the block must keep its %d rows, got %d", nowPlayingTextRows, len(lines))
+	}
+}
+
+func TestHandleSearchKey_SlashTogglesVibesMode(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &mockProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	if m.searchVibe {
+		t.Fatal("regular search is the default")
+	}
+	if cmd := m.handleSearchKey("/", tea.KeyPressMsg{Code: '/', Text: "/"}); cmd != nil || !m.searchVibe {
+		t.Fatalf("/ should switch to vibes mode without searching (cmd=%v vibe=%v)", cmd != nil, m.searchVibe)
+	}
+	lines := m.searchFindLines(40, 6)
+	if !strings.Contains(lines[2], "V") || strings.Contains(lines[2], "/") {
+		t.Fatalf("vibes mode shows a V prompt instead of the slash: %q", lines[2])
+	}
+	// Typing a description does not search as you type.
+	for _, r := range "chill" {
+		if cmd := m.handleSearchKey(string(r), tea.KeyPressMsg{Code: r, Text: string(r)}); cmd != nil {
+			t.Fatal("vibes mode must not search while typing")
+		}
+	}
+	if m.searchQuery != "chill" {
+		t.Fatalf("query = %q, want chill", m.searchQuery)
+	}
+	footer := strings.Join(m.statusLines(200), " ")
+	if !strings.Contains(footer, "VIBES") || !strings.Contains(footer, "find songs") {
+		t.Fatalf("footer should announce vibes mode and Enter = find songs: %q", footer)
+	}
+	// Back to regular search: the text is looked up the regular way.
+	if cmd := m.handleSearchKey("/", tea.KeyPressMsg{Code: '/', Text: "/"}); cmd == nil || m.searchVibe {
+		t.Fatalf("/ again should return to regular search and look the text up (cmd=%v vibe=%v)", cmd != nil, m.searchVibe)
+	}
+	if lines := m.searchFindLines(40, 6); !strings.Contains(lines[2], "/") {
+		t.Fatalf("regular mode shows the slash prompt: %q", lines[2])
+	}
+}
+
+func TestHandleSearchKey_EnterInVibesModeFindsSongsThenActsOnRows(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	m.provider = &mockProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.searchVibe = true
+	m.searchQuery = "late night coding"
+	m.searchCursor = len(m.searchQuery)
+
+	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil || m.vibeShown != "late night coding" || !m.search.Loading() {
+		t.Fatalf("Enter on a new description must start the vibe lookup (cmd=%v shown=%q loading=%v)", cmd != nil, m.vibeShown, m.search.Loading())
+	}
+	// Same description again while loading: nothing else starts, nothing is queued.
+	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil {
+		t.Fatal("Enter on the description already being looked up must do nothing")
+	}
+	var tracks []provider.Track
+	for i := range 12 {
+		tracks = append(tracks, provider.Track{Title: fmt.Sprintf("Song %d", i), Artist: "Band", ID: fmt.Sprintf("v%d", i), CatalogID: fmt.Sprintf("v%d", i)})
+	}
+	m.Update(vibeResultMsg{query: "late night coding", tracks: tracks})
+	view := m.search.View()
+	if !strings.Contains(view, "Vibes") || !strings.Contains(view, "+ 5 more") || !strings.Contains(view, "− 5 less") {
+		t.Fatalf("vibe songs should be listed like search results with the more/less controls: %q", view)
+	}
+	footer := strings.Join(m.statusLines(200), " ")
+	if !strings.Contains(footer, "add & play") || strings.Contains(footer, "find songs") {
+		t.Fatalf("once the songs are listed, Enter acts on rows: %q", footer)
+	}
+	// Enter on the highlighted song adds it to the queue and plays it.
+	cmd = m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter on a vibe song should add & play it")
+	}
+	cmd()
+	if len(m.queueIDs) != 1 || m.queueIDs[0] != "v0" {
+		t.Fatalf("queue should hold the chosen song, got %v", m.queueIDs)
+	}
+	// Shift+Enter adds the next one without playing.
+	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	if cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}); cmd != nil {
+		cmd()
+	}
+	if len(m.queueIDs) != 2 || m.queueIDs[1] != "v1" {
+		t.Fatalf("Shift+Enter should append the next song, got %v", m.queueIDs)
+	}
+	// Editing the description makes Enter a lookup again.
+	m.handleSearchKey("!", tea.KeyPressMsg{Code: '!', Text: "!"})
+	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil || m.vibeShown != "late night coding!" {
+		t.Fatalf("a changed description must be looked up on Enter (cmd=%v shown=%q)", cmd != nil, m.vibeShown)
 	}
 }

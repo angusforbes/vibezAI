@@ -358,6 +358,8 @@ type Model struct {
 	searchCursor int    // rune index of the cursor within searchQuery
 	searchGen    int    // incremented on every keystroke; used to discard stale results
 	searchShown  string // query whose results the search panel currently lists
+	searchVibe   bool   // Search input is in vibes mode ("V " prompt): Enter finds songs for a description
+	vibeShown    string // vibe description whose songs the panel currently lists
 
 	// Command accumulation (mode == modeCommand)
 	cmdBuf     string
@@ -785,11 +787,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.addToQueue(msg.item.Title, msg.tracks, ids)
 
-	case views.VibeQueryMsg:
-		// User submitted a vibe description — start async provider search.
-		m.vibe.SetSearching()
-		cmds = append(cmds, m.runVibeSearch(msg.Query))
-
 	case views.DiscoveryMetricSelectedMsg:
 		// User confirmed a metric in the picker — store it and immediately start
 		// discovery in continuous auto mode (mirrors the old single-key behaviour).
@@ -800,6 +797,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case vibeResultMsg:
+		if !msg.radio && !msg.discovery {
+			m.handleVibeSearchResult(msg)
+			break
+		}
 		if msg.radio && (!m.radio.enabled || msg.radioGen != m.radio.generation) {
 			break
 		}
@@ -809,14 +810,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.radio.refilling = false
 				break
 			}
-			if !msg.discovery {
-				m.vibe.SetResult(0, msg.err)
-			}
-			m.appendLog(fmt.Sprintf("[vibe] search error: %v", msg.err))
-			if msg.discovery {
-				m.discovery.refilling = false
-				m.syncDiscoveryView()
-			}
+			m.appendLog(fmt.Sprintf("[discovery] search error: %v", msg.err))
+			m.discovery.refilling = false
+			m.syncDiscoveryView()
 			break
 		}
 		// A result can succeed and still be incomplete when one provider backend
@@ -875,8 +871,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncDiscoveryView()
 			case msg.radio:
 				m.radio.refilling = false
-			default:
-				m.vibe.SetResult(0, fmt.Errorf("no streamable results"))
 			}
 			break
 		}
@@ -886,9 +880,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.player != nil {
 			if err := m.player.AppendQueue(ids); err != nil {
-				if !msg.discovery && !msg.radio {
-					m.vibe.SetResult(0, err)
-				}
 				break
 			}
 		}
@@ -910,9 +901,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.radio.refilling = false
 			m.radio.retries = 0 // successful refill — reset circuit breaker
 			m.appendLog(fmt.Sprintf("[radio] refilled %d tracks", len(tracks)))
-		default:
-			m.vibe.SetResult(len(tracks), nil)
-			m.appendLog(fmt.Sprintf("[vibe] added %d tracks for %q", len(tracks), msg.query))
 		}
 
 	case loveSongMsg:
@@ -1206,7 +1194,21 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		// Hand the keys back to the queue; the query and results stay visible.
 		m.mode = modeNormal
 		return nil
+	case "/":
+		// Toggle between regular search ("/ " prompt, searches as you type) and
+		// vibes mode ("V " prompt, Enter finds songs for a description).
+		m.searchVibe = !m.searchVibe
+		if m.searchVibe {
+			return nil
+		}
+		m.vibeShown = ""
+		return m.scheduleSearch(m.searchQuery)
 	case "enter":
+		// Vibes mode: Enter on a description that has not been looked up yet
+		// finds songs for it; once its songs are listed, Enter acts on rows.
+		if m.searchVibe && m.searchQuery != "" && m.searchQuery != m.vibeShown {
+			return m.startVibeSearch(m.searchQuery)
+		}
 		// Enter on a section header folds it or opens it again.
 		if section, ok := m.search.SelectedHeader(); ok {
 			m.search.ToggleSectionOpen(section)
@@ -1951,8 +1953,8 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		}
 	}
 
-	// When vibe panel has text-input focus or picker is open, route all keys to it.
-	if m.vibe.IsFocused() || m.vibe.PickerActive() {
+	// While the discovery-metric picker is open it takes all the keys.
+	if m.vibe.PickerActive() {
 		return m.vibe.Update(msg)
 	}
 
@@ -2074,11 +2076,6 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	// (favorites map, loveSongCmd, checkSongRatingCmd) is kept for a possible
 	// return of the feature.
 
-	case "v":
-		m.lastKey = ""
-		m.vibe.Focus()
-		return nil
-
 	case "R":
 		m.lastKey = ""
 		seed := m.playerState.Track
@@ -2141,7 +2138,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 
 	// Keys that only work when no panel is covering the content area.
 	switch k {
-	case "/", "tab", "shift+tab":
+	case "tab", "shift+tab":
 		// Focus the Search column; Tab there brings the keys back to the queue.
 		m.mode = modeSearch
 
@@ -2246,6 +2243,9 @@ func (m *Model) fetchMoreTracksCmd(wanted, hops int) tea.Cmd {
 }
 
 func (m *Model) scheduleSearch(query string) tea.Cmd {
+	if m.searchVibe {
+		return nil // vibes mode only searches on Enter
+	}
 	if query == "" {
 		m.search.SetResults(nil, false, nil)
 		return nil
@@ -2257,6 +2257,37 @@ func (m *Model) scheduleSearch(query string) tea.Cmd {
 		time.Sleep(400 * time.Millisecond)
 		return searchDebounceMsg{query: query, gen: gen}
 	}
+}
+
+// startVibeSearch looks up songs for a vibe description typed into the Search
+// panel; the result lands in the panel's "Vibes" section (never in the queue).
+func (m *Model) startVibeSearch(query string) tea.Cmd {
+	if m.provider == nil {
+		return nil
+	}
+	m.vibeShown = query
+	m.searchGen++ // drop any regular search still in flight
+	m.search.SetResults(nil, true, nil)
+	return m.runVibeSearch(query)
+}
+
+// handleVibeSearchResult shows the songs found for a vibe description. Late
+// results for an older description, or arriving after the user switched back
+// to regular search, are dropped.
+func (m *Model) handleVibeSearchResult(msg vibeResultMsg) {
+	if !m.searchVibe || msg.query != m.vibeShown {
+		return
+	}
+	if len(msg.warnings) > 0 {
+		m.appendLog(fmt.Sprintf("[vibe] partial results: %s", strings.Join(msg.warnings, "; ")))
+	}
+	if msg.err != nil {
+		m.appendLog(fmt.Sprintf("[vibe] search error: %v", msg.err))
+		m.search.SetVibeResults(nil)
+		return
+	}
+	m.appendLog(fmt.Sprintf("[vibe] %d song(s) for %q", len(msg.tracks), msg.query))
+	m.search.SetVibeResults(msg.tracks)
 }
 
 // runVibeSearch uses the KeywordAgent to interpret the user's vibe description.
@@ -3359,9 +3390,17 @@ func (m *Model) statusNavLines(w int) []string {
 		cur := min(m.searchCursor, len(runes))
 		before := styles.Header.Render(string(runes[:cur]))
 		after := styles.Header.Render(string(runes[cur:]))
-		return []string{styles.ModeSearch.Render("SEARCH") + "  " +
-			accent.Render("/") + before + accent.Render("█") + after + "   " +
-			accent.Render("Enter") + muted.Render(" add & play") + "  " + accent.Render("⇧Enter") + muted.Render(" add") + "  " + accent.Render("Tab") + muted.Render(" back to queue")}
+		label, glyph, toggle := "SEARCH", "/", accent.Render("/")+muted.Render(" vibes")
+		if m.searchVibe {
+			label, glyph, toggle = "VIBES", "V ", accent.Render("/")+muted.Render(" search")
+		}
+		action := accent.Render("Enter") + muted.Render(" add & play") + "  " + accent.Render("⇧Enter") + muted.Render(" add")
+		if m.searchVibe && m.searchQuery != m.vibeShown {
+			action = accent.Render("Enter") + muted.Render(" find songs")
+		}
+		return []string{styles.ModeSearch.Render(label) + "  " +
+			accent.Render(glyph) + before + accent.Render("█") + after + "   " +
+			action + "  " + toggle + "  " + accent.Render("Tab") + muted.Render(" back to queue")}
 	case modeCommand:
 		return []string{styles.ModeCommand.Render("CMD") + "  " +
 			muted.Render(":") + m.cmdBuf + accent.Render("_") +
@@ -3374,12 +3413,6 @@ func (m *Model) statusNavLines(w int) []string {
 				styles.ModeNormal.Render("DEBUG"),
 				accent.Render("j/k") + muted.Render(" scroll"),
 				accent.Render("esc") + muted.Render(" close"),
-			}
-		case m.vibe.IsFocused():
-			parts = []string{
-				styles.ModeNormal.Render("VIBE"),
-				accent.Render("Enter") + muted.Render(" search"),
-				accent.Render("esc") + muted.Render(" cancel"),
 			}
 		case m.activePanel >= 0 && m.panels[m.activePanel] == m.lyricsP:
 			parts = []string{
@@ -3421,7 +3454,6 @@ func (m *Model) statusNavLines(w int) []string {
 				accent.Render("y") + muted.Render(" lyrics"),
 				accent.Render("F") + muted.Render(" feed"),
 				accent.Render("e") + muted.Render(" equalizer"),
-				accent.Render("v") + muted.Render(" vibe"),
 				accent.Render("?") + muted.Render(" about"),
 				accent.Render(":q") + muted.Render(" quit"),
 			}

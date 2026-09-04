@@ -1158,3 +1158,41 @@ func TestSearch_PageAfterNewQueryIsDropped(t *testing.T) {
 		t.Fatalf("a late page must not resurrect old results: still=%d paging=%v results=%v", still, s.Paging(), s.results)
 	}
 }
+
+func TestSearch_VibeResultsAreOneSection(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 60)
+	s.SetVibeResults(catalogPage(0, 12))
+	if !s.VibeResults() {
+		t.Fatal("SetVibeResults should mark the list as a vibe result set")
+	}
+	headers, items, toggles := 0, 0, 0
+	for _, r := range s.rows {
+		switch {
+		case r.header:
+			headers++
+			if r.label != "Vibes" {
+				t.Fatalf("the only section is Vibes, got %q", r.label)
+			}
+		case r.toggle:
+			toggles++
+		case r.track != nil:
+			items++
+		}
+	}
+	if headers != 1 || items != 5 || toggles != 2 {
+		t.Fatalf("want Vibes header, 5 songs, more+less; got %d/%d/%d", headers, items, toggles)
+	}
+	if t0 := s.SelectedTrack(); t0 == nil || t0.ID != "c0" {
+		t.Fatalf("first song should be highlighted, got %+v", t0)
+	}
+	s.ShowMore("Vibes")
+	if n := len(s.rows); n != 1+10+2 {
+		t.Fatalf("after more: %d rows, want header + 10 + two controls", n)
+	}
+	// A regular result set replaces the vibe one.
+	s.SetResults(&provider.SearchResult{Tracks: catalogPage(0, 2)}, false, nil)
+	if s.VibeResults() || !strings.Contains(s.View(), "Tracks") {
+		t.Fatal("SetResults should return to the regular sections")
+	}
+}

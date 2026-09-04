@@ -23,7 +23,7 @@ import (
 
 // findLines renders the right column.
 func (m *Model) findLines(w, h int) []string {
-	if m.vibe.IsFocused() || m.vibe.PickerActive() {
+	if m.vibe.PickerActive() {
 		return m.vibe.Lines(w, h, m.glowStep)
 	}
 	return m.searchFindLines(w, h)
@@ -48,7 +48,11 @@ func (m *Model) searchFindLines(w, h int) []string {
 	if m.mode == modeSearch {
 		cursor = accent.Render("█")
 	}
-	inputLine := accent.Render("/") + " " + before + cursor + after
+	glyph := "/"
+	if m.searchVibe {
+		glyph = "V"
+	}
+	inputLine := accent.Render(glyph) + " " + before + cursor + after
 	sep := styles.QueueItemMuted.Render(strings.Repeat("─", 5))
 
 	listH := max(1, h-3) // header + underline + input
