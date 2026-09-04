@@ -587,9 +587,10 @@ func TestModel_ContentHeight(t *testing.T) {
 	m := newModel(nil)
 	m.height = 26
 	got := m.panelHeight()
-	// fixed overhead = 20 lines (box layout with two status lines)
-	if got != 6 {
-		t.Errorf("panelHeight() = %d, want 6", got)
+	// fixed overhead = 12 lines (borders/header, the 4-row Now Playing block,
+	// two status lines)
+	if got != 14 {
+		t.Errorf("panelHeight() = %d, want 14", got)
 	}
 }
 
@@ -2296,15 +2297,15 @@ func TestNowPlayingLines_ArtModeOffShowsBarWithoutArt(t *testing.T) {
 		Track:   &provider.Track{Title: "Bar Song", Artist: "Bar Artist", Album: "Album", ArtworkURL: "https://example.invalid/a.png", Duration: time.Minute},
 	}
 
-	joined := strings.Join(m.nowPlayingLines(100, 12), "\n")
-	if !strings.Contains(joined, "Now Playing") || !strings.Contains(joined, "Bar Song") {
-		t.Fatalf("bar layout missing metadata: %q", joined)
+	joined := strings.Join(m.nowPlayingLines(100, nowPlayingTextRows), "\n")
+	if !strings.Contains(joined, "Bar Song") || !strings.Contains(joined, "Bar Artist") {
+		t.Fatalf("compact layout missing metadata: %q", joined)
 	}
-	if strings.Contains(joined, "▀") {
-		t.Fatalf("art mode off but artwork rendered: %q", joined)
+	if strings.Contains(joined, "Now Playing") || strings.Contains(joined, "▀") {
+		t.Fatalf("compact layout must have no label and no artwork: %q", joined)
 	}
-	if h := m.nowPlayingHeight(); h != 12 {
-		t.Fatalf("nowPlayingHeight() with art mode off = %d, want 12", h)
+	if h := m.nowPlayingHeight(); h != nowPlayingTextRows {
+		t.Fatalf("nowPlayingHeight() with art mode off = %d, want %d", h, nowPlayingTextRows)
 	}
 }
 

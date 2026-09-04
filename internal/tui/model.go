@@ -3087,9 +3087,14 @@ func (m *Model) artModeActive() bool {
 	return t != nil && t.ArtworkURL != "" && m.artwork.url == t.ArtworkURL && !m.artwork.failed
 }
 
+// nowPlayingTextRows is the compact text-mode block: "Artist — Title",
+// "Album • elapsed / total", the transport icons and the status line. Every
+// row saved here goes to the queue and vibe panels below.
+const nowPlayingTextRows = 4
+
 func (m *Model) nowPlayingHeight() int {
 	if !m.artModeActive() {
-		return 12
+		return nowPlayingTextRows
 	}
 	// The art view trades panel rows for a bigger cover: grow with the
 	// terminal, but always leave the split panels a usable height.
@@ -3200,10 +3205,17 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 
 	t := m.playerState.Track
 	if t == nil {
-		lines := make([]string, h)
-		mid := h / 2
-		lines[mid] = centerStr(muted.Render("silence is not a vibe"), contentW)
-		lines[h-2] = centerStr(muted.Render("made with ❤️ by simonepelosi · press ? for about"), contentW)
+		lines := make([]string, max(h, 1))
+		// Idle block: status (if any), "silence is not a vibe", credits.
+		sil := max(0, min(h-1, h/2-1))
+		credit := h - 2
+		if credit <= sil {
+			credit = min(h-1, sil+1)
+		}
+		lines[sil] = centerStr(muted.Render("silence is not a vibe"), contentW)
+		if credit > sil {
+			lines[credit] = centerStr(muted.Render("made with ❤️ by simonepelosi · press ? for about"), contentW)
+		}
 		if m.errMsg != "" {
 			var errRendered string
 			if strings.HasPrefix(m.errMsg, "✓") {
@@ -3211,9 +3223,9 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 			} else {
 				errRendered = centerStr(styles.ErrorStyle.Render("⚠  "+m.errMsg), contentW)
 			}
-			lines[max(0, mid-2)] = errRendered
+			lines[max(0, sil-1)] = errRendered
 		}
-		return lines
+		return lines[:h]
 	}
 
 	// Title: bright lavender while playing, softer gray while paused.
@@ -3237,10 +3249,6 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 		styles.NowPlayingAlbum.Render(t.Album+" • ")+styles.TimeStyle.Render(elapsed+" / "+total),
 		contentW,
 	)
-
-	// Progress bar — centred, slightly narrower than full width
-	barW := max(10, contentW-8)
-	progressLine := centerStr(views.RenderProgressBar(m.playerState.Position, t.Duration, barW), contentW)
 
 	// Controls: ↺  ⇄  ▶/⏸  ♡/♥
 	var playIcon string
@@ -3285,18 +3293,12 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 
 	errLine := m.statusLine(contentW)
 
+	// Compact block: no "Now Playing" label, rule or progress bar; the icons
+	// sit right under the track info and the status line closes the block.
 	lines := []string{
-		"",
-		centerStr(styles.NowPlayingLabel.Render("Now Playing"), contentW),
-		centerStr(muted.Render(strings.Repeat("─", 11)), contentW),
 		trackLine,
 		albumLine,
-		"",
-		progressLine,
-		"",
-		"",
 		controls,
-		"",
 		errLine,
 	}
 
