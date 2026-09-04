@@ -1240,7 +1240,11 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			return m.fetchSearchCollectionCmd(nil, p, true, false)
 		}
 		return nil
-	case "tab":
+	case "tab", "shift+tab":
+		// Hand the keys back to the queue; the query and results stay visible.
+		m.mode = modeNormal
+		return nil
+	case "shift+enter":
 		// Track: add to the end of the queue without playing; an already
 		// queued track is highlighted instead of being added twice.
 		if t := m.search.SelectedTrack(); t != nil {
@@ -1254,21 +1258,6 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		// Playlist: fetch all tracks then add to queue.
 		if p := m.search.SelectedPlaylist(); p != nil {
 			return m.fetchSearchCollectionCmd(nil, p, false, false)
-		}
-		return nil
-	case "shift+tab":
-		// Track: play next.
-		if t := m.search.SelectedTrack(); t != nil {
-			tc := *t
-			return m.playNextCmd(tc.Artist+" — "+tc.Title, []provider.Track{tc}, []string{views.PlaybackID(tc)})
-		}
-		// Album: fetch all tracks then play next.
-		if a := m.search.SelectedAlbum(); a != nil {
-			return m.fetchSearchCollectionCmd(a, nil, false, true)
-		}
-		// Playlist: fetch all tracks then play next.
-		if p := m.search.SelectedPlaylist(); p != nil {
-			return m.fetchSearchCollectionCmd(nil, p, false, true)
 		}
 		return nil
 	case "up", "down", "pgup", "pgdown":
@@ -2152,7 +2141,8 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 
 	// Keys that only work when no panel is covering the content area.
 	switch k {
-	case "/":
+	case "/", "tab", "shift+tab":
+		// Focus the Search column; Tab there brings the keys back to the queue.
 		m.mode = modeSearch
 
 	case "j", "down":
@@ -2217,6 +2207,21 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	}
 
 	return nil
+}
+
+// panelTitle renders a column title; the column that currently has the keys
+// is bold, the other one plain, so focus is visible without a mode label.
+func (m *Model) panelTitle(label string, focused bool) string {
+	if focused {
+		return styles.Header.Bold(true).Render(label)
+	}
+	return styles.Header.Render(label)
+}
+
+// queueFocused reports whether keys go to the queue: not while Search has
+// them and not while an overlay panel (lyrics, feed, …) is open.
+func (m *Model) queueFocused() bool {
+	return m.mode != modeSearch && m.activePanel < 0
 }
 
 // fetchMoreTracksCmd requests the next page of catalog songs for the Tracks
@@ -3282,9 +3287,9 @@ func (m *Model) queuePanelLines(w, h int) []string {
 	var headerLabel string
 	if total > 0 {
 		countStr := styles.QueueItemMuted.Render(fmt.Sprintf("  %d tracks", total))
-		headerLabel = styles.Header.Render("Queue") + countStr
+		headerLabel = m.panelTitle("Queue", m.queueFocused()) + countStr
 	} else {
-		headerLabel = styles.Header.Render("Queue")
+		headerLabel = m.panelTitle("Queue", m.queueFocused())
 	}
 	sep := styles.QueueItemMuted.Render(strings.Repeat("─", 5))
 
@@ -3353,7 +3358,7 @@ func (m *Model) statusNavLines(w int) []string {
 		after := styles.Header.Render(string(runes[cur:]))
 		return []string{styles.ModeSearch.Render("SEARCH") + "  " +
 			accent.Render("/") + before + accent.Render("█") + after + "   " +
-			accent.Render("Tab") + muted.Render(" add") + "  " + accent.Render("Enter") + muted.Render(" add & play") + "  " + accent.Render("esc") + muted.Render(" back to queue")}
+			accent.Render("Enter") + muted.Render(" add & play") + "  " + accent.Render("⇧Enter") + muted.Render(" add") + "  " + accent.Render("Tab") + muted.Render(" back to queue")}
 	case modeCommand:
 		return []string{styles.ModeCommand.Render("CMD") + "  " +
 			muted.Render(":") + m.cmdBuf + accent.Render("_") +
@@ -3416,9 +3421,7 @@ func (m *Model) statusNavLines(w int) []string {
 			parts = []string{
 				styles.ModeNormal.Render("NORMAL"),
 				accent.Render(":") + muted.Render(" command"),
-				accent.Render("/") + muted.Render(" search"),
-				accent.Render("l") + muted.Render(" library"),
-				accent.Render("q") + muted.Render(" queue"),
+				accent.Render("Tab") + muted.Render(" search"),
 				accent.Render("y") + muted.Render(" lyrics"),
 				accent.Render("F") + muted.Render(" feed"),
 				accent.Render("e") + muted.Render(" equalizer"),

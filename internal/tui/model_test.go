@@ -21,6 +21,7 @@ import (
 	"github.com/simone-vibes/vibez/internal/player"
 	"github.com/simone-vibes/vibez/internal/provider"
 	"github.com/simone-vibes/vibez/internal/tui/art"
+	"github.com/simone-vibes/vibez/internal/tui/styles"
 	"github.com/simone-vibes/vibez/internal/tui/views"
 )
 
@@ -782,41 +783,41 @@ func TestHandleSearchKey_Enter_NoResults_NoCall(t *testing.T) {
 	}
 }
 
-func TestHandleSearchKey_Tab_CallsAppendQueue(t *testing.T) {
+func TestHandleSearchKey_ShiftEnter_CallsAppendQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	track := provider.Track{Title: "Queued", Artist: "Band", CatalogID: "12345"}
 	seedSearchResults(m, track)
 
-	cmd := m.handleSearchKey("tab", tea.KeyPressMsg{Code: tea.KeyTab})
+	cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
 	if cmd == nil {
-		t.Fatal("handleSearchKey(tab) returned nil cmd — expected AppendQueue call")
+		t.Fatal("handleSearchKey(shift+enter) returned nil cmd — expected AppendQueue call")
 	}
 	cmd()
 
 	if len(mp.appendQueueIDs) == 0 {
-		t.Fatal("AppendQueue was not called after Tab")
+		t.Fatal("AppendQueue was not called after Shift+Enter")
 	}
 	if mp.appendQueueIDs[0][0] != "12345" {
 		t.Errorf("AppendQueue ID = %q, want %q", mp.appendQueueIDs[0][0], "12345")
 	}
 }
 
-func TestHandleSearchKey_Tab_DoesNotCallSetQueue(t *testing.T) {
+func TestHandleSearchKey_ShiftEnter_DoesNotCallSetQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	seedSearchResults(m, provider.Track{Title: "T", CatalogID: "x"})
 
-	cmd := m.handleSearchKey("tab", tea.KeyPressMsg{Code: tea.KeyTab})
+	cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
 	if cmd != nil {
 		cmd()
 	}
 	if len(mp.setQueueIDs) > 0 {
-		t.Errorf("Tab must not call SetQueue (would interrupt playback), but it did: %v", mp.setQueueIDs)
+		t.Errorf("Shift+Enter must not call SetQueue (would interrupt playback), but it did: %v", mp.setQueueIDs)
 	}
 }
 
-func TestHandleSearchKey_Tab_NeverQueuesTheSameTrackTwice(t *testing.T) {
+func TestHandleSearchKey_ShiftEnter_NeverQueuesTheSameTrackTwice(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	tracks := []provider.Track{
@@ -825,10 +826,10 @@ func TestHandleSearchKey_Tab_NeverQueuesTheSameTrackTwice(t *testing.T) {
 	}
 	seedSearchResults(m, tracks...)
 
-	// Tab twice on the same selection: the second press adds nothing and
+	// Shift+Enter twice on the same selection: the second press adds nothing and
 	// just points at the queued copy.
 	for range 2 {
-		if cmd := m.handleSearchKey("tab", tea.KeyPressMsg{Code: tea.KeyTab}); cmd != nil {
+		if cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}); cmd != nil {
 			cmd()
 		}
 	}
@@ -841,7 +842,7 @@ func TestHandleSearchKey_Tab_NeverQueuesTheSameTrackTwice(t *testing.T) {
 
 	// A different track still gets added.
 	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
-	if cmd := m.handleSearchKey("tab", tea.KeyPressMsg{Code: tea.KeyTab}); cmd != nil {
+	if cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}); cmd != nil {
 		cmd()
 	}
 	if len(mp.appendQueueIDs) != 2 || len(m.queueIDs) != 2 || m.queueIDs[1] != "222" {
@@ -3817,5 +3818,63 @@ func TestSearchFindLines_TitleUnderlineInputOnly(t *testing.T) {
 		if strings.Contains(l, "press /") || strings.Contains(l, "type to search") {
 			t.Fatalf("no usage hint below the input: %q", l)
 		}
+	}
+}
+
+func TestTab_TogglesFocusBetweenQueueAndSearch(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.searchQuery = "coltrane"
+	for _, k := range []string{"tab", "shift+tab"} {
+		m.mode = modeNormal
+		if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: tea.KeyTab}, k); cmd != nil || m.mode != modeSearch {
+			t.Fatalf("%s in the queue should focus Search (mode=%d, cmd=%v)", k, m.mode, cmd != nil)
+		}
+		if cmd := m.handleSearchKey(k, tea.KeyPressMsg{Code: tea.KeyTab}); cmd != nil || m.mode != modeNormal {
+			t.Fatalf("%s in Search should focus the queue again (mode=%d, cmd=%v)", k, m.mode, cmd != nil)
+		}
+	}
+	if m.searchQuery != "coltrane" {
+		t.Fatalf("switching focus must keep the query, got %q", m.searchQuery)
+	}
+	// Tab in Search never adds anything.
+	mp := newMockPlayer()
+	m = newModel(mp)
+	seedSearchResults(m, provider.Track{Title: "T", CatalogID: "x"})
+	if cmd := m.handleSearchKey("tab", tea.KeyPressMsg{Code: tea.KeyTab}); cmd != nil || len(m.queueIDs) != 0 || m.mode != modeNormal {
+		t.Fatalf("tab must only move focus: cmd=%v queue=%v mode=%d", cmd != nil, m.queueIDs, m.mode)
+	}
+}
+
+func TestSearchFooter_ListsEnterShiftEnterTab(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	lines := m.statusLines(200)
+	joined := strings.Join(lines, " ")
+	for _, want := range []string{"Enter", "add & play", "⇧Enter", "Tab", "back to queue"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("search footer should mention %q: %q", want, joined)
+		}
+	}
+}
+
+func TestPanelTitles_BoldFollowsFocus(t *testing.T) {
+	m := newModel(newMockPlayer())
+	bold := styles.Header.Bold(true).Render("Search")
+	plain := styles.Header.Render("Search")
+	if bold == plain {
+		t.Skip("styling is disabled in this environment")
+	}
+	m.mode = modeNormal
+	if m.findHeader() != plain || !m.queueFocused() {
+		t.Fatalf("with the keys on the queue, Search must be plain and Queue focused (header=%q focused=%v)", m.findHeader(), m.queueFocused())
+	}
+	m.mode = modeSearch
+	if m.findHeader() != bold || m.queueFocused() {
+		t.Fatalf("with the keys on Search, its title must be bold and Queue unfocused (header=%q focused=%v)", m.findHeader(), m.queueFocused())
+	}
+	m.mode = modeNormal
+	m.activePanel = 0 // an overlay panel (lyrics) has the keys
+	if m.queueFocused() {
+		t.Fatal("an open overlay panel takes the focus from the queue")
 	}
 }

@@ -29,10 +29,10 @@ func (m *Model) findLines(w, h int) []string {
 	return m.searchFindLines(w, h)
 }
 
-// findHeader is the column title, underlined like the Queue's; the keys are
-// listed in the footer.
+// findHeader is the column title, underlined like the Queue's and bold while
+// Search has the keys; the keys themselves are listed in the footer.
 func (m *Model) findHeader() string {
-	return styles.Header.Render("Search")
+	return m.panelTitle("Search", m.mode == modeSearch)
 }
 
 func (m *Model) searchFindLines(w, h int) []string {
