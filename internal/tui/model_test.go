@@ -879,8 +879,8 @@ func TestHandleSearchKey_Enter_OnHeaderFoldsSection(t *testing.T) {
 	if m.search.SelectedTrack() != nil || len(m.search.Results()) != 1 {
 		t.Fatal("folding must keep the results but hide the tracks")
 	}
-	if v := m.search.View(); strings.Contains(v, "\n  ") && !strings.Contains(v, "+ 1 more") {
-		t.Fatalf("folded section should offer + 1 more: %q", v)
+	if v := m.search.View(); strings.Contains(v, "more") || strings.Contains(v, "less") {
+		t.Fatalf("a folded section shows its header only: %q", v)
 	}
 	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
 	if len(m.queueIDs) != 0 {

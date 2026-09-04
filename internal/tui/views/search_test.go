@@ -737,17 +737,17 @@ func TestSearch_MoreLessStepsOfFive(t *testing.T) {
 		t.Fatalf("less again: %d shown, want 2", shown())
 	}
 	s.ShowLess("Albums")
-	// Folded to nothing: header + "+ 5 more" only, no "less" row, and the
-	// highlight lands on the more row.
-	if len(s.rows) != 2 || strings.Contains(s.View(), "less") || !strings.Contains(s.View(), "+ 5 more") {
-		t.Fatalf("a folded section should show only its more row: rows=%d view %q", len(s.rows), s.View())
+	// Folded to nothing: the header alone, no control rows, and the highlight
+	// lands on the header (enter there opens the section again).
+	if len(s.rows) != 1 || strings.Contains(s.View(), "less") || strings.Contains(s.View(), "more") {
+		t.Fatalf("a folded section should be just its header: rows=%d view %q", len(s.rows), s.View())
 	}
-	if sec, more, ok := s.SelectedToggle(); !ok || sec != "Albums" || !more {
-		t.Fatalf("highlight should move to the more row when the less row disappears, got %q %v %v", sec, more, ok)
+	if sec, ok := s.SelectedHeader(); !ok || sec != "Albums" {
+		t.Fatalf("highlight should move to the header when the controls disappear, got %q %v", sec, ok)
 	}
-	s.ShowMore("Albums")
-	if shown() != 5 {
-		t.Fatalf("more from nothing: %d shown, want 5", shown())
+	s.ToggleSectionOpen("Albums")
+	if len(s.rows) != 1+5+2 {
+		t.Fatalf("reopening should show five with both controls, got %d rows", len(s.rows))
 	}
 }
 

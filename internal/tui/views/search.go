@@ -238,17 +238,20 @@ func (m *SearchModel) adjustShown(section string, delta int) {
 	more := delta > 0
 	m.rebuildRows()
 	// Stay on the control that was used; when it has disappeared (nothing
-	// left to reveal, or nothing left to hide) land on the section's other one.
+	// left to reveal, or nothing left to hide) land on the section's other
+	// control, and when the section folded to its header alone, on the header.
 	target := -1
 	for i, r := range m.rows {
-		if !r.toggle || r.label != section {
+		if r.label != section {
 			continue
 		}
-		if r.more == more {
+		if r.toggle && r.more == more {
 			target = i
 			break
 		}
-		if target < 0 {
+		if target < 0 && (r.toggle || r.header) {
+			target = i
+		} else if target >= 0 && m.rows[target].header && r.toggle {
 			target = i
 		}
 	}
@@ -259,8 +262,9 @@ func (m *SearchModel) adjustShown(section string, delta int) {
 }
 
 // sectionRows appends a header, the shown items and the control rows: "+ 5
-// more" only while something is hidden, "− 5 less" only while something is
-// shown.
+// more" only while something is hidden and the section is open, "− 5 less"
+// only while something is shown. A folded section is just its header; enter
+// on it opens it again.
 func (m *SearchModel) sectionRows(label string, total int, item func(i int) searchRow) {
 	if total == 0 {
 		return
@@ -270,7 +274,7 @@ func (m *SearchModel) sectionRows(label string, total int, item func(i int) sear
 	for i := range n {
 		m.rows = append(m.rows, item(i))
 	}
-	if n < total {
+	if n > 0 && n < total {
 		m.rows = append(m.rows, searchRow{toggle: true, label: label, more: true, step: min(searchSectionCap, total-n)})
 	}
 	if n > 0 {
