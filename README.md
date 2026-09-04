@@ -57,6 +57,7 @@ Full tracks stream via Chrome with Widevine DRM. On Linux amd64, Chrome is auto-
 - **Play next** — insert any song, album, playlist, or recommendation next in the queue with `shift+tab`
 - **Navigate the queue** — jump to any track or let it auto-advance
 - **Persistent queue panel** — toggle it on/off without losing your place
+- **Saved queue** — the queue is written to `~/.config/vibez/queue.json` and restored on the next launch; press `space` to pick up where you left off
 
 ### 🖥️ System Integration
 

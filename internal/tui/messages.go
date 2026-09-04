@@ -16,6 +16,9 @@ type Options struct {
 	// the debug view on startup. Leave empty if the engine starts asynchronously
 	// (CDP path uses EngineReadyMsg.Backend instead).
 	Backend string
+	// QueueStatePath is the file the playback queue is saved to between runs
+	// (next to config.json). Empty disables saving and restoring the queue.
+	QueueStatePath string
 }
 
 // InitStatusMsg updates the status text shown on the loading screen.

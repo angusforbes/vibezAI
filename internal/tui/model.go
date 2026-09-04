@@ -302,6 +302,9 @@ type Model struct {
 	queueIDs         []string         // current playback queue (for "add to queue")
 	queueTracks      []provider.Track // full track objects parallel to queueIDs
 	queueMiniOffset  int              // scroll offset for the mini-queue in the split view
+	queueStatePath   string           // file the queue is saved to between runs ("" = off)
+	queueDirty       bool             // queue changed since it was last saved
+	queueResumeIdx   int              // restored queue: track to start from on first play, -1 = none
 
 	// Discovery mode
 	discovery discoveryMode
@@ -401,6 +404,7 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	}
 	m.library = &libraryPanel{m: views.NewLibrary(prov)}
 	m.queue = &queuePanel{m: views.NewQueue()}
+	m.queueStatePath = opts.QueueStatePath
 	m.lyricsP = &lyricsPanel{m: views.NewLyrics()}
 	m.lyricsClient = lyrics.NewClient()
 	m.feedP = &feedPanel{m: views.NewFeed()}
@@ -411,6 +415,7 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	m.favorites = make(map[string]bool)
 	m.aboutP = &aboutPanel{m: views.NewAbout()}
 	m.panels = []ContentView{m.library, m.queue, m.lyricsP, m.feedP, m.eqP, m.aboutP}
+	m.restoreQueue()
 	if opts.Backend != "" {
 		m.appendLog("[engine] backend: " + opts.Backend)
 	}
@@ -495,6 +500,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.errMsg != "" && time.Now().After(m.errExpiry) {
 			m.errMsg = ""
 		}
+		m.flushQueueState()
 		cmds = append(cmds, tick())
 
 	case glowTickMsg:
@@ -517,6 +523,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case playerStateMsg:
 		wasPlaying := m.playerState.Playing
+		prevTrack := m.playerState.Track
 		s := player.State(msg)
 		if s.Log != "" {
 			m.appendLog(s.Log)
@@ -659,6 +666,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.runRadioSearch())
 		}
 		m.playerState = s
+		if trackChanged(prevTrack, s.Track) {
+			m.queueDirty = true
+		}
 		if !wasPlaying && m.playerState.Playing {
 			m.appendLog("[player] playing")
 		} else if wasPlaying && !m.playerState.Playing && !m.playerState.Loading {
@@ -742,7 +752,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.play {
 			m.queueTracks = msg.tracks
 			m.queueIDs = ids
-			m.queue.SetTracks(m.queueTracks)
+			m.syncQueue()
 			m.appendLog(fmt.Sprintf("[feed] playing %q (%d tracks)", msg.item.Title, len(ids)))
 			return m, m.playerCmd(func(p player.Player) error { return p.SetQueue(ids) })
 		}
@@ -751,7 +761,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.queueTracks = append(m.queueTracks, msg.tracks...)
 		m.queueIDs = append(m.queueIDs, ids...)
-		m.queue.SetTracks(m.queueTracks)
+		m.syncQueue()
 		m.appendLog(fmt.Sprintf("[feed] queued %q (%d tracks)", msg.item.Title, len(ids)))
 		return m, m.playerCmd(func(p player.Player) error { return p.AppendQueue(ids) })
 
@@ -864,7 +874,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.queueTracks = append(m.queueTracks, tracks...)
 		m.queueIDs = append(m.queueIDs, ids...)
-		m.queue.SetTracks(m.queueTracks)
+		m.syncQueue()
 		switch {
 		case msg.discovery:
 			m.discovery.refilling = false
@@ -946,7 +956,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.play {
 			m.queueTracks = msg.tracks
 			m.queueIDs = ids
-			m.queue.SetTracks(m.queueTracks)
+			m.syncQueue()
 			m.appendLog(fmt.Sprintf("[search] playing %q (%d tracks)", msg.label, len(ids)))
 			m.mode = modeNormal
 			m.playerState.Loading = true
@@ -960,7 +970,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.queueTracks = append(m.queueTracks, msg.tracks...)
 		m.queueIDs = append(m.queueIDs, ids...)
-		m.queue.SetTracks(m.queueTracks)
+		m.syncQueue()
 		m.appendLog(fmt.Sprintf("[search] queued %q (%d tracks)", msg.label, len(ids)))
 		return m, m.playerCmd(func(p player.Player) error { return p.AppendQueue(ids) })
 
@@ -973,7 +983,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.queueTracks = append(m.queueTracks, msg.Tracks...)
 		m.queueIDs = append(m.queueIDs, msg.IDs...)
-		m.queue.SetTracks(m.queueTracks)
+		m.syncQueue()
 		m.appendLog(fmt.Sprintf("[library] queued %q (%d tracks)", msg.Label, len(msg.IDs)))
 		return m, m.playerCmd(func(p player.Player) error { return p.AppendQueue(msg.IDs) })
 
@@ -990,7 +1000,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queueTracks = []provider.Track{*msg.Track}
 		}
 		m.queueIDs = msg.IDs
-		m.queue.SetTracks(m.queueTracks)
+		m.syncQueue()
 		cmds = append(cmds, m.playerCmd(func(p player.Player) error {
 			if msg.PlaylistID != "" {
 				return p.SetPlaylist(msg.PlaylistID, msg.StartIdx)
@@ -1120,6 +1130,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errExpiry = time.Now().Add(5 * time.Second)
 
 	case RestartMsg:
+		m.flushQueueState()
 		return m, tea.Quit
 
 	case tea.KeyPressMsg:
@@ -1149,6 +1160,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 
 	// ctrl+c always quits
 	if k == "ctrl+c" {
+		m.flushQueueState()
 		if m.player != nil {
 			_ = m.player.Close()
 		}
@@ -1185,7 +1197,7 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			m.playerState.Loading = true
 			m.playerState.Playing = false
 			m.playerState.Position = 0
-			m.queue.SetTracks(m.queueTracks)
+			m.syncQueue()
 			m.mode = modeNormal
 			return m.playerCmd(func(p player.Player) error { return p.SetQueue(m.queueIDs) })
 		}
@@ -1207,7 +1219,7 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			m.appendLog(fmt.Sprintf("[queue] append: %s — %s", tc.Artist, tc.Title))
 			m.queueTracks = append(m.queueTracks, tc)
 			m.queueIDs = append(m.queueIDs, views.PlaybackID(tc))
-			m.queue.SetTracks(m.queueTracks)
+			m.syncQueue()
 			return m.playerCmd(func(p player.Player) error { return p.AppendQueue([]string{views.PlaybackID(tc)}) })
 		}
 		// Album: fetch all tracks then add to queue.
@@ -1413,6 +1425,7 @@ func (m *Model) handleCommandKey(k string) tea.Cmd {
 func (m *Model) executeCommand(cmd string) tea.Cmd {
 	switch {
 	case cmd == "q" || cmd == "quit":
+		m.flushQueueState()
 		if m.player != nil {
 			_ = m.player.Close()
 		}
@@ -1800,7 +1813,7 @@ func (m *Model) dropQueueAfter(seed *provider.Track) tea.Cmd {
 	}
 	m.queueTracks = m.queueTracks[:seedIdx+1]
 	m.queueIDs = m.queueIDs[:seedIdx+1]
-	m.queue.SetTracks(m.queueTracks)
+	m.syncQueue()
 	m.appendLog(fmt.Sprintf("[radio] dropped %d queued track(s) ahead of the seed", origLen-seedIdx-1))
 	return m.playerCmd(func(p player.Player) error {
 		for i := origLen - 1; i > seedIdx; i-- {
@@ -1993,7 +2006,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 				ids := m.queueIDs[idx:]
 				m.queueTracks = m.queueTracks[idx:]
 				m.queueIDs = ids
-				m.queue.SetTracks(m.queueTracks)
+				m.syncQueue()
 				m.appendLog(fmt.Sprintf("[queue] playing from position %d: %s — %s", idx+1, t.Artist, t.Title))
 				m.playerState.Loading = true
 				m.playerState.Playing = false
@@ -2008,7 +2021,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 				}
 				m.queueTracks = append(m.queueTracks[:idx], m.queueTracks[idx+1:]...)
 				m.queueIDs = append(m.queueIDs[:idx], m.queueIDs[idx+1:]...)
-				m.queue.SetTracks(m.queueTracks)
+				m.syncQueue()
 				m.appendLog(fmt.Sprintf("[queue] removed #%d: %s", idx+1, title))
 				i := idx
 				return m.playerCmd(func(p player.Player) error { return p.RemoveFromQueue(i) })
@@ -2017,7 +2030,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 			if idx, _ := m.queue.SelectedTrack(); idx > 0 {
 				m.queueTracks[idx-1], m.queueTracks[idx] = m.queueTracks[idx], m.queueTracks[idx-1]
 				m.queueIDs[idx-1], m.queueIDs[idx] = m.queueIDs[idx], m.queueIDs[idx-1]
-				m.queue.SetTracks(m.queueTracks)
+				m.syncQueue()
 				m.queue.Select(idx - 1)
 				m.appendLog(fmt.Sprintf("[queue] moved #%d up", idx+1))
 				from, to := idx, idx-1
@@ -2027,7 +2040,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 			if idx, _ := m.queue.SelectedTrack(); idx >= 0 && idx < len(m.queueTracks)-1 {
 				m.queueTracks[idx], m.queueTracks[idx+1] = m.queueTracks[idx+1], m.queueTracks[idx]
 				m.queueIDs[idx], m.queueIDs[idx+1] = m.queueIDs[idx+1], m.queueIDs[idx]
-				m.queue.SetTracks(m.queueTracks)
+				m.syncQueue()
 				m.queue.Select(idx + 1)
 				m.appendLog(fmt.Sprintf("[queue] moved #%d down", idx+1))
 				from, to := idx, idx+1
@@ -2037,7 +2050,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 			m.appendLog("[queue] cleared")
 			m.queueTracks = nil
 			m.queueIDs = nil
-			m.queue.SetTracks(nil)
+			m.syncQueue()
 			return m.playerCmd(func(p player.Player) error { return p.ClearQueue() })
 		case "s":
 			m.mode = modeCommand
@@ -2264,7 +2277,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 			m.playerState.Loading = true
 			m.playerState.Playing = false
 			m.playerState.Position = 0
-			m.queue.SetTracks(m.queueTracks)
+			m.syncQueue()
 			return m.playerCmd(func(p player.Player) error { return p.SetQueue(m.queueIDs) })
 		}
 
@@ -2274,7 +2287,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 			tc := *t
 			m.queueTracks = append(m.queueTracks, tc)
 			m.queueIDs = append(m.queueIDs, views.PlaybackID(tc))
-			m.queue.SetTracks(m.queueTracks)
+			m.syncQueue()
 			return m.playerCmd(func(p player.Player) error { return p.AppendQueue([]string{views.PlaybackID(tc)}) })
 		}
 
@@ -2499,7 +2512,7 @@ func (m *Model) purgeSkippedFromQueue() {
 		changed = true
 	}
 	if changed {
-		m.queue.SetTracks(m.queueTracks)
+		m.syncQueue()
 	}
 }
 
@@ -2825,6 +2838,10 @@ func discoveryArtistPool(g string) []string {
 }
 
 func (m *Model) togglePlayPause() tea.Cmd {
+	if m.player != nil && !m.playerState.Playing && m.playerState.Track == nil && len(m.queueIDs) > 0 {
+		// A restored queue exists only in the model so far; load it into the engine now.
+		return m.startRestoredQueue()
+	}
 	return func() tea.Msg {
 		if m.player == nil {
 			return errMsg{fmt.Errorf("no player")}
@@ -2874,7 +2891,7 @@ func (m *Model) playNextCmd(label string, tracks []provider.Track, ids []string)
 		m.playerState.Loading = true
 		m.playerState.Playing = false
 		m.playerState.Position = 0
-		m.queue.SetTracks(m.queueTracks)
+		m.syncQueue()
 		m.appendLog(fmt.Sprintf("[queue] play now: %s", label))
 		return m.playerCmd(func(p player.Player) error { return p.SetQueue(ids) })
 	}
@@ -2886,7 +2903,7 @@ func (m *Model) playNextCmd(label string, tracks []provider.Track, ids []string)
 	// Insert locally
 	m.queueTracks = append(m.queueTracks[:insertIdx], append(tracks, m.queueTracks[insertIdx:]...)...)
 	m.queueIDs = append(m.queueIDs[:insertIdx], append(ids, m.queueIDs[insertIdx:]...)...)
-	m.queue.SetTracks(m.queueTracks)
+	m.syncQueue()
 
 	m.appendLog(fmt.Sprintf("[queue] play next: %s (%d track(s))", label, len(tracks)))
 

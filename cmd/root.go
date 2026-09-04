@@ -12,6 +12,7 @@ import (
 	"github.com/simone-vibes/vibez/internal/lastfm"
 	demoPlayer "github.com/simone-vibes/vibez/internal/player/demo"
 	demoProvider "github.com/simone-vibes/vibez/internal/provider/demo"
+	"github.com/simone-vibes/vibez/internal/queuestate"
 	"github.com/simone-vibes/vibez/internal/tui"
 	"github.com/simone-vibes/vibez/internal/tui/styles"
 	"github.com/spf13/cobra"
@@ -60,7 +61,7 @@ func runTUI(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	opts := tui.Options{MemProfiling: memProfiling}
+	opts := tui.Options{MemProfiling: memProfiling, QueueStatePath: queuestate.PathFor(cfgPath)}
 
 	// Apply theme before creating any TUI model so all panels pick up the palette.
 	theme, themeErr := styles.LoadTheme(cfg.Theme, filepath.Dir(cfgPath))
