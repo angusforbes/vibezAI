@@ -51,7 +51,7 @@ Full tracks stream via Chrome with Widevine DRM. On Linux amd64, Chrome is auto-
 - **Browse your library** — playlists, albums, and tracks all in one place
 - **Real-time catalog search** — find any song, album, or artist from the full Apple Music catalog as you type
 - **Secure authentication** — MusicKit OAuth flow via an embedded Chrome window
-- **Find panel** — the right column is Apple Music search (`/`) or your library (`l`); the queue stays on screen while you browse. Results come as Playlists, Albums, Library (your own copies) and Tracks, five per section to start; every section ends in "+ 5 more" and "− 5 less" rows (Enter on them) that grow or shrink it in steps of five. Tab adds without playing, Enter adds and plays, and nothing there ever replaces your queue
+- **Find panel** — the right column is Apple Music search (`/`) or your library (`l`); the queue stays on screen while you browse. Results come as Playlists, Albums, Library (your own copies) and Tracks, five per section to start; a section shows a "+ 5 more" row while matches are hidden and a "− 5 less" row while any are shown (Enter on them grows or shrinks it in steps of five). Tab adds without playing, Enter adds and plays, and nothing there ever replaces your queue
 
 ### 📋 Queue Management
 
