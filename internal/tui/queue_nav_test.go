@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -418,5 +421,81 @@ func TestCtrlShiftD_OnFirstEntryIsNoop(t *testing.T) {
 	}
 	if len(m.queueTracks) != 4 || len(mock.syncCalls) != 0 {
 		t.Fatal("nothing is above the first entry, so nothing should change")
+	}
+}
+
+// libraryProvider serves a fixed library for the random-pick tests.
+type libraryProvider struct {
+	mockProvider
+	tracks []provider.Track
+	calls  int
+}
+
+func (p *libraryProvider) GetLibraryTracks(_ context.Context) ([]provider.Track, error) {
+	p.calls++
+	return p.tracks, nil
+}
+
+func TestCtrlShiftR_InsertsFiveRandomLibrarySongsAfterHighlight(t *testing.T) {
+	m, mock := navModel(t) // queue One Two Three Four, playing Two
+	lib := &libraryProvider{}
+	for i := range 12 {
+		lib.tracks = append(lib.tracks, provider.Track{ID: fmt.Sprintf("i.lib%d", i), Title: fmt.Sprintf("Lib %d", i), Artist: "L"})
+	}
+	lib.tracks = append(lib.tracks, provider.Track{ID: "2", Title: "Two", Artist: "B"}) // already queued: must be skipped
+	m.provider = lib
+	key(m, "down") // highlight "Three" (index 2)
+
+	cmd := key(m, "ctrl+shift+r")
+	if cmd == nil {
+		t.Fatal("ctrl+shift+r should start a library pick")
+	}
+	msg := cmd()
+	res, ok := msg.(randomLibraryResultMsg)
+	if !ok {
+		t.Fatalf("expected randomLibraryResultMsg, got %T", msg)
+	}
+	if len(res.tracks) != 5 || res.all == nil {
+		t.Fatalf("expected 5 picks and the fetched library, got %d picks all=%v", len(res.tracks), res.all != nil)
+	}
+	for _, tr := range res.tracks {
+		if tr.ID == "2" {
+			t.Fatal("a queued track must not be picked")
+		}
+	}
+	_, next := m.Update(res)
+	if next != nil {
+		_ = next()
+	}
+	if len(m.queueIDs) != 9 || m.queueIDs[2] != "3" || m.queueIDs[8] != "4" {
+		t.Fatalf("picks should sit right after the highlighted track: %v", m.queueIDs)
+	}
+	for _, id := range m.queueIDs[3:8] {
+		if !strings.HasPrefix(id, "i.lib") {
+			t.Fatalf("expected library picks at positions 4-8, got %v", m.queueIDs)
+		}
+	}
+	if len(mock.syncCalls) != 1 || mock.syncCalls[0].Current != "2" || mock.syncCalls[0].Play != "" {
+		t.Fatalf("the insert should re-sync the engine without changing playback, got %+v", mock.syncCalls)
+	}
+
+	// A second press within the cache window does not refetch and skips the
+	// five already added.
+	cmd = key(m, "ctrl+shift+r")
+	res2, _ := cmd().(randomLibraryResultMsg)
+	if lib.calls != 1 || res2.all != nil {
+		t.Fatalf("the cached library should be reused, fetch calls=%d", lib.calls)
+	}
+	if len(res2.tracks) != 5 {
+		t.Fatalf("still 7 unqueued library songs left, expected 5 more picks, got %d", len(res2.tracks))
+	}
+	seen := map[string]bool{}
+	for _, id := range m.queueIDs {
+		seen[id] = true
+	}
+	for _, tr := range res2.tracks {
+		if seen[tr.ID] {
+			t.Fatalf("second pick repeated a queued track: %s", tr.ID)
+		}
 	}
 }

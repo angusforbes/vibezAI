@@ -348,14 +348,16 @@ func TestModel_Update_KeyCommand(t *testing.T) {
 	}
 }
 
-func TestModel_Update_KeyLibrary(t *testing.T) {
+func TestModel_Update_KeyLibrary_IsNotAPanelAnyMore(t *testing.T) {
 	m := newModel(nil)
 	m.Update(tea.KeyPressMsg{Code: 'l', Text: "l"})
-	if m.activePanel < 0 {
-		t.Errorf("activePanel = %d, want >= 0 (library panel active)", m.activePanel)
+	if m.activePanel >= 0 {
+		t.Errorf("l must not open a panel (the library browser is not offered), got activePanel=%d", m.activePanel)
 	}
-	if m.panels[m.activePanel].NavKey() != "l" {
-		t.Errorf("active panel NavKey = %q, want %q", m.panels[m.activePanel].NavKey(), "l")
+	for _, p := range m.panels {
+		if p.NavKey() == "l" {
+			t.Fatal("the library panel must not be registered")
+		}
 	}
 }
 
@@ -910,23 +912,12 @@ func TestModel_QueueTracksMsg_AppendsWithoutLeavingLibrary(t *testing.T) {
 	}
 }
 
-func TestHandleNormalKey_CapitalLOpensTopLevelLibrary(t *testing.T) {
+func TestHandleNormalKey_CapitalL_DoesNothing(t *testing.T) {
 	m := newModel(nil)
 	m.activePanel = -1
-	m.library.SetSize(80, 24)
-
 	cmd := m.handleNormalKey(tea.KeyPressMsg{Text: "L"}, "L")
-	if cmd != nil {
-		t.Fatal("capital L should not return a command")
-	}
-	if m.activePanel < 0 || m.panels[m.activePanel] != m.library {
-		t.Fatalf("activePanel = %d, want library", m.activePanel)
-	}
-	view := m.library.View()
-	for _, want := range []string{"Songs", "Albums", "Artists", "Playlists"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("library view missing %q: %q", want, view)
-		}
+	if cmd != nil || m.activePanel >= 0 {
+		t.Fatalf("L must do nothing now that the library browser is not offered (cmd=%v activePanel=%d)", cmd != nil, m.activePanel)
 	}
 }
 
@@ -1503,9 +1494,10 @@ func TestModel_Update_EngineReadyMsg(t *testing.T) {
 	if m.provider == nil {
 		t.Error("EngineReadyMsg should set m.provider")
 	}
-	// panels[0] must still point to m.library so the 'l' key works after EngineReadyMsg.
-	if m.panels[0] != m.library {
-		t.Error("EngineReadyMsg must not replace m.library pointer; panels[0] would become stale")
+	// m.library is kept (not a panel any more, but it still receives the
+	// provider so its model can be rebuilt without a stale pointer).
+	if m.library == nil || m.library.m == nil {
+		t.Error("EngineReadyMsg must keep m.library wired")
 	}
 	// The new inner LibraryModel must have non-zero dimensions so items are visible.
 	if m.library.m.Width() == 0 || m.library.m.Height() == 0 {
@@ -1900,15 +1892,6 @@ func TestHandleNormalKey_Slash_OpenSearch(t *testing.T) {
 	m.handleNormalKey(tea.KeyPressMsg{Code: '/', Text: "/"}, "/")
 	if m.mode != modeSearch {
 		t.Error("/ key should switch to search mode")
-	}
-}
-
-func TestHandleNormalKey_L_ToggleLibraryPanel(t *testing.T) {
-	m := newModel(nil)
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'l', Text: "l"}, "l")
-	// Library panel should be activated.
-	if m.activePanel < 0 {
-		t.Error("l key should open library panel")
 	}
 }
 
