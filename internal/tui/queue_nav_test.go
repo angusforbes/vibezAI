@@ -75,24 +75,29 @@ func TestQueueCursor_ArrowsMoveWithoutPlaying(t *testing.T) {
 	}
 }
 
-func TestQueueCursor_SpaceStartsHighlightedTrack(t *testing.T) {
-	m, mock := navModel(t)
+func TestQueueCursor_SpaceIsAlwaysPlayPause(t *testing.T) {
+	m, mock := navModel(t) // playing "Two"
 	key(m, "down")
-	key(m, "down") // cursor on "Four" (index 3)
+	key(m, "down") // highlight "Four" (index 3)
 	if cmd := key(m, "space"); cmd != nil {
 		_ = cmd()
 	}
-	if len(mock.playQueuedCalls) != 1 || mock.playQueuedCalls[0].Idx != 3 || mock.playQueuedCalls[0].ID != "4" {
-		t.Fatalf("PlayQueued calls = %+v, want [{3 4}]", mock.playQueuedCalls)
+	if !mock.pauseCalled || len(mock.playQueuedCalls) != 0 || mock.setQueueIDs != nil {
+		t.Fatalf("space must only toggle play/pause: pause=%v playQueued=%v setQueue=%v", mock.pauseCalled, mock.playQueuedCalls, mock.setQueueIDs)
 	}
-	if mock.setQueueIDs != nil || mock.playCalled || mock.pauseCalled {
-		t.Fatal("space on a highlighted track must jump in place, not replace the queue or toggle play/pause")
+	if m.queueCursor != 3 {
+		t.Fatalf("space must not move the highlight, got %d", m.queueCursor)
 	}
-	if len(m.queueTracks) != 4 || len(m.queueIDs) != 4 {
-		t.Fatalf("queue must stay intact, got %d tracks", len(m.queueTracks))
+}
+
+func TestQueueCursor_EnterOnPlayingTrackRestartsIt(t *testing.T) {
+	m, mock := navModel(t) // playing "Two" (index 1), highlight following it
+	m.followPlayingTrack()
+	if cmd := key(m, "enter"); cmd != nil {
+		_ = cmd()
 	}
-	if m.queueCursor != 3 || !m.queueFollow {
-		t.Fatalf("after starting a track the highlight should sit on it and follow playback, got cursor=%d follow=%v", m.queueCursor, m.queueFollow)
+	if len(mock.playQueuedCalls) != 1 || mock.playQueuedCalls[0].Idx != 1 || mock.playQueuedCalls[0].ID != "2" {
+		t.Fatalf("enter on the playing track should restart it via PlayQueued, got %+v", mock.playQueuedCalls)
 	}
 }
 

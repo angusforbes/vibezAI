@@ -85,7 +85,12 @@ func (m *Model) startRestoredQueue() tea.Cmd {
 	if len(m.queueIDs) == 0 {
 		return nil
 	}
-	idx := m.queueResumeIdx
+	// Nothing is loaded in the engine yet, so "play" means: start the
+	// highlighted entry (the saved position unless the user moved it).
+	idx := m.queueCursor
+	if idx < 0 || idx >= len(m.queueIDs) {
+		idx = m.queueResumeIdx
+	}
 	if idx < 0 || idx >= len(m.queueIDs) {
 		idx = 0
 	}

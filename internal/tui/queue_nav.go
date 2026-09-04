@@ -13,9 +13,9 @@ import (
 // The queue lives under the track block; there is no separate queue panel and
 // no highlight mode. One entry is always highlighted: it follows the playing
 // track until ↑/↓ (or k/j), gg/G or shift+↑/↓ move it, and q puts it back on
-// the playing track. space is play/pause when the highlight sits on the
-// playing track and otherwise jumps to the highlighted entry (queue kept);
-// enter always plays the highlighted entry. d (also x/delete) removes it, K/J
+// the playing track. space is always play/pause; enter plays the highlighted
+// entry (queue kept), restarting it when it is the playing one. d (also
+// x/delete) removes it, K/J
 // move it, shift+d removes it and everything below, ctrl+shift+d removes
 // everything above, R inserts five related songs right after it, c clears the
 // queue and s jumps to a random queued song. Nothing else changes with the
@@ -236,10 +236,9 @@ func (m *Model) handleQueueCursorKey(k string) (tea.Cmd, bool) {
 		m.ensureQueueCursorVisible()
 		m.lastKey = ""
 		return cmd, true
-	case "space", "enter":
-		if k == "space" && m.queueCursor == m.currentQueueIndex() && m.playerState.Track != nil {
-			return nil, false // highlight on the playing track: plain play/pause
-		}
+	case "enter":
+		// Start the highlighted entry; on the playing track this restarts it.
+		// space is never handled here: it is always plain play/pause.
 		m.lastKey = ""
 		return m.jumpToQueueIndex(m.queueCursor), true
 	case "d", "x", "delete":

@@ -254,7 +254,6 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | `-` | Volume down |
 | `r` | Cycle repeat (off → all → one) |
 | `s` | Jump to a random queued song |
-| `f` | Heart / favourite current track |
 | `v` | Open vibe input (mood-driven search) |
 | `e` | Toggle equalizer panel |
 | `R` | Insert five related songs after the playing track (once) |
@@ -262,8 +261,8 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | `l` | Toggle library panel |
 | `q` | Put the queue highlight back on the playing track (it follows playback until you move it) |
 | `↑` / `↓` (`k` / `j`) | Move the queue highlight without changing playback |
-| `space` | Play/pause when the highlight is on the playing track, otherwise jump to the highlighted entry (queue kept) |
-| `enter` | Play the highlighted queue entry (queue kept) |
+| `space` | Play / pause |
+| `enter` | Play the highlighted queue entry (queue kept); on the playing track it restarts it |
 | `d` / `x` | Remove the highlighted queue entry |
 | `K` / `J` (with a highlighted entry) | Move the highlighted queue entry up / down |
 | `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom of the queue |

@@ -2095,17 +2095,10 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		m.lastKey = ""
 		return m.jumpToRandomQueued()
 
-	case "f":
-		m.lastKey = ""
-		if m.playerState.Track != nil {
-			id := m.playerState.Track.ID
-			m.favorites[id] = !m.favorites[id]
-			loved := m.favorites[id]
-			m.appendLog(fmt.Sprintf("[fav] %s → %v", m.playerState.Track.Title, loved))
-			// Sync to Apple Music asynchronously.
-			t := m.playerState.Track
-			return m.loveSongCmd(t, loved)
-		}
+	// The "f" favourite key is disabled: it toggled m.favorites for the playing
+	// track and synced the rating to Apple Music via loveSongCmd. The plumbing
+	// (favorites map, loveSongCmd, checkSongRatingCmd) is kept for a possible
+	// return of the feature.
 
 	case "v":
 		m.lastKey = ""
@@ -3253,15 +3246,9 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 		shuffleStyle = styles.ControlActive
 	}
 
-	heartIcon, heartStyle := "♡", muted
-	if m.favorites[t.ID] {
-		heartIcon, heartStyle = "♥", styles.FavoriteActive
-	}
-
 	controlsStr := repeatStyle.Render(repeatIcon) + "   " +
 		shuffleStyle.Render("⇄") + "   " +
-		playStyle.Render(playIcon) + "   " +
-		heartStyle.Render(heartIcon)
+		playStyle.Render(playIcon)
 	if m.preMuteVol >= 0 {
 		controlsStr += "   " + styles.Playing.Render("🔇")
 	}
@@ -3510,7 +3497,6 @@ func (m *Model) statusPlayLines(w int) []string {
 		accent.Render("K/J") + muted.Render(" move"),
 		accent.Render("R") + muted.Render(" +5 related"),
 		accent.Render("s") + muted.Render(" random"),
-		accent.Render("f") + muted.Render(" fav"),
 		accent.Render("r") + muted.Render(" repeat"),
 		accent.Render("c") + muted.Render(" clear"),
 	}

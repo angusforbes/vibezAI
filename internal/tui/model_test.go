@@ -1577,25 +1577,7 @@ func TestCommand_Shuffle_TogglesShuffleMode(t *testing.T) {
 	}
 }
 
-func TestHandleNormalKey_F_LoveSong(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	track := &provider.Track{Title: "Song", Artist: "Artist", ID: "fav-id"}
-	m.playerState.Track = track
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'f', Text: "f"}, "f")
-	_ = cmd
-	if !m.favorites["fav-id"] {
-		t.Error("f key should toggle favorite on")
-	}
-}
 
-func TestHandleNormalKey_F_NoTrack_NoOp(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	m.playerState.Track = nil
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'f', Text: "f"}, "f")
-	_ = cmd // no-op
-}
 
 func TestHandleNormalKey_R_StartRadio(t *testing.T) {
 	mp := newMockPlayer()
@@ -3665,5 +3647,16 @@ func TestCommand_Discover_TogglesOff(t *testing.T) {
 	_ = m.executeCommand("discover stop") // no-op when off
 	if m.discovery.enabled {
 		t.Fatal("stop must keep discovery off")
+	}
+}
+
+func TestHandleNormalKey_F_IsDisabled(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	track := &provider.Track{Title: "Song", Artist: "Artist", ID: "fav-id"}
+	m.playerState.Track = track
+	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'f', Text: "f"}, "f")
+	if cmd != nil || m.favorites["fav-id"] {
+		t.Error("f is disabled and must not toggle a favourite")
 	}
 }
