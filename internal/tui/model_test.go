@@ -1577,8 +1577,6 @@ func TestCommand_Shuffle_TogglesShuffleMode(t *testing.T) {
 	}
 }
 
-
-
 func TestHandleNormalKey_R_StartRadio(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
