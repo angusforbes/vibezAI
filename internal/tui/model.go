@@ -171,10 +171,12 @@ type vibeResultMsg struct {
 	query     string
 	tracks    []provider.Track
 	err       error
-	warnings  []string // non-fatal provider failures behind an incomplete result
-	discovery bool     // true when result is from a discovery auto-refill
-	radio     bool     // true when result is from a radio auto-refill
-	radioGen  int      // radio generation that produced this result
+	plan      vibe.Plan // what the planner made of the description
+	via       string    // planner that produced plan ("Claude", "keywords", …)
+	warnings  []string  // non-fatal provider failures behind an incomplete result
+	discovery bool      // true when result is from a discovery auto-refill
+	radio     bool      // true when result is from a radio auto-refill
+	radioGen  int       // radio generation that produced this result
 }
 type loveSongMsg struct {
 	title string
@@ -346,6 +348,9 @@ type Model struct {
 
 	// Vibe panel (always visible, right split)
 	vibe *views.VibeModel
+	// vibePlanner turns a vibes-mode description into search terms (Claude
+	// Code CLI or the keyword table, per config "vibe_agent").
+	vibePlanner vibe.Planner
 
 	// Search popup (not a panel)
 	search *views.SearchModel
@@ -434,6 +439,7 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	eqBands := configEQBandsToPlayer(cfg.EQBands)
 	m.eqP = &eqPanel{m: views.NewEqualizer(eqBands)}
 	m.vibe = views.NewVibe()
+	m.vibePlanner = vibe.NewPlanner(cfg.VibeAgent)
 	m.search = views.NewSearch(prov)
 	m.favorites = make(map[string]bool)
 	m.aboutP = &aboutPanel{m: views.NewAbout()}
@@ -2275,6 +2281,9 @@ func (m *Model) startVibeSearch(query string) tea.Cmd {
 	m.vibeShown = query
 	m.searchGen++ // drop any regular search still in flight
 	m.search.SetResults(nil, true, nil)
+	if m.vibePlanner != nil && m.vibePlanner.Name() != "keywords" {
+		m.search.SetLoadingNote("✨ asking " + m.vibePlanner.Name() + " for search terms…")
+	}
 	return m.runVibeSearch(query)
 }
 
@@ -2288,34 +2297,58 @@ func (m *Model) handleVibeSearchResult(msg vibeResultMsg) {
 	if len(msg.warnings) > 0 {
 		m.appendLog(fmt.Sprintf("[vibe] partial results: %s", strings.Join(msg.warnings, "; ")))
 	}
+	// Show what was searched for: planner and summary, then the terms.
+	var note []string
+	if msg.via != "" {
+		note = append(note, "✨ "+msg.via+": "+msg.plan.Summary)
+		if len(msg.plan.Queries) > 0 {
+			note = append(note, "terms: "+strings.Join(msg.plan.Queries, " · "))
+		}
+		m.appendLog(fmt.Sprintf("[vibe] %s planned %q → %q: %v", msg.via, msg.query, msg.plan.Summary, msg.plan.Queries))
+	}
 	if msg.err != nil {
 		m.appendLog(fmt.Sprintf("[vibe] search error: %v", msg.err))
-		m.search.SetVibeResults(nil)
+		m.search.SetVibeResults(nil, note...)
 		return
 	}
 	m.appendLog(fmt.Sprintf("[vibe] %d song(s) for %q", len(msg.tracks), msg.query))
-	m.search.SetVibeResults(msg.tracks)
+	m.search.SetVibeResults(msg.tracks, note...)
 }
 
-// runVibeSearch uses the KeywordAgent to interpret the user's vibe description.
-// It fires multiple parallel searches using different query variants from the
-// agent, merges results, deduplicates, shuffles, and returns up to 15 tracks.
+// vibeResultCap is how many songs a vibe lookup lists.
+const vibeResultCap = 15
+
+// runVibeSearch turns a description into search terms through the configured
+// planner (Claude Code CLI or the keyword table; the table is the fallback
+// when the planner fails), runs them in parallel through the provider and
+// interleaves the results so every term contributes, deduplicated by artist
+// and title, up to vibeResultCap songs. The plan rides along so the panel can
+// show what was searched for.
 func (m *Model) runVibeSearch(query string) tea.Cmd {
-	agent := &vibe.KeywordAgent{}
-	v := agent.Parse(query)
-	// Get diverse query variants. Pick up to 3 randomly (already shuffled by the agent).
-	allQueries := agent.ToSearchQueries(v)
-	const maxQueries = 3
-	if len(allQueries) > maxQueries {
-		allQueries = allQueries[:maxQueries]
+	planner := m.vibePlanner
+	if planner == nil {
+		planner = vibe.KeywordPlanner{}
 	}
-	if len(allQueries) == 0 {
-		allQueries = []string{query}
-	}
-	m.appendLog(fmt.Sprintf("[vibe] %q → queries: %v", query, allQueries))
 	prov := m.provider
 
 	return func() tea.Msg {
+		var reasons []string
+		pctx, pcancel := context.WithTimeout(context.Background(), 45*time.Second)
+		plan, err := planner.Plan(pctx, query)
+		pcancel()
+		via := planner.Name()
+		if err != nil {
+			reasons = append(reasons, err.Error())
+			plan, _ = vibe.KeywordPlanner{}.Plan(context.Background(), query)
+			via = "keywords (" + planner.Name() + " unavailable)"
+		}
+		queries := plan.Queries
+		const maxQueries = 6 // each term is three parallel Apple requests
+		if len(queries) > maxQueries {
+			queries = queries[:maxQueries]
+		}
+		plan.Queries = queries // the panel lists exactly the terms that ran
+
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
@@ -2324,8 +2357,8 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 			warnings []string
 			err      error
 		}
-		chs := make([]chan searchOut, len(allQueries))
-		for i, q := range allQueries {
+		chs := make([]chan searchOut, len(queries))
+		for i, q := range queries {
 			ch := make(chan searchOut, 1)
 			chs[i] = ch
 			go func(term string, out chan searchOut) {
@@ -2337,30 +2370,22 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 				out <- searchOut{tracks: res.Tracks, warnings: res.Warnings}
 			}(q, ch)
 		}
-
-		// Merge results and deduplicate by (artist, title). Failures and
-		// partial-result warnings are collected rather than dropped: when the
-		// merge comes back empty they are the only explanation available.
-		seen := map[string]bool{}
-		var merged []provider.Track
-		var reasons []string
-		for _, ch := range chs {
+		// Failures and partial-result warnings are collected rather than
+		// dropped: when the merge comes back empty they are the only
+		// explanation available.
+		perTerm := make([][]provider.Track, len(queries))
+		for i, ch := range chs {
 			r := <-ch
 			if r.err != nil {
 				reasons = append(reasons, r.err.Error())
 			}
 			reasons = append(reasons, r.warnings...)
-			for _, t := range r.tracks {
-				key := strings.ToLower(t.Artist + "||" + t.Title)
-				if !seen[key] {
-					seen[key] = true
-					merged = append(merged, t)
-				}
-			}
+			perTerm[i] = r.tracks
 		}
+		merged := interleaveTracks(perTerm, vibeResultCap)
 
 		if len(merged) == 0 {
-			// Fallback to raw input.
+			// Fallback to the raw description.
 			res, err := prov.Search(ctx, query)
 			if err != nil {
 				reasons = append(reasons, err.Error())
@@ -2373,20 +2398,43 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 					query:    query,
 					err:      noResultsError(query, reasons),
 					warnings: dedupeStrings(reasons),
+					plan:     plan,
+					via:      via,
 				}
 			}
-			merged = res.Tracks
+			merged = interleaveTracks([][]provider.Track{res.Tracks}, vibeResultCap)
 		}
-
-		rand.Shuffle(len(merged), func(i, j int) { //nolint:gosec // music shuffle
-			merged[i], merged[j] = merged[j], merged[i]
-		})
-		const cap = 15
-		if len(merged) > cap {
-			merged = merged[:cap]
-		}
-		return vibeResultMsg{query: query, tracks: merged, warnings: dedupeStrings(reasons)}
+		return vibeResultMsg{query: query, tracks: merged, warnings: dedupeStrings(reasons), plan: plan, via: via}
 	}
+}
+
+// interleaveTracks takes songs from each term's results in turn, skipping
+// repeats by artist and title, until limit songs are collected. Term order
+// is the planner's priority; within a term Apple's relevance order is kept.
+func interleaveTracks(perTerm [][]provider.Track, limit int) []provider.Track {
+	seen := map[string]bool{}
+	var merged []provider.Track
+	for progress := true; progress && len(merged) < limit; {
+		progress = false
+		for i := range perTerm {
+			for len(perTerm[i]) > 0 {
+				t := perTerm[i][0]
+				perTerm[i] = perTerm[i][1:]
+				key := strings.ToLower(t.Artist + "||" + t.Title)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				merged = append(merged, t)
+				progress = true
+				break
+			}
+			if len(merged) >= limit {
+				break
+			}
+		}
+	}
+	return merged
 }
 
 // noResultsError builds the error shown when a search yields nothing. The

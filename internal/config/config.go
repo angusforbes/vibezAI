@@ -24,6 +24,10 @@ type Config struct {
 	Provider            string `json:"provider"`
 	Theme               string `json:"theme"`
 	AudioQuality        string `json:"audio_quality,omitempty"`
+	// VibeAgent plans the Search panel's vibes-mode lookups: "claude" (Claude
+	// Code CLI, the user's own login), "keywords" (built-in table) or "auto"
+	// (Claude when installed, else keywords). Empty means auto.
+	VibeAgent string `json:"vibe_agent,omitempty"`
 	// Volume is the last user-set playback volume (0.0–1.0). nil means
 	// "not yet saved" and the player default (1.0) is used on startup.
 	Volume *float64 `json:"volume,omitempty"`

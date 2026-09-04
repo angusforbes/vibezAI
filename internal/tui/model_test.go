@@ -23,6 +23,7 @@ import (
 	"github.com/simone-vibes/vibez/internal/tui/art"
 	"github.com/simone-vibes/vibez/internal/tui/styles"
 	"github.com/simone-vibes/vibez/internal/tui/views"
+	"github.com/simone-vibes/vibez/internal/vibe"
 )
 
 // --- mock player ---
@@ -180,6 +181,7 @@ func testCfg() *config.Config {
 		AuthPort:   7777,
 		Provider:   "apple",
 		Theme:      "default",
+		VibeAgent:  "keywords", // never spawn the Claude CLI from tests
 	}
 }
 
@@ -4010,5 +4012,114 @@ func TestHandleSearchKey_CtrlSlashWithTextStartsVibeLookup(t *testing.T) {
 	footer := strings.Join(m.statusLines(200), " ")
 	if strings.Contains(footer, "find songs") {
 		t.Fatalf("the typed text is already being looked up, so Enter is not a lookup: %q", footer)
+	}
+}
+
+// fakePlanner answers every description with a fixed plan (or error).
+type fakePlanner struct {
+	plan  vibe.Plan
+	err   error
+	calls []string
+}
+
+func (f *fakePlanner) Name() string { return "Test" }
+func (f *fakePlanner) Plan(_ context.Context, d string) (vibe.Plan, error) {
+	f.calls = append(f.calls, d)
+	return f.plan, f.err
+}
+
+// termProvider answers every search with n songs named after the term.
+type termProvider struct {
+	mockProvider
+	n int
+}
+
+func (p *termProvider) Search(_ context.Context, term string) (*provider.SearchResult, error) {
+	res := &provider.SearchResult{}
+	for i := range p.n {
+		id := fmt.Sprintf("%s-%d", term, i)
+		res.Tracks = append(res.Tracks, provider.Track{ID: id, CatalogID: id, Title: fmt.Sprintf("%s %d", term, i), Artist: "Band " + term})
+	}
+	return res, nil
+}
+
+func TestRunVibeSearch_UsesThePlannerTermsAndInterleaves(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &termProvider{n: 10}
+	fp := &fakePlanner{plan: vibe.Plan{Summary: "Dreamy soul", Queries: []string{"alpha", "beta"}}}
+	m.vibePlanner = fp
+	msg, ok := m.runVibeSearch("dreamy soul")().(vibeResultMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("vibe search failed: ok=%v err=%v", ok, msg.err)
+	}
+	if len(fp.calls) != 1 || fp.calls[0] != "dreamy soul" {
+		t.Fatalf("the planner should see the description once, got %v", fp.calls)
+	}
+	if len(msg.tracks) != vibeResultCap {
+		t.Fatalf("results are capped at %d, got %d", vibeResultCap, len(msg.tracks))
+	}
+	if msg.tracks[0].Title != "alpha 0" || msg.tracks[1].Title != "beta 0" || msg.tracks[2].Title != "alpha 1" {
+		t.Fatalf("terms should be interleaved in the planner's order, got %q %q %q", msg.tracks[0].Title, msg.tracks[1].Title, msg.tracks[2].Title)
+	}
+	if msg.via != "Test" || msg.plan.Summary != "Dreamy soul" {
+		t.Fatalf("the plan must ride along: via=%q plan=%+v", msg.via, msg.plan)
+	}
+	// The panel shows who planned what, above the songs, without making it selectable.
+	m.mode = modeSearch
+	m.search.SetSize(80, 40)
+	m.searchVibe, m.vibeShown = true, "dreamy soul"
+	m.Update(msg)
+	view := m.search.View()
+	if !strings.Contains(view, "✨ Test: Dreamy soul") || !strings.Contains(view, "terms: alpha · beta") {
+		t.Fatalf("the plan should be shown under the Vibes header: %q", view)
+	}
+	if t0 := m.search.SelectedTrack(); t0 == nil || t0.Title != "alpha 0" {
+		t.Fatalf("the highlight should start on the first song, not a note line, got %+v", t0)
+	}
+}
+
+func TestRunVibeSearch_FallsBackToKeywordsWhenThePlannerFails(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &termProvider{n: 3}
+	// Over-long plans are trimmed to the terms that actually run.
+	m.vibePlanner = &fakePlanner{plan: vibe.Plan{Summary: "s", Queries: []string{"a", "b", "c", "d", "e", "f", "g", "h"}}}
+	if msg := m.runVibeSearch("x")().(vibeResultMsg); len(msg.plan.Queries) != 6 || msg.plan.Queries[5] != "f" {
+		t.Fatalf("the shown plan must list only the 6 searched terms, got %v", msg.plan.Queries)
+	}
+	m.vibePlanner = &fakePlanner{err: errors.New("not logged in")}
+	msg := m.runVibeSearch("late night coding")().(vibeResultMsg)
+	if msg.err != nil || len(msg.tracks) == 0 {
+		t.Fatalf("the keyword table must take over: err=%v tracks=%d", msg.err, len(msg.tracks))
+	}
+	if !strings.HasPrefix(msg.via, "keywords") || !strings.Contains(msg.via, "Test unavailable") {
+		t.Fatalf("the fallback must be visible in via, got %q", msg.via)
+	}
+	found := false
+	for _, w := range msg.warnings {
+		if strings.Contains(w, "not logged in") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the planner's error should be kept as a warning, got %v", msg.warnings)
+	}
+}
+
+func TestStartVibeSearch_SaysWhoIsAsked(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.searchVibe = true
+	m.vibePlanner = &fakePlanner{plan: vibe.Plan{Queries: []string{"x"}}}
+	if cmd := m.startVibeSearch("anything"); cmd == nil {
+		t.Fatal("expected a lookup command")
+	}
+	if v := m.search.View(); !strings.Contains(v, "asking Test") {
+		t.Fatalf("while loading, the panel should say who is being asked: %q", v)
+	}
+	m.vibePlanner = vibe.KeywordPlanner{}
+	m.startVibeSearch("other")
+	if v := m.search.View(); !strings.Contains(v, "searching") || strings.Contains(v, "asking") {
+		t.Fatalf("the keyword table needs no announcement: %q", v)
 	}
 }

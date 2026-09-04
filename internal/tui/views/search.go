@@ -65,9 +65,10 @@ type searchRow struct {
 	track    *provider.Track
 	album    *provider.Album
 	playlist *provider.Playlist
-	toggle   bool // "+ 5 more" / "− 5 less" control row of a section
-	more     bool // toggle rows: true = the "more" control, false = "less"
-	step     int  // toggle rows: how many items the control would add or remove (0 = nothing to do)
+	toggle   bool   // "+ 5 more" / "− 5 less" control row of a section
+	more     bool   // toggle rows: true = the "more" control, false = "less"
+	step     int    // toggle rows: how many items the control would add or remove (0 = nothing to do)
+	note     string // muted, non-selectable line (what a vibe lookup searched for)
 }
 
 // isItem reports whether this row is selectable: an item, a more/less toggle
@@ -79,7 +80,7 @@ func (r searchRow) isItem() bool {
 // rowLines returns the number of visual lines a row occupies. Playlists and
 // the more/less toggles are one line; tracks and albums carry a detail line.
 func rowLines(r searchRow) int {
-	if r.header || r.toggle || r.playlist != nil {
+	if r.header || r.toggle || r.playlist != nil || r.note != "" {
 		return 1
 	}
 	return 2
@@ -100,8 +101,11 @@ type SearchModel struct {
 	err      error
 
 	// vibe marks a result set produced by a vibe description: one "Vibes"
-	// section instead of the Playlists/Albums/Library/Tracks split.
-	vibe bool
+	// section instead of the Playlists/Albums/Library/Tracks split, with
+	// vibeNote lines (planner, summary, terms) under the header.
+	vibe        bool
+	vibeNote    []string
+	loadingNote string // shown instead of "searching…" while loading
 
 	// Catalog Tracks paging: Apple answers at most 25 songs per request, so
 	// "+ 5 more" fetches the next page once the loaded ones run out.
@@ -127,7 +131,7 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.loading = loading
 	m.err = err
 	m.results = result
-	m.vibe = false
+	m.vibe, m.vibeNote, m.loadingNote = false, nil, ""
 	m.shown = nil // a new result set starts at the default count per section
 	m.catalogNext, m.catalogMore = 0, false
 	m.paging, m.pendingReveal = false, 0
@@ -139,13 +143,19 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.scroll = 0
 }
 
+// SetLoadingNote replaces the "searching…" text while results are loading.
+func (m *SearchModel) SetLoadingNote(note string) { m.loadingNote = note }
+
 // SetVibeResults shows the songs found for a vibe description as a single
-// "Vibes" section with the usual "+ 5 more" / "− 5 less" controls.
-func (m *SearchModel) SetVibeResults(tracks []provider.Track) {
+// "Vibes" section with the usual "+ 5 more" / "− 5 less" controls. The note
+// lines (what was searched for) sit under the header and cannot be selected.
+func (m *SearchModel) SetVibeResults(tracks []provider.Track, note ...string) {
 	m.loading = false
+	m.loadingNote = ""
 	m.err = nil
 	m.results = &provider.SearchResult{Tracks: tracks}
 	m.vibe = true
+	m.vibeNote = note
 	m.shown = nil
 	m.catalogNext, m.catalogMore = 0, false
 	m.paging, m.pendingReveal = false, 0
@@ -499,6 +509,14 @@ func (m *SearchModel) rebuildRows() {
 	res := m.results
 	if m.vibe {
 		m.sectionRows("Vibes", len(res.Tracks), func(i int) searchRow { return searchRow{track: &res.Tracks[i]} })
+		if len(m.rows) == 0 { // nothing found: still say what was tried
+			m.rows = append(m.rows, searchRow{header: true, label: "Vibes"})
+		}
+		notes := make([]searchRow, 0, len(m.vibeNote)+len(m.rows))
+		for _, n := range m.vibeNote {
+			notes = append(notes, searchRow{note: n})
+		}
+		m.rows = append(m.rows[:1], append(notes, m.rows[1:]...)...)
 		return
 	}
 	m.sectionRows("Playlists", len(res.Playlists), func(i int) searchRow { return searchRow{playlist: &res.Playlists[i]} })
@@ -665,6 +683,9 @@ func sectionColor(label string) color.Color {
 // View renders the multi-section result list within the allocated height.
 func (m *SearchModel) View() string {
 	if m.loading {
+		if m.loadingNote != "" {
+			return styles.QueueItemMuted.Render("  " + cutRunes(m.loadingNote, max(1, m.width-2)))
+		}
 		return styles.QueueItemMuted.Render("  searching…")
 	}
 	if m.err != nil {
@@ -708,6 +729,12 @@ func (m *SearchModel) View() string {
 				prefix = lipgloss.NewStyle().Foreground(currentAccent).Render("▶ ")
 			}
 			sb.WriteString(prefix + hs.Render(row.label) + "\n")
+			linesLeft--
+			continue
+		}
+
+		if row.note != "" {
+			sb.WriteString("  " + styles.QueueItemMuted.Render(cutRunes(row.note, max(1, m.width-2))) + "\n")
 			linesLeft--
 			continue
 		}
@@ -799,4 +826,16 @@ func (m *SearchModel) scheduleSearch(query string) tea.Cmd {
 
 func searchResultItems(r *provider.SearchResult) []provider.Track {
 	return r.Tracks
+}
+
+// cutRunes shortens s to at most n runes, marking the cut with an ellipsis.
+func cutRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	if n <= 1 {
+		return string(r[:n])
+	}
+	return string(r[:n-1]) + "…"
 }

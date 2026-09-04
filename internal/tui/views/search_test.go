@@ -1196,3 +1196,35 @@ func TestSearch_VibeResultsAreOneSection(t *testing.T) {
 		t.Fatal("SetResults should return to the regular sections")
 	}
 }
+
+func TestSearch_VibeNotesAreShownButNotSelectable(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 40)
+	s.SetVibeResults(catalogPage(0, 3), "✨ Claude: Dreamy soul", "terms: a · b")
+	if len(s.rows) < 4 || !s.rows[0].header || s.rows[1].note == "" || s.rows[2].note == "" || s.rows[3].track == nil {
+		t.Fatalf("want header, two notes, then songs; got %+v", s.rows[:4])
+	}
+	if s.cursor != 3 {
+		t.Fatalf("highlight should start on the first song (row 3), got %d", s.cursor)
+	}
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if s.cursor != 0 {
+		t.Fatalf("moving up skips the notes and lands on the header, got %d", s.cursor)
+	}
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.cursor != 3 {
+		t.Fatalf("moving down skips the notes again, got %d", s.cursor)
+	}
+	if v := s.View(); !strings.Contains(v, "✨ Claude: Dreamy soul") || !strings.Contains(v, "terms: a · b") {
+		t.Fatalf("notes must be rendered: %q", v)
+	}
+	// Nothing found: the header and the notes still say what was tried.
+	s.SetVibeResults(nil, "✨ Claude: Nothing")
+	if v := s.View(); !strings.Contains(v, "Vibes") || !strings.Contains(v, "✨ Claude: Nothing") {
+		t.Fatalf("an empty vibe result should still show the plan: %q", v)
+	}
+	s.SetResults(&provider.SearchResult{Tracks: catalogPage(0, 1)}, false, nil)
+	if strings.Contains(s.View(), "✨") {
+		t.Fatal("a regular result set drops the notes")
+	}
+}
