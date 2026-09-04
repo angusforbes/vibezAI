@@ -13,9 +13,10 @@ import (
 // --- searchRow ---
 
 func TestSearchRow_IsItem_Header(t *testing.T) {
-	row := searchRow{header: true, label: "Tracks"}
-	if row.isItem() {
-		t.Error("header row should not be an item")
+	// Headers are selectable so enter can fold/open their section.
+	r := searchRow{header: true, label: "Tracks"}
+	if !r.isItem() {
+		t.Error("header row should be selectable")
 	}
 }
 
@@ -587,17 +588,17 @@ func TestSearch_Navigation_CrossesSectionBoundary(t *testing.T) {
 	}, false, nil)
 
 	// Rows: Albums header, album, − less, Tracks header, track, − less
-	// (everything is shown, so there are no more rows).
+	// (everything is shown, so there are no more rows). Headers are selectable.
 	if s.SelectedAlbum() == nil {
 		t.Fatal("expected album to be selected initially")
 	}
-	for range 2 {
+	for range 3 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "Only Track" {
-		t.Fatalf("expected the track after passing the albums' less row")
+		t.Fatalf("expected the track after passing the albums' less row and the Tracks header")
 	}
-	for range 2 {
+	for range 3 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	}
 	if s.SelectedAlbum() == nil || s.SelectedAlbum().Title != "Only Album" {
@@ -636,16 +637,20 @@ func TestSearch_Navigation_AllSections(t *testing.T) {
 		t.Fatal("step 1: expected the playlists' less row")
 	}
 	down(1)
+	if sec, ok := s.SelectedHeader(); !ok || sec != "Albums" {
+		t.Fatal("step 2: expected the Albums header (headers are selectable)")
+	}
+	down(1)
 	if s.SelectedAlbum() == nil {
-		t.Fatal("step 2: expected album")
+		t.Fatal("step 3: expected album")
 	}
-	down(2)
+	down(3)
 	if s.SelectedTrack() == nil || s.SelectedTrack().ID != "i.lib1" {
-		t.Fatal("step 4: expected the library track")
+		t.Fatal("step 6: expected the library track")
 	}
-	down(2)
+	down(3)
 	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "Track One" {
-		t.Fatal("step 6: expected the catalog track")
+		t.Fatal("step 9: expected the catalog track")
 	}
 	down(2)
 	if sec, more, ok := s.SelectedToggle(); !ok || sec != "Tracks" || more {
@@ -876,15 +881,15 @@ func TestSearch_ScrollUp_AlbumSectionHeaderRemainsVisible(t *testing.T) {
 		},
 	}, false, nil)
 
-	// Albums first: a1 a2 a3, less, then the track. Down to the track, then
-	// back up to the first album, the row right after the Albums header.
-	for range 4 {
+	// Albums first: a1 a2 a3, less, Tracks header, then the track. Down to the
+	// track, then back up to the first album.
+	for range 5 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if s.SelectedTrack() == nil {
 		t.Fatal("expected the track at the end of the list")
 	}
-	for range 4 {
+	for range 5 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	}
 	if s.SelectedAlbum() == nil || s.SelectedAlbum().Title != "Album One" {
@@ -915,8 +920,8 @@ func TestSearch_ColorSeeding_TracksWhenHeaderScrolledPast(t *testing.T) {
 	if v := s.View(); !strings.Contains(v, "My Playlist") {
 		t.Errorf("playlist name should be visible in the view, got: %q", v)
 	}
-	// playlist, less, T1, T2, T3
-	for range 4 {
+	// playlist, less, Tracks header, T1, T2, T3
+	for range 5 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "T3" {
@@ -947,8 +952,8 @@ func TestSearch_ColorSeeding_TracksAfterAlbums(t *testing.T) {
 	if v := s.View(); !strings.Contains(v, "Album Visible") {
 		t.Errorf("album title should be visible, got: %q", v)
 	}
-	// album, less, T1, T2, T3
-	for range 4 {
+	// album, less, Tracks header, T1, T2, T3
+	for range 5 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "T3" {
@@ -972,16 +977,17 @@ func TestSearch_SelectedIndex_MixedSections(t *testing.T) {
 		},
 	}, false, nil)
 
-	// Sections run Playlists, Albums, Library, Tracks, and every selectable
-	// row counts: A1(0), less(1), T1(2), T2(3).
+	// Sections run Playlists, Albums, Library, Tracks. SelectedIndex counts
+	// items and control rows but not headers: A1(0), less(1), T1(2), T2(3);
+	// the arrow keys still stop on the Tracks header in between.
 	if s.SelectedIndex() != 0 || s.SelectedAlbum() == nil {
 		t.Errorf("initial SelectedIndex = %d (album=%v), want 0 on the album", s.SelectedIndex(), s.SelectedAlbum() != nil)
 	}
-	for range 2 {
+	for range 3 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
 	if s.SelectedIndex() != 2 || s.SelectedTrack() == nil || s.SelectedTrack().Title != "T1" {
-		t.Errorf("after 2 down SelectedIndex = %d, want 2 on T1", s.SelectedIndex())
+		t.Errorf("after 3 down SelectedIndex = %d, want 2 on T1", s.SelectedIndex())
 	}
 	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if s.SelectedIndex() != 3 || s.SelectedTrack() == nil || s.SelectedTrack().Title != "T2" {

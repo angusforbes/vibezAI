@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -94,10 +95,71 @@ func (m *Model) libraryFindLines(w, h int) []string {
 	return lines[:h]
 }
 
-// appendAndPlay adds tracks to the end of the queue and starts the one at
-// offset within them, leaving everything already queued in place. When the
-// engine has nothing loaded yet the whole queue is handed over and started at
-// that track.
+// queueIndexOf returns the queue position of a playback id, or -1.
+func (m *Model) queueIndexOf(id string) int {
+	for i, qid := range m.queueIDs {
+		if qid == id {
+			return i
+		}
+	}
+	return -1
+}
+
+// withoutQueued drops the tracks that are already in the queue (and repeats
+// within the batch itself). A track is never queued twice.
+func (m *Model) withoutQueued(tracks []provider.Track, ids []string) ([]provider.Track, []string) {
+	if len(ids) != len(tracks) {
+		return nil, nil
+	}
+	seen := make(map[string]bool, len(m.queueIDs)+len(ids))
+	for _, id := range m.queueIDs {
+		seen[id] = true
+	}
+	var nt []provider.Track
+	var ni []string
+	for i, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		nt = append(nt, tracks[i])
+		ni = append(ni, id)
+	}
+	return nt, ni
+}
+
+// addToQueue (Tab) appends the tracks that are not queued yet without
+// touching playback. When nothing is new, the highlight moves to the first
+// of them instead, so "adding" a track twice takes you to it.
+func (m *Model) addToQueue(label string, tracks []provider.Track, ids []string) tea.Cmd {
+	if len(tracks) == 0 || len(ids) != len(tracks) {
+		return nil
+	}
+	nt, ni := m.withoutQueued(tracks, ids)
+	if len(ni) == 0 {
+		if idx := m.queueIndexOf(ids[0]); idx >= 0 {
+			m.setQueueCursor(idx)
+		}
+		m.errMsg = "ℹ Already in the queue: " + label
+		m.errExpiry = time.Now().Add(3 * time.Second)
+		return nil
+	}
+	m.queueTracks = append(m.queueTracks, nt...)
+	m.queueIDs = append(m.queueIDs, ni...)
+	m.syncQueue()
+	skipped := len(ids) - len(ni)
+	if skipped > 0 {
+		m.appendLog(fmt.Sprintf("[queue] added %d track(s) (%s); %d already queued", len(ni), label, skipped))
+	} else {
+		m.appendLog(fmt.Sprintf("[queue] added %d track(s) (%s)", len(ni), label))
+	}
+	appended := append([]string(nil), ni...)
+	return m.playerCmd(func(p player.Player) error { return p.AppendQueue(appended) })
+}
+
+// appendAndPlay (Enter) adds the tracks that are not queued yet and starts
+// the one at offset. A track that is already queued is not added again: the
+// existing entry is played instead. Nothing already queued is ever replaced.
 func (m *Model) appendAndPlay(label string, tracks []provider.Track, ids []string, offset int) tea.Cmd {
 	if len(tracks) == 0 || len(ids) != len(tracks) {
 		return nil
@@ -105,19 +167,30 @@ func (m *Model) appendAndPlay(label string, tracks []provider.Track, ids []strin
 	if offset < 0 || offset >= len(ids) {
 		offset = 0
 	}
-	start := len(m.queueTracks)
-	m.queueTracks = append(m.queueTracks, tracks...)
-	m.queueIDs = append(m.queueIDs, ids...)
+	targetID := ids[offset]
+	nt, ni := m.withoutQueued(tracks, ids)
+	if len(ni) == 0 {
+		if idx := m.queueIndexOf(targetID); idx >= 0 {
+			m.appendLog(fmt.Sprintf("[queue] %s is already queued; playing it", label))
+			return m.jumpToQueueIndex(idx)
+		}
+		return nil
+	}
+	m.queueTracks = append(m.queueTracks, nt...)
+	m.queueIDs = append(m.queueIDs, ni...)
 	m.syncQueue()
-	target := start + offset
-	m.appendLog(fmt.Sprintf("[queue] added %d track(s) (%s) and playing #%d", len(ids), label, target+1))
+	target := m.queueIndexOf(targetID)
+	if target < 0 {
+		target = len(m.queueIDs) - len(ni)
+		targetID = m.queueIDs[target]
+	}
+	m.appendLog(fmt.Sprintf("[queue] added %d track(s) (%s) and playing #%d", len(ni), label, target+1))
 	m.playerState.Loading = true
 	m.playerState.Playing = false
 	m.playerState.Position = 0
 	m.queueFollow = true
 	m.queueCursor = target
 	m.ensureQueueCursorVisible()
-	targetID := ids[offset]
 	if m.playerState.Track == nil {
 		all := append([]string(nil), m.queueIDs...)
 		m.queueResumeIdx = noQueueCursor

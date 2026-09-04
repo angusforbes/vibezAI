@@ -70,9 +70,10 @@ type searchRow struct {
 	step     int  // toggle rows: how many items the control would add or remove (0 = nothing to do)
 }
 
-// isItem reports whether this row is selectable (an item or a more/less toggle).
+// isItem reports whether this row is selectable: an item, a more/less toggle
+// or a section header (enter on a header opens or folds the section).
 func (r searchRow) isItem() bool {
-	return r.track != nil || r.album != nil || r.playlist != nil || r.toggle
+	return r.header || r.track != nil || r.album != nil || r.playlist != nil || r.toggle
 }
 
 // rowLines returns the number of visual lines a row occupies. Playlists and
@@ -117,8 +118,52 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.results = result
 	m.shown = nil // a new result set starts at the default count per section
 	m.rebuildRows()
-	m.cursor = m.advance(-1, 1)
+	m.cursor = m.firstEntryRow()
 	m.scroll = 0
+}
+
+// firstEntryRow is the first selectable row that is not a header, so a new
+// result set starts on its first match rather than on a section title.
+func (m *SearchModel) firstEntryRow() int {
+	for i, r := range m.rows {
+		if r.isItem() && !r.header {
+			return i
+		}
+	}
+	return m.advance(-1, 1)
+}
+
+// SelectedHeader reports the section whose header is highlighted.
+func (m *SearchModel) SelectedHeader() (string, bool) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || !m.rows[m.cursor].header {
+		return "", false
+	}
+	return m.rows[m.cursor].label, true
+}
+
+// ToggleSectionOpen (enter on a header) folds an open section to nothing or
+// reopens a folded one at the default count. The highlight stays on the header.
+func (m *SearchModel) ToggleSectionOpen(section string) {
+	total := m.sectionTotal(section)
+	if total == 0 {
+		return
+	}
+	if m.shown == nil {
+		m.shown = map[string]int{}
+	}
+	if m.shownCount(section, total) > 0 {
+		m.shown[section] = 0
+	} else {
+		m.shown[section] = searchSectionCap
+	}
+	m.rebuildRows()
+	for i, r := range m.rows {
+		if r.header && r.label == section {
+			m.cursor = i
+			break
+		}
+	}
+	m.ensureCursorVisible()
 }
 
 // SetState is kept for backward compatibility with callers that only have tracks.
@@ -354,7 +399,7 @@ func (m *SearchModel) SelectedPlaylist() *provider.Playlist {
 func (m *SearchModel) SelectedIndex() int {
 	count := 0
 	for i := 0; i < m.cursor && i < len(m.rows); i++ {
-		if m.rows[i].isItem() {
+		if m.rows[i].isItem() && !m.rows[i].header {
 			count++
 		}
 	}
@@ -453,7 +498,11 @@ func (m *SearchModel) View() string {
 				Foreground(currentAccent).
 				Bold(true).
 				Italic(true)
-			sb.WriteString("  " + hs.Render(row.label) + "\n")
+			prefix := "  "
+			if i == m.cursor {
+				prefix = lipgloss.NewStyle().Foreground(currentAccent).Render("▶ ")
+			}
+			sb.WriteString(prefix + hs.Render(row.label) + "\n")
 			linesLeft--
 			continue
 		}

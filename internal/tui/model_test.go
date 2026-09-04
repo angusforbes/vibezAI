@@ -813,7 +813,7 @@ func TestHandleSearchKey_Tab_DoesNotCallSetQueue(t *testing.T) {
 	}
 }
 
-func TestHandleSearchKey_Tab_MultipleTabsAccumulate(t *testing.T) {
+func TestHandleSearchKey_Tab_NeverQueuesTheSameTrackTwice(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	tracks := []provider.Track{
@@ -822,14 +822,69 @@ func TestHandleSearchKey_Tab_MultipleTabsAccumulate(t *testing.T) {
 	}
 	seedSearchResults(m, tracks...)
 
+	// Tab twice on the same selection: the second press adds nothing and
+	// just points at the queued copy.
 	for range 2 {
-		cmd := m.handleSearchKey("tab", tea.KeyPressMsg{Code: tea.KeyTab})
-		if cmd != nil {
+		if cmd := m.handleSearchKey("tab", tea.KeyPressMsg{Code: tea.KeyTab}); cmd != nil {
 			cmd()
 		}
 	}
-	if len(mp.appendQueueIDs) != 2 {
-		t.Errorf("expected 2 AppendQueue calls, got %d", len(mp.appendQueueIDs))
+	if len(mp.appendQueueIDs) != 1 || len(m.queueIDs) != 1 || m.queueIDs[0] != "111" {
+		t.Fatalf("expected a single append of 111, got appends=%v queue=%v", mp.appendQueueIDs, m.queueIDs)
+	}
+	if !strings.Contains(m.errMsg, "Already in the queue") || m.queueCursor != 0 {
+		t.Fatalf("the duplicate press should highlight the queued copy and say so, got %q cursor=%d", m.errMsg, m.queueCursor)
+	}
+
+	// A different track still gets added.
+	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	if cmd := m.handleSearchKey("tab", tea.KeyPressMsg{Code: tea.KeyTab}); cmd != nil {
+		cmd()
+	}
+	if len(mp.appendQueueIDs) != 2 || len(m.queueIDs) != 2 || m.queueIDs[1] != "222" {
+		t.Fatalf("expected the second track to be appended, got appends=%v queue=%v", mp.appendQueueIDs, m.queueIDs)
+	}
+}
+
+func TestHandleSearchKey_Enter_OnQueuedTrackPlaysExistingCopy(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	m.queueTracks = []provider.Track{{Title: "Already", CatalogID: "1"}, {Title: "Hi", Artist: "There", CatalogID: "99999"}}
+	m.queueIDs = []string{"1", "99999"}
+	cur := m.queueTracks[0]
+	m.playerState.Track = &cur
+	seedSearchResults(m, provider.Track{Title: "Hi", Artist: "There", CatalogID: "99999"})
+
+	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil {
+		cmd()
+	}
+	if len(m.queueIDs) != 2 || len(mp.syncCalls) != 0 || mp.setQueueIDs != nil {
+		t.Fatalf("an already queued track must not be added again: queue=%v sync=%+v", m.queueIDs, mp.syncCalls)
+	}
+	if len(mp.playQueuedCalls) != 1 || mp.playQueuedCalls[0].Idx != 1 || mp.playQueuedCalls[0].ID != "99999" {
+		t.Fatalf("Enter should jump to the queued copy, got %+v", mp.playQueuedCalls)
+	}
+}
+
+func TestHandleSearchKey_Enter_OnHeaderFoldsSection(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.search.SetResults(&provider.SearchResult{Tracks: []provider.Track{{Title: "T", CatalogID: "x"}}}, false, nil)
+	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp}) // onto the Tracks header
+	if sec, ok := m.search.SelectedHeader(); !ok || sec != "Tracks" {
+		t.Fatalf("expected the Tracks header to be selectable, got %q %v", sec, ok)
+	}
+	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.search.SelectedTrack() != nil || len(m.search.Results()) != 1 {
+		t.Fatal("folding must keep the results but hide the tracks")
+	}
+	if v := m.search.View(); strings.Contains(v, "\n  ") && !strings.Contains(v, "+ 1 more") {
+		t.Fatalf("folded section should offer + 1 more: %q", v)
+	}
+	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(m.queueIDs) != 0 {
+		t.Fatal("enter on a header must never touch the queue")
 	}
 }
 

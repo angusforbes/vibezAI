@@ -766,11 +766,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.playNext {
 			return m, m.playNextCmd(msg.item.Title, msg.tracks, ids)
 		}
-		m.queueTracks = append(m.queueTracks, msg.tracks...)
-		m.queueIDs = append(m.queueIDs, ids...)
-		m.syncQueue()
-		m.appendLog(fmt.Sprintf("[feed] queued %q (%d tracks)", msg.item.Title, len(ids)))
-		return m, m.playerCmd(func(p player.Player) error { return p.AppendQueue(ids) })
+		return m, m.addToQueue(msg.item.Title, msg.tracks, ids)
 
 	case views.VibeQueryMsg:
 		// User submitted a vibe description — start async provider search.
@@ -966,11 +962,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.playNext {
 			return m, m.playNextCmd(msg.label, msg.tracks, ids)
 		}
-		m.queueTracks = append(m.queueTracks, msg.tracks...)
-		m.queueIDs = append(m.queueIDs, ids...)
-		m.syncQueue()
-		m.appendLog(fmt.Sprintf("[search] queued %q (%d tracks)", msg.label, len(ids)))
-		return m, m.playerCmd(func(p player.Player) error { return p.AppendQueue(ids) })
+		return m, m.addToQueue(msg.label, msg.tracks, ids)
 
 	case views.QueueTracksMsg:
 		if len(msg.Tracks) == 0 || len(msg.IDs) == 0 {
@@ -979,11 +971,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.PlayNext {
 			return m, m.playNextCmd(msg.Label, msg.Tracks, msg.IDs)
 		}
-		m.queueTracks = append(m.queueTracks, msg.Tracks...)
-		m.queueIDs = append(m.queueIDs, msg.IDs...)
-		m.syncQueue()
-		m.appendLog(fmt.Sprintf("[library] queued %q (%d tracks)", msg.Label, len(msg.IDs)))
-		return m, m.playerCmd(func(p player.Player) error { return p.AppendQueue(msg.IDs) })
+		return m, m.addToQueue(msg.Label, msg.Tracks, msg.IDs)
 
 	case views.PlayTracksMsg:
 		// Library "play": add to the end of the queue and start there. Never
@@ -1179,6 +1167,11 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		m.mode = modeNormal
 		return nil
 	case "enter":
+		// Enter on a section header folds it or opens it again.
+		if section, ok := m.search.SelectedHeader(); ok {
+			m.search.ToggleSectionOpen(section)
+			return nil
+		}
 		// "+ 5 more" / "− 5 less" rows grow or shrink their section.
 		if section, more, ok := m.search.SelectedToggle(); ok {
 			if more {
@@ -1205,14 +1198,11 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	case "tab":
-		// Track: add to queue — appends without interrupting playback.
+		// Track: add to the end of the queue without playing; an already
+		// queued track is highlighted instead of being added twice.
 		if t := m.search.SelectedTrack(); t != nil {
 			tc := *t
-			m.appendLog(fmt.Sprintf("[queue] append: %s — %s", tc.Artist, tc.Title))
-			m.queueTracks = append(m.queueTracks, tc)
-			m.queueIDs = append(m.queueIDs, views.PlaybackID(tc))
-			m.syncQueue()
-			return m.playerCmd(func(p player.Player) error { return p.AppendQueue([]string{views.PlaybackID(tc)}) })
+			return m.addToQueue(tc.Artist+" — "+tc.Title, []provider.Track{tc}, []string{views.PlaybackID(tc)})
 		}
 		// Album: fetch all tracks then add to queue.
 		if a := m.search.SelectedAlbum(); a != nil {
@@ -2183,10 +2173,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		m.lastKey = ""
 		if t := m.search.SelectedTrack(); t != nil {
 			tc := *t
-			m.queueTracks = append(m.queueTracks, tc)
-			m.queueIDs = append(m.queueIDs, views.PlaybackID(tc))
-			m.syncQueue()
-			return m.playerCmd(func(p player.Player) error { return p.AppendQueue([]string{views.PlaybackID(tc)}) })
+			return m.addToQueue(tc.Artist+" — "+tc.Title, []provider.Track{tc}, []string{views.PlaybackID(tc)})
 		}
 
 	default:
@@ -2771,6 +2758,18 @@ func (m *Model) playerCmd(fn func(player.Player) error) tea.Cmd {
 }
 
 func (m *Model) playNextCmd(label string, tracks []provider.Track, ids []string) tea.Cmd {
+	// A track is never queued twice: drop the ones already in the queue.
+	if nt, ni := m.withoutQueued(tracks, ids); len(ni) != len(ids) {
+		if len(ni) == 0 {
+			if idx := m.queueIndexOf(ids[0]); idx >= 0 {
+				m.setQueueCursor(idx)
+			}
+			m.errMsg = "ℹ Already in the queue: " + label
+			m.errExpiry = time.Now().Add(3 * time.Second)
+			return nil
+		}
+		tracks, ids = nt, ni
+	}
 	insertIdx := 0
 	if m.playerState.Track != nil {
 		for i, t := range m.queueTracks {
