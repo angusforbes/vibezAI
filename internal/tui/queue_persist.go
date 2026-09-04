@@ -78,8 +78,8 @@ func (m *Model) currentQueueIndex() int {
 }
 
 // startRestoredQueue hands a restored, not-yet-loaded queue to the engine and
-// starts it from the track that was playing when vibez was last closed. Like
-// "enter" in the queue panel, the tracks before that one are dropped.
+// starts it from the track that was playing when vibez was last closed. The
+// whole queue is kept.
 func (m *Model) startRestoredQueue() tea.Cmd {
 	if len(m.queueIDs) == 0 {
 		return nil
@@ -89,7 +89,7 @@ func (m *Model) startRestoredQueue() tea.Cmd {
 		idx = 0
 	}
 	m.appendLog(fmt.Sprintf("[queue] resuming the restored queue at position %d", idx+1))
-	return m.playQueueFrom(idx)
+	return m.jumpToQueueIndex(idx)
 }
 
 // trackChanged reports whether the now-playing track differs between two states.

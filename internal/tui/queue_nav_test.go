@@ -77,14 +77,14 @@ func TestQueueCursor_SpaceStartsHighlightedTrack(t *testing.T) {
 	if cmd := key(m, "space"); cmd != nil {
 		_ = cmd()
 	}
-	if len(mock.setQueueIDs) != 1 || mock.setQueueIDs[0] != "4" {
-		t.Fatalf("SetQueue ids = %v, want [4]", mock.setQueueIDs)
+	if len(mock.playQueuedCalls) != 1 || mock.playQueuedCalls[0].Idx != 3 || mock.playQueuedCalls[0].ID != "4" {
+		t.Fatalf("PlayQueued calls = %+v, want [{3 4}]", mock.playQueuedCalls)
 	}
-	if mock.playCalled || mock.pauseCalled {
-		t.Fatal("space on a highlighted track must start it, not toggle play/pause")
+	if mock.setQueueIDs != nil || mock.playCalled || mock.pauseCalled {
+		t.Fatal("space on a highlighted track must jump in place, not replace the queue or toggle play/pause")
 	}
-	if len(m.queueTracks) != 1 || m.queueTracks[0].Title != "Four" {
-		t.Fatalf("queue should be trimmed to the started track, got %+v", m.queueTracks)
+	if len(m.queueTracks) != 4 || len(m.queueIDs) != 4 {
+		t.Fatalf("queue must stay intact, got %d tracks", len(m.queueTracks))
 	}
 	if m.queueCursorActive() {
 		t.Fatal("cursor should clear after starting a track")
@@ -112,8 +112,11 @@ func TestQueueCursor_EnterStartsHighlightedTrack(t *testing.T) {
 	if cmd := key(m, "enter"); cmd != nil {
 		_ = cmd()
 	}
-	if len(mock.setQueueIDs) != 2 || mock.setQueueIDs[0] != "3" {
-		t.Fatalf("SetQueue ids = %v, want [3 4]", mock.setQueueIDs)
+	if len(mock.playQueuedCalls) != 1 || mock.playQueuedCalls[0].Idx != 2 || mock.playQueuedCalls[0].ID != "3" {
+		t.Fatalf("PlayQueued calls = %+v, want [{2 3}]", mock.playQueuedCalls)
+	}
+	if len(m.queueTracks) != 4 {
+		t.Fatalf("enter must not trim the queue, got %d tracks", len(m.queueTracks))
 	}
 }
 

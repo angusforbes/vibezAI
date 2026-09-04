@@ -605,18 +605,33 @@
         navigator.mediaSession.setActionHandler('previoustrack', () => window.vibezPrev());
         navigator.mediaSession.setActionHandler('seekto', (d) => _m().seekToTime(d.seekTime));
 
-        window.vibezSetQueue = async function(idsJSON) {
+        window.vibezSetQueue = async function(idsJSON, startId) {
           try {
             const ids = (JSON.parse(idsJSON) || []).filter(Boolean);
             _log(`[js:setQueue] resolving ${ids.length} id(s)`);
             const items = await _resolveItems(ids);
             if (items.length === 0) { goError('setQueue: no items resolved').catch(()=>{}); return; }
-            _log(`[js:setQueue] → ${items.length} item(s) queued`);
+            let start = 0;
+            if (startId) { const j = items.findIndex(it => it && it.id === startId); if (j >= 0) start = j; }
+            _log(`[js:setQueue] → ${items.length} item(s) queued, start #${start}`);
             _q  = items;
             _qi = -1;
             _qUnshuffled = []; // clear any prior shuffle snapshot
-            _playAt(0);
+            _playAt(start);
           } catch(e) { goError('setQueue failed: '+errName(e)).catch(()=>{}); }
+        };
+
+        // Jump to a queued entry without touching the queue. idx is the caller's
+        // position; the id wins when the engine's order differs (shuffle).
+        window.vibezPlayQueued = function(idxStr, id) {
+          const idx = parseInt(idxStr);
+          let target = -1;
+          if (idx >= 0 && idx < _q.length && (!id || _q[idx]?.id === id)) target = idx;
+          else if (id) target = _q.findIndex(it => it && it.id === id);
+          if (target < 0 && idx >= 0 && idx < _q.length) target = idx;
+          if (target < 0) { _log(`[js:playQueued] #${idx} ${id||''} not in queue (len=${_q.length})`); return; }
+          _log(`[js:playQueued] → #${target}`);
+          _playAt(target);
         };
 
         window.vibezSetPlaylist = async function(playlistID, startIdx) {
@@ -717,7 +732,7 @@
         window.vibezSeek      = () => {};
         window.vibezSetVolume = () => {};
 
-        window.vibezSetQueue = async function(idsJSON) {
+        window.vibezSetQueue = async function(idsJSON, startId) {
           try {
             const ids = JSON.parse(idsJSON);
             const m = MusicKit.getInstance();
@@ -744,8 +759,19 @@
             if (items.length === 0) { goError('setQueue: no items resolved').catch(() => {}); return; }
 
             _queue = items;
-            playIdx(0);
+            let start = 0;
+            if (startId) { const j = items.findIndex(it => it && it.id === startId); if (j >= 0) start = j; }
+            playIdx(start);
           } catch(e) { goError('setQueue failed: ' + errName(e)).catch(() => {}); }
+        };
+
+        window.vibezPlayQueued = function(idxStr, id) {
+          const idx = parseInt(idxStr);
+          let target = -1;
+          if (idx >= 0 && idx < _queue.length && (!id || _queue[idx]?.id === id)) target = idx;
+          else if (id) target = _queue.findIndex(it => it && it.id === id);
+          if (target < 0 && idx >= 0 && idx < _queue.length) target = idx;
+          if (target >= 0) playIdx(target);
         };
 
         window.vibezSetPlaylist = async function(playlistID, startIdx) {

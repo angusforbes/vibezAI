@@ -11,10 +11,11 @@ import (
 //
 // The mini-queue under "Now Playing" used to be display-only (j/k scrolled it,
 // n/p skipped tracks immediately). It now has a cursor: ↑/↓ (or k/j) highlight
-// an entry without touching playback, space or enter starts the highlighted
-// track, d (also x/delete) removes it, K/J move it, gg/G jump to the ends and
-// esc drops the cursor so the list follows the playing track again. The same
-// helpers back the dedicated queue panel so both views behave identically.
+// an entry without touching playback, space or enter jumps to the highlighted
+// track with the whole queue left in place (unlike the queue panel's enter,
+// which drops the entries above), d (also x/delete) removes it, K/J move it,
+// gg/G jump to the ends and esc drops the cursor so the list follows the
+// playing track again. The remove/move helpers are shared with the queue panel.
 
 // noQueueCursor means no entry is highlighted; the list follows playback.
 const noQueueCursor = -1
@@ -77,6 +78,27 @@ func (m *Model) clampQueueCursor() {
 	if m.queueCursor >= len(m.queueTracks) {
 		m.queueCursor = len(m.queueTracks) - 1 // -1 when the queue is empty
 	}
+}
+
+// jumpToQueueIndex plays queue entry idx and leaves the queue untouched. When
+// the engine has nothing loaded yet (a restored queue on a fresh start) the
+// whole queue is handed over and started at idx.
+func (m *Model) jumpToQueueIndex(idx int) tea.Cmd {
+	if idx < 0 || idx >= len(m.queueIDs) || idx >= len(m.queueTracks) {
+		return nil
+	}
+	t := m.queueTracks[idx]
+	id := m.queueIDs[idx]
+	m.appendLog(fmt.Sprintf("[queue] jumping to position %d: %s — %s", idx+1, t.Artist, t.Title))
+	m.playerState.Loading = true
+	m.playerState.Playing = false
+	m.playerState.Position = 0
+	if m.playerState.Track == nil {
+		ids := append([]string(nil), m.queueIDs...)
+		m.queueResumeIdx = noQueueCursor
+		return m.playerCmd(func(p player.Player) error { return p.SetQueueAt(ids, id) })
+	}
+	return m.playerCmd(func(p player.Player) error { return p.PlayQueued(idx, id) })
 }
 
 // playQueueFrom starts playback at queue position idx. Like the queue panel's
@@ -168,7 +190,7 @@ func (m *Model) handleQueueCursorKey(k string) (tea.Cmd, bool) {
 		idx := m.queueCursor
 		m.clearQueueCursor()
 		m.lastKey = ""
-		return m.playQueueFrom(idx), true
+		return m.jumpToQueueIndex(idx), true
 	case "d", "x", "delete":
 		idx := m.queueCursor
 		cmd := m.removeQueueAt(idx)

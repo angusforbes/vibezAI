@@ -5,6 +5,7 @@
 package demo
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -194,13 +195,24 @@ func (p *Player) SetVolume(v float64) error {
 }
 
 func (p *Player) SetQueue(ids []string) error {
+	return p.SetQueueAt(ids, "")
+}
+
+// SetQueueAt replaces the queue and starts at the track whose ID is startID,
+// or at the first track when it is empty or not found.
+func (p *Player) SetQueueAt(ids []string, startID string) error {
 	p.mu.Lock()
 	p.queue = tracksForIDs(ids)
 	if len(p.queue) == 0 {
 		p.queue = append([]provider.Track{}, tracks...)
 	}
 	p.idx = 0
-	t := p.queue[0]
+	if startID != "" {
+		if i := indexOfTrack(p.queue, -1, startID); i >= 0 {
+			p.idx = i
+		}
+	}
+	t := p.queue[p.idx]
 	p.state.Track = &t
 	p.state.Position = 0
 	p.state.Playing = true
@@ -208,6 +220,47 @@ func (p *Player) SetQueue(ids []string) error {
 	p.mu.Unlock()
 	p.broadcast(st)
 	return nil
+}
+
+// PlayQueued jumps to the queued track at idx (or the one with the given id
+// when idx does not hold it) and plays it, leaving the queue as it is.
+func (p *Player) PlayQueued(idx int, id string) error {
+	p.mu.Lock()
+	target := indexOfTrack(p.queue, idx, id)
+	if target < 0 {
+		p.mu.Unlock()
+		return fmt.Errorf("demo: no queued track at %d (%q)", idx, id)
+	}
+	p.idx = target
+	t := p.queue[target]
+	p.state.Track = &t
+	p.state.Position = 0
+	p.state.Playing = true
+	st := p.state
+	p.mu.Unlock()
+	p.broadcast(st)
+	return nil
+}
+
+// indexOfTrack prefers idx when it holds id (or id is empty), then the first
+// entry matching id, then idx itself when in range; -1 when nothing fits.
+func indexOfTrack(queue []provider.Track, idx int, id string) int {
+	match := func(t provider.Track) bool { return t.ID == id || (t.CatalogID != "" && t.CatalogID == id) }
+	inRange := idx >= 0 && idx < len(queue)
+	if inRange && (id == "" || match(queue[idx])) {
+		return idx
+	}
+	if id != "" {
+		for i, t := range queue {
+			if match(t) {
+				return i
+			}
+		}
+	}
+	if inRange {
+		return idx
+	}
+	return -1
 }
 
 func (p *Player) SetPlaylist(_ string, startIdx int) error {

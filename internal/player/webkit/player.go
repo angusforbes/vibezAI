@@ -244,6 +244,21 @@ func (p *Player) SetQueue(ids []string) error {
 	return nil
 }
 
+func (p *Player) SetQueueAt(ids []string, startID string) error {
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return fmt.Errorf("marshalling queue ids: %w", err)
+	}
+	js := fmt.Sprintf(`window.vibezSetQueue && window.vibezSetQueue(%s,%s)`, jsonStringLiteral(string(b)), jsonStringLiteral(startID))
+	p.dispatch(js)
+	return nil
+}
+
+func (p *Player) PlayQueued(idx int, id string) error {
+	p.dispatch(fmt.Sprintf(`window.vibezPlayQueued && window.vibezPlayQueued(%d,%s)`, idx, jsonStringLiteral(id)))
+	return nil
+}
+
 func (p *Player) SetPlaylist(playlistID string, startIdx int) error {
 	js := fmt.Sprintf(`window.vibezSetPlaylist && window.vibezSetPlaylist(%s, %d)`,
 		jsonStringLiteral(playlistID), startIdx)

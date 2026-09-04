@@ -60,6 +60,13 @@ type Player interface {
 	// SetQueue replaces the playback queue with the given catalog track IDs and
 	// starts playback from the first entry.
 	SetQueue(ids []string) error
+	// SetQueueAt is SetQueue but starts playback at the entry whose track ID is
+	// startID (the first entry when empty or not found). The rest stays queued.
+	SetQueueAt(ids []string, startID string) error
+	// PlayQueued jumps to the queue entry at idx, expected to hold track id,
+	// and plays it without changing the queue. Engines whose internal order
+	// differs from the caller's (shuffle) locate the entry by id instead.
+	PlayQueued(idx int, id string) error
 	// SetPlaylist queues a library playlist by its ID (e.g. "p.XXXXX") and starts
 	// playback from startIdx. This avoids per-song catalog ID resolution.
 	SetPlaylist(playlistID string, startIdx int) error

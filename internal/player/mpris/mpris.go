@@ -108,6 +108,14 @@ func (m *MPRISPlayer) SetQueue(_ []string) error {
 	return errors.New("SetQueue is not supported via MPRIS")
 }
 
+func (m *MPRISPlayer) SetQueueAt(_ []string, _ string) error {
+	return errors.New("SetQueueAt is not supported via MPRIS")
+}
+
+func (m *MPRISPlayer) PlayQueued(_ int, _ string) error {
+	return errors.New("PlayQueued is not supported via MPRIS")
+}
+
 func (m *MPRISPlayer) Seek(pos time.Duration) error {
 	// MPRIS Seek moves relative to current position; use SetPosition for absolute.
 	// We use the track ID from metadata for SetPosition.

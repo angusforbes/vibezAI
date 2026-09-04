@@ -27,16 +27,22 @@ import (
 // --- mock player ---
 
 type mockPlayer struct {
-	state              player.State
-	playCalled         bool
-	pauseCalled        bool
-	nextCalled         bool
-	prevCalled         bool
-	closeCalled        bool
-	seekCalled         bool
-	seekPos            time.Duration
-	bitrateKbps        int
-	setQueueIDs        []string   // last IDs passed to SetQueue
+	state           player.State
+	playCalled      bool
+	pauseCalled     bool
+	nextCalled      bool
+	prevCalled      bool
+	closeCalled     bool
+	seekCalled      bool
+	seekPos         time.Duration
+	bitrateKbps     int
+	setQueueIDs     []string // last IDs passed to SetQueue
+	setQueueAtIDs   []string // last IDs passed to SetQueueAt
+	setQueueAtStart string   // start ID passed to SetQueueAt
+	playQueuedCalls []struct {
+		Idx int
+		ID  string
+	}
 	appendQueueIDs     [][]string // all calls to AppendQueue (each call appended)
 	moveInQueueCalls   []struct{ From, To int }
 	removeFromQueueIdx []int // all calls to RemoveFromQueue, in call order
@@ -67,7 +73,19 @@ func (m *mockPlayer) SetRepeat(_ int) error                { return m.err }
 func (m *mockPlayer) SetShuffle(_ bool) error              { return m.err }
 func (m *mockPlayer) SetEqualizer(_ []player.EQBand) error { return m.err }
 func (m *mockPlayer) SetQueue(ids []string) error          { m.setQueueIDs = ids; return m.err }
-func (m *mockPlayer) SetPlaylist(_ string, _ int) error    { return m.err }
+func (m *mockPlayer) SetQueueAt(ids []string, startID string) error {
+	m.setQueueAtIDs = ids
+	m.setQueueAtStart = startID
+	return m.err
+}
+func (m *mockPlayer) PlayQueued(idx int, id string) error {
+	m.playQueuedCalls = append(m.playQueuedCalls, struct {
+		Idx int
+		ID  string
+	}{idx, id})
+	return m.err
+}
+func (m *mockPlayer) SetPlaylist(_ string, _ int) error { return m.err }
 func (m *mockPlayer) AppendQueue(ids []string) error {
 	m.appendQueueIDs = append(m.appendQueueIDs, ids)
 	return m.err

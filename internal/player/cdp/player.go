@@ -426,6 +426,24 @@ func (p *Player) SetQueue(ids []string) error {
 	return nil
 }
 
+func (p *Player) SetQueueAt(ids []string, startID string) error {
+	expr, err := buildSetQueueAtJS(ids, startID)
+	if err != nil {
+		return err
+	}
+	p.dispatch(expr)
+	return nil
+}
+
+func (p *Player) PlayQueued(idx int, id string) error {
+	expr, err := buildPlayQueuedJS(idx, id)
+	if err != nil {
+		return err
+	}
+	p.dispatch(expr)
+	return nil
+}
+
 func (p *Player) SetPlaylist(playlistID string, startIdx int) error {
 	expr, err := buildSetPlaylistJS(playlistID, startIdx)
 	if err != nil {

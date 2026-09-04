@@ -23,6 +23,33 @@ func buildSetQueueJS(ids []string) (string, error) {
 	return fmt.Sprintf(`window.vibezSetQueue && window.vibezSetQueue(%s)`, js), nil
 }
 
+// buildSetQueueAtJS returns the JS expression that calls vibezSetQueue with a
+// start ID, so playback begins at that entry instead of the first.
+func buildSetQueueAtJS(ids []string, startID string) (string, error) {
+	b, err := json.Marshal(ids)
+	if err != nil {
+		return "", fmt.Errorf("cdp: marshal queue ids: %w", err)
+	}
+	js, err := json.Marshal(string(b))
+	if err != nil {
+		return "", fmt.Errorf("cdp: marshal queue json string: %w", err)
+	}
+	start, err := json.Marshal(startID)
+	if err != nil {
+		return "", fmt.Errorf("cdp: marshal start id: %w", err)
+	}
+	return fmt.Sprintf(`window.vibezSetQueue && window.vibezSetQueue(%s,%s)`, js, start), nil
+}
+
+// buildPlayQueuedJS returns the JS expression that calls vibezPlayQueued.
+func buildPlayQueuedJS(idx int, id string) (string, error) {
+	js, err := json.Marshal(id)
+	if err != nil {
+		return "", fmt.Errorf("cdp: marshal track id: %w", err)
+	}
+	return fmt.Sprintf(`window.vibezPlayQueued && window.vibezPlayQueued(%d,%s)`, idx, js), nil
+}
+
 // buildSetPlaylistJS returns the JS expression that calls vibezSetPlaylist.
 func buildSetPlaylistJS(playlistID string, startIdx int) (string, error) {
 	js, err := json.Marshal(playlistID)

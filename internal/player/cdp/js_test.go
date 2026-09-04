@@ -257,3 +257,25 @@ func TestBuildSetAudioBitrateJS_Unsupported(t *testing.T) {
 		t.Fatalf("buildSetAudioBitrateJS(320) error = %v", err)
 	}
 }
+
+// ─── buildSetQueueAtJS / buildPlayQueuedJS ─────────────────────────────────
+
+func TestBuildSetQueueAtJS_PassesStartID(t *testing.T) {
+	expr, err := buildSetQueueAtJS([]string{"1", "2"}, "2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.HasPrefix(expr, "window.vibezSetQueue && window.vibezSetQueue(") || !strings.HasSuffix(expr, `,"2")`) {
+		t.Fatalf("unexpected expression: %s", expr)
+	}
+}
+
+func TestBuildPlayQueuedJS_EscapesID(t *testing.T) {
+	expr, err := buildPlayQueuedJS(3, `i.ab"c`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if expr != `window.vibezPlayQueued && window.vibezPlayQueued(3,"i.ab\"c")` {
+		t.Fatalf("unexpected expression: %s", expr)
+	}
+}

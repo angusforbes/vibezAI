@@ -37,18 +37,21 @@ func TestRestoreQueue_DoesNotAutoPlayAndResumes(t *testing.T) {
 		t.Fatalf("restore must not touch the player: setQueue=%v append=%v play=%v", mock.setQueueIDs, mock.appendQueueIDs, mock.playCalled)
 	}
 
-	// First play hands the queue to the engine from the saved position.
+	// First play hands the whole queue to the engine, starting at the saved position.
 	if cmd := m.togglePlayPause(); cmd != nil {
 		_ = cmd()
 	}
-	if got := mock.setQueueIDs; len(got) != 2 || got[0] != "i.lib" || got[1] != "300" {
-		t.Fatalf("SetQueue ids = %v, want [i.lib 300]", got)
+	if got := mock.setQueueAtIDs; len(got) != 3 || got[0] != "100" || got[1] != "i.lib" || got[2] != "300" {
+		t.Fatalf("SetQueueAt ids = %v, want [100 i.lib 300]", got)
 	}
-	if mock.playCalled {
-		t.Fatal("Play() must not be called for a restored queue; SetQueue starts it")
+	if mock.setQueueAtStart != "i.lib" {
+		t.Fatalf("SetQueueAt start = %q, want i.lib", mock.setQueueAtStart)
 	}
-	if len(m.queueTracks) != 2 || m.queueTracks[0].Title != "Two" {
-		t.Fatalf("model queue not trimmed to the resume point: %+v", m.queueTracks)
+	if mock.playCalled || mock.setQueueIDs != nil {
+		t.Fatal("neither Play() nor SetQueue() may be used to resume a restored queue")
+	}
+	if len(m.queueTracks) != 3 || m.queueTracks[1].Title != "Two" {
+		t.Fatalf("the restored queue must stay intact: %+v", m.queueTracks)
 	}
 }
 
