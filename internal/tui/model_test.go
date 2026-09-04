@@ -1556,16 +1556,36 @@ func TestHandleNormalKey_R_CycleRepeatAll_To_One(t *testing.T) {
 	}
 }
 
-func TestHandleNormalKey_S_ToggleShuffle(t *testing.T) {
+func TestHandleNormalKey_S_JumpsToRandomQueuedTrack(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
-	m.playerState.ShuffleMode = false
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 's', Text: "s"}, "s")
-	if cmd != nil {
+	m.queueTracks = []provider.Track{{ID: "1", Title: "One"}, {ID: "2", Title: "Two"}, {ID: "3", Title: "Three"}}
+	m.queueIDs = []string{"1", "2", "3"}
+	m.queue.SetTracks(m.queueTracks)
+	cur := m.queueTracks[1]
+	m.playerState.Track = &cur
+	for range 10 {
+		mp.playQueuedCalls = nil
+		if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 's', Text: "s"}, "s"); cmd != nil {
+			cmd()
+		}
+		if len(mp.playQueuedCalls) != 1 || mp.playQueuedCalls[0].Idx == 1 || mp.playQueuedCalls[0].Idx < 0 || mp.playQueuedCalls[0].Idx > 2 {
+			t.Fatalf("s should jump to a random other track, got %+v", mp.playQueuedCalls)
+		}
+	}
+	if m.playerState.ShuffleMode || len(m.queueTracks) != 3 {
+		t.Error("s must not toggle shuffle mode or change the queue")
+	}
+}
+
+func TestCommand_Shuffle_TogglesShuffleMode(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	if cmd := m.executeCommand("shuffle"); cmd != nil {
 		cmd()
 	}
 	if !m.playerState.ShuffleMode {
-		t.Error("s key should toggle shuffle on")
+		t.Error(":shuffle should toggle shuffle mode on")
 	}
 }
 
@@ -1638,7 +1658,7 @@ func TestHandleNormalKey_R_StartRadio(t *testing.T) {
 	m := newModel(mp)
 	track := &provider.Track{Title: "Seed Song", Artist: "Artist", ID: "seed", CatalogID: "seedcat"}
 	m.playerState.Track = track
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R")
+	cmd := m.executeCommand("radio")
 	if cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a search cmd")
 	}
@@ -1670,7 +1690,7 @@ func TestHandleNormalKey_R_StartRadio_KeepsRestOfQueue(t *testing.T) {
 	m.queue.SetTracks(m.queueTracks)
 	m.playerState.Track = &track2 // currently playing the 2nd (of 4) queued tracks
 
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R")
+	cmd := m.executeCommand("radio")
 	if cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a cmd")
 	}
@@ -1710,7 +1730,7 @@ func TestHandleNormalKey_R_StartRadio_RefillSkipsTracksAlreadyQueued(t *testing.
 	m.queue.SetTracks(m.queueTracks)
 	m.playerState.Track = &track2 // currently playing the 2nd (of 4) queued tracks
 
-	if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R"); cmd == nil {
+	if cmd := m.executeCommand("radio"); cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a cmd")
 	}
 	if len(m.radio.skipped) != 0 {
@@ -1752,7 +1772,7 @@ func TestHandleNormalKey_R_StartRadio_SeedNotInQueue_InsertsAsPlayNext(t *testin
 	seed := &provider.Track{Title: "Seed Song", ID: "seed", CatalogID: "seedcat"}
 	m.playerState.Track = seed // playing a track that isn't in m.queueTracks
 
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R")
+	cmd := m.executeCommand("radio")
 	if cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a cmd")
 	}
@@ -1788,7 +1808,7 @@ func TestHandleNormalKey_R_StartRadio_SeedNotInQueue_InsertsAsPlayNext(t *testin
 
 func TestHandleNormalKey_R_NoTrackPlaying_NoOp(t *testing.T) {
 	m := newModel(nil)
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R")
+	cmd := m.executeCommand("radio")
 	if cmd != nil {
 		t.Error("R key with nothing playing should not start radio")
 	}
@@ -1802,7 +1822,7 @@ func TestHandleNormalKey_R_StopRadio(t *testing.T) {
 	m := newModel(mp)
 	m.radio.enabled = true
 	m.radio.seed = &provider.Track{ID: "seed"}
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R")
+	cmd := m.executeCommand("radio")
 	_ = cmd
 	if m.radio.enabled {
 		t.Error("R key when radio is on should stop radio")
@@ -1819,7 +1839,7 @@ func TestHandleNormalKey_R_StopRadio_ClearsSkipped(t *testing.T) {
 	m.radio.enabled = true
 	m.radio.seed = &provider.Track{ID: "seed"}
 	m.radio.skipped = map[string]bool{"blocked": true}
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R")
+	m.executeCommand("radio")
 	if m.radio.skipped != nil {
 		t.Errorf("radio.skipped = %v, want nil after stopping radio", m.radio.skipped)
 	}
@@ -1835,7 +1855,7 @@ func TestHandleNormalKey_R_StartRadio_ResetsStaleSkipped(t *testing.T) {
 	m.playerState.Track = seed
 	m.radio.skipped = map[string]bool{"stale-from-last-session": true}
 
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R")
+	cmd := m.executeCommand("radio")
 	if cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a cmd")
 	}
@@ -1850,7 +1870,7 @@ func TestHandleNormalKey_R_StopsDiscovery(t *testing.T) {
 	m.discovery.enabled = true
 	m.discovery.seed = &provider.Track{ID: "old-seed"}
 	m.playerState.Track = &provider.Track{Title: "New Seed", ID: "new-seed", CatalogID: "newcat"}
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'R', Text: "R"}, "R")
+	m.executeCommand("radio")
 	if m.discovery.enabled {
 		t.Error("starting radio should stop discovery — both compete for the last-track refill trigger")
 	}

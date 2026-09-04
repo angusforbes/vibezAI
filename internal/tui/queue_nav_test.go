@@ -233,32 +233,75 @@ func TestC_ClearsQueueFromMainView(t *testing.T) {
 	}
 }
 
-func TestR_WithHighlightSeedsRadioFromHighlightedAndKeepsQueue(t *testing.T) {
-	m, mock := navModel(t)
-	key(m, "down") // highlight "Three"
+func TestR_InsertsFiveRelatedAfterHighlightedTrack(t *testing.T) {
+	m, mock := navModel(t) // playing "Two" (1); queue One Two Three Four
+	key(m, "down")         // highlight "Three" (2)
 	if cmd := key(m, "R"); cmd == nil {
-		t.Fatal("R should start radio")
+		t.Fatal("R should start a related-songs lookup")
 	}
-	if !m.radio.enabled || m.radio.seed == nil || m.radio.seed.Title != "Three" {
-		t.Fatalf("radio should be seeded by the highlighted track, got %+v", m.radio.seed)
-	}
-	if len(m.queueTracks) != 4 || len(mock.removeFromQueueIdx) != 0 {
-		t.Fatal("starting radio must not remove queued tracks")
-	}
-	key(m, "R")
 	if m.radio.enabled {
-		t.Fatal("R again should stop radio")
+		t.Fatal("R must not turn on continuous radio")
+	}
+	picks := []provider.Track{
+		{ID: "r1", Title: "R1"}, {ID: "r2", Title: "R2"}, {ID: "r3", Title: "R3"}, {ID: "r4", Title: "R4"}, {ID: "r5", Title: "R5"},
+	}
+	_, cmd := m.Update(relatedResultMsg{gen: m.relatedGen, seed: m.queueTracks[2], tracks: picks})
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			if batch, ok := msg.(tea.BatchMsg); ok {
+				for _, c := range batch {
+					if c != nil {
+						c()
+					}
+				}
+			}
+		}
+	}
+	want := []string{"1", "2", "3", "r1", "r2", "r3", "r4", "r5", "4"}
+	if len(m.queueIDs) != len(want) {
+		t.Fatalf("queue ids = %v, want %v", m.queueIDs, want)
+	}
+	for i := range want {
+		if m.queueIDs[i] != want[i] {
+			t.Fatalf("queue ids = %v, want %v", m.queueIDs, want)
+		}
+	}
+	if len(mock.appendQueueIDs) != 1 || len(mock.appendQueueIDs[0]) != 5 {
+		t.Fatalf("engine should get one AppendQueue of 5 ids, got %v", mock.appendQueueIDs)
+	}
+	if len(mock.moveInQueueCalls) != 5 || mock.moveInQueueCalls[0].From != 4 || mock.moveInQueueCalls[0].To != 3 {
+		t.Fatalf("picks should be moved into place after the seed, got %+v", mock.moveInQueueCalls)
+	}
+	if m.queueCursor != 2 {
+		t.Fatalf("highlight should stay on the seed (2), got %d", m.queueCursor)
+	}
+
+	// A stale result (older generation) is ignored.
+	m.Update(relatedResultMsg{gen: m.relatedGen - 1, seed: m.queueTracks[2], tracks: picks})
+	if len(m.queueIDs) != len(want) {
+		t.Fatal("stale related result must be ignored")
+	}
+}
+
+func TestR_WithoutHighlightUsesPlayingTrack(t *testing.T) {
+	m, _ := navModel(t)
+	if cmd := key(m, "R"); cmd == nil {
+		t.Fatal("R should start a lookup seeded by the playing track")
+	}
+	_, _ = m.Update(relatedResultMsg{gen: m.relatedGen, seed: *m.playerState.Track, tracks: []provider.Track{{ID: "r1", Title: "R1"}}})
+	if len(m.queueIDs) != 5 || m.queueIDs[2] != "r1" {
+		t.Fatalf("pick should land right after the playing track: %v", m.queueIDs)
 	}
 }
 
 func TestPlayerKeysStillWorkWhileHighlighting(t *testing.T) {
 	m, mock := navModel(t)
 	key(m, "down")
-	if cmd := key(m, "s"); cmd != nil {
+	if cmd := key(m, "r"); cmd != nil {
 		_ = cmd()
 	}
-	if !m.playerState.ShuffleMode {
-		t.Fatal("s should toggle shuffle with a highlight active")
+	if m.playerState.RepeatMode == 0 {
+		t.Fatal("r should cycle repeat with a highlight active")
 	}
 	if cmd := key(m, "n"); cmd != nil {
 		_ = cmd()

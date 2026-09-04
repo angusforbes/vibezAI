@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math/rand"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/simone-vibes/vibez/internal/player"
@@ -17,8 +18,9 @@ import (
 // queue, gg/G jump to the ends and esc drops the cursor so the list follows the
 // playing track again. shift+↑/↓ jump to the top/bottom of the list, shift+d
 // removes the highlighted entry and everything below it, and ctrl+shift+d
-// removes everything above it. Every other key behaves exactly as without a
-// highlight.
+// removes everything above it. R inserts five related songs right after the
+// highlighted (else playing) track, once; s jumps to a random queued song.
+// Every other key behaves exactly as without a highlight.
 
 // noQueueCursor means no entry is highlighted; the list follows playback.
 const noQueueCursor = -1
@@ -101,6 +103,28 @@ func (m *Model) clearQueue() tea.Cmd {
 	m.clearQueueCursor()
 	m.syncQueue()
 	return m.playerCmd(func(p player.Player) error { return p.ClearQueue() })
+}
+
+// jumpToRandomQueued (the s key) plays a random queued track other than the
+// one playing, leaving the queue as it is.
+func (m *Model) jumpToRandomQueued() tea.Cmd {
+	n := len(m.queueTracks)
+	if n == 0 || len(m.queueIDs) != n {
+		return nil
+	}
+	cur := m.currentQueueIndex()
+	if cur < 0 || cur >= n {
+		return m.jumpToQueueIndex(rand.Intn(n)) //nolint:gosec // not security sensitive
+	}
+	if n == 1 {
+		return nil
+	}
+	idx := rand.Intn(n - 1) //nolint:gosec // not security sensitive
+	if idx >= cur {
+		idx++
+	}
+	m.appendLog(fmt.Sprintf("[queue] random jump to position %d", idx+1))
+	return m.jumpToQueueIndex(idx)
 }
 
 // clampQueueCursor keeps the cursor inside the queue after edits.

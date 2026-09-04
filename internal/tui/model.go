@@ -306,6 +306,7 @@ type Model struct {
 	queueDirty       bool             // queue changed since it was last saved
 	queueResumeIdx   int              // restored queue: track to start from on first play, -1 = none
 	queueCursor      int              // highlighted mini-queue entry in the main view, -1 = follow playback
+	relatedGen       int              // generation of the latest R (related songs) lookup
 
 	// Discovery mode
 	discovery discoveryMode
@@ -1134,6 +1135,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errMsg = "✓ Re-authenticated with Apple Music"
 		m.errExpiry = time.Now().Add(5 * time.Second)
 
+	case relatedResultMsg:
+		cmds = append(cmds, m.handleRelatedResult(msg))
+
 	case RestartMsg:
 		m.flushQueueState()
 		return m, tea.Quit
@@ -1357,6 +1361,8 @@ var allCommands = []cmdEntry{
 	{"quality", "quality <high|standard|256|64>", "Set Apple Music AAC bitrate"},
 	{"art", "art", "Toggle album-art view (cover + track info instead of the bar)"},
 	{"mute", "mute", "Toggle mute"},
+	{"radio", "radio", "Toggle continuous radio seeded by the playing track (R inserts 5 related songs once)"},
+	{"shuffle", "shuffle", "Toggle the engine's shuffled play order (s jumps to a random queued song)"},
 	{"about", "about", "Show information about vibez"},
 	{"donate", "donate", "Support vibez development by donating"},
 	{"debug-logs", "debug-logs", "Toggle debug log panel"},
@@ -1485,6 +1491,19 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 		}
 		m.appendLog("[art] album-art view off")
 		return nil
+
+	case cmd == "radio":
+		if m.radio.enabled {
+			m.stopRadio()
+			return nil
+		}
+		return m.startRadioFrom(m.playerState.Track)
+
+	case cmd == "shuffle":
+		on := !m.playerState.ShuffleMode
+		m.playerState.ShuffleMode = on
+		m.appendLog(fmt.Sprintf("[player] shuffle → %v", on))
+		return m.playerCmd(func(p player.Player) error { return p.SetShuffle(on) })
 
 	case cmd == "mute":
 		if m.preMuteVol >= 0 {
@@ -2040,10 +2059,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 
 	case "s":
 		m.lastKey = ""
-		on := !m.playerState.ShuffleMode
-		m.playerState.ShuffleMode = on
-		m.appendLog(fmt.Sprintf("[player] shuffle → %v", on))
-		return m.playerCmd(func(p player.Player) error { return p.SetShuffle(on) })
+		return m.jumpToRandomQueued()
 
 	case "f":
 		m.lastKey = ""
@@ -2085,16 +2101,12 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 
 	case "R":
 		m.lastKey = ""
-		if m.radio.enabled {
-			m.stopRadio()
-			return nil
-		}
 		seed := m.playerState.Track
 		if m.activePanel < 0 && m.queueCursorActive() {
 			t := m.queueTracks[m.queueCursor]
 			seed = &t
 		}
-		return m.startRadioFrom(seed)
+		return m.fetchRelatedCmd(seed)
 
 	case "left":
 		m.lastKey = ""
@@ -3511,9 +3523,9 @@ func (m *Model) statusPlayLines(w int) []string {
 		discoverHint = accent.Render("d") + styles.Playing.Render(" picking…")
 	}
 
-	radioHint := accent.Render("R") + muted.Render(" radio")
+	radioHint := accent.Render("R") + muted.Render(" +5 related")
 	if m.radio.enabled {
-		radioHint = accent.Render("R") + styles.Playing.Render(" 📻 radio")
+		radioHint = accent.Render(":radio") + styles.Playing.Render(" 📻 on")
 	}
 
 	if m.activePanel < 0 && m.queueCursorActive() {
@@ -3526,7 +3538,7 @@ func (m *Model) statusPlayLines(w int) []string {
 			accent.Render("⇧↑/⇧↓") + muted.Render(" top/end"),
 			accent.Render("D") + muted.Render(" cut to end"),
 			accent.Render("^⇧D") + muted.Render(" cut above"),
-			accent.Render("R") + muted.Render(" radio from it"),
+			accent.Render("R") + muted.Render(" +5 after it"),
 			accent.Render("c") + muted.Render(" clear all"),
 			accent.Render("esc") + muted.Render(" done"),
 		}
@@ -3539,7 +3551,7 @@ func (m *Model) statusPlayLines(w int) []string {
 		accent.Render("↑/↓ q") + muted.Render(" queue"),
 		accent.Render("←/→") + muted.Render(" seek ±10s"),
 		accent.Render("f") + muted.Render(" fav"),
-		accent.Render("s") + muted.Render(" shuffle"),
+		accent.Render("s") + muted.Render(" random"),
 		accent.Render("r") + muted.Render(" repeat"),
 		discoverHint,
 		radioHint,

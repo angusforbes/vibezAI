@@ -43,7 +43,7 @@ Full tracks stream via Chrome with Widevine DRM. On Linux amd64, Chrome is auto-
 - **Linux preview backend** via WebKit + GStreamer (30 s previews) when CDP playback is not selected
 - **Playback controls** — play/pause, next, previous, seek ±10 s, volume up/down
 - **Repeat modes** — cycle through off, repeat-all, and repeat-one
-- **Shuffle** — randomise your queue with a single keypress
+- **Random jump** — `s` starts a random queued song right away; `:shuffle` toggles the engine's shuffled play order
 
 ### 🔍 Apple Music Integration
 
@@ -81,12 +81,10 @@ Full tracks stream via Chrome with Widevine DRM. On Linux amd64, Chrome is auto-
 - **Seed-aware** — the currently playing track is used as the seed; searches adapt progressively from same artist → same genre → completely random as similarity decreases
 - **Toggle anytime** — press `d` again to stop discovery and return to a manual queue
 
-### 📻 Radio Mode
+### 📻 Related Songs and Radio
 
-- **Seed a station from any track** — press `R` on the currently playing track, a highlighted queue track, or `ctrl+r` on a search result to start an endless station built around it
-- **Auto-refills like discovery** — vibez queues up new picks from the seed's station as the queue runs low, so the music never stops
-- **Keeps your queue** — radio picks are appended after whatever is already lined up; nothing you queued is removed
-- **Toggle anytime** — press `R` again to stop radio and return to a manual queue
+- **Five related songs, once** — press `R` on the playing track or a highlighted queue entry: vibez fetches that song's Apple Music station and inserts up to five new picks right after it. Nothing keeps refilling afterwards and nothing you queued is removed
+- **Continuous radio** — `:radio` toggles the endless-station mode seeded by the playing track (also `ctrl+r` on a search result); its picks are appended after whatever is already lined up
 
 ### ⌨️ Terminal UI
 
@@ -256,12 +254,12 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | `+` / `=` | Volume up |
 | `-` | Volume down |
 | `r` | Cycle repeat (off → all → one) |
-| `s` | Toggle shuffle |
+| `s` | Jump to a random queued song |
 | `f` | Heart / favourite current track |
 | `v` | Open vibe input (mood-driven search) |
 | `e` | Toggle equalizer panel |
 | `d` | Toggle discovery mode |
-| `R` | Toggle radio mode (seeded by the currently playing track) |
+| `R` | Insert five related songs after the playing track (once) |
 | `/` | Open search |
 | `l` | Toggle library panel |
 | `q` | Highlight the playing track in the queue (again: drop the highlight) |
@@ -272,7 +270,7 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom of the queue |
 | `shift+d` (with a highlighted entry) | Remove the highlighted entry and everything below it (stops playback if the playing track is among them) |
 | `ctrl+shift+d` (with a highlighted entry) | Remove everything above the highlighted entry (if the playing track is among them, playback moves to the highlighted entry) |
-| `R` (with a highlighted entry) | Start radio seeded by the highlighted entry |
+| `R` (with a highlighted entry) | Insert five related songs after the highlighted entry (once) |
 | `c` | Clear the queue |
 | `esc` | Drop the highlight; the queue follows the playing track again |
 | `:q` / `ctrl+c` | Quit |
