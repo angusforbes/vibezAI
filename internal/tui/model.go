@@ -305,7 +305,8 @@ type Model struct {
 	queueStatePath   string           // file the queue is saved to between runs ("" = off)
 	queueDirty       bool             // queue changed since it was last saved
 	queueResumeIdx   int              // restored queue: track to start from on first play, -1 = none
-	queueCursor      int              // highlighted mini-queue entry in the main view, -1 = follow playback
+	queueCursor      int              // highlighted queue entry (-1 only while the queue is empty)
+	queueFollow      bool             // highlight tracks the playing song until the user moves it
 	relatedGen       int              // generation of the latest R (related songs) lookup
 
 	// Discovery mode
@@ -408,6 +409,7 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	m.queue = &queuePanel{m: views.NewQueue()}
 	m.queueStatePath = opts.QueueStatePath
 	m.queueCursor = noQueueCursor
+	m.queueFollow = true
 	m.lyricsP = &lyricsPanel{m: views.NewLyrics()}
 	m.lyricsClient = lyrics.NewClient()
 	m.feedP = &feedPanel{m: views.NewFeed()}
@@ -630,11 +632,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.lastLyricsTrackID = "" // stale; will fetch on panel open
 				}
 			}
-			// Auto-scroll mini-queue to keep the current track visible, unless the
-			// user is moving the queue cursor (see queue_nav.go).
-			if m.queueCursor < 0 {
+			// While the highlight follows playback, move it (and the view) to
+			// the new track; a highlight the user moved stays put.
+			if m.queueFollow {
+				id := views.PlaybackID(*s.Track)
 				for i, t := range m.queueTracks {
-					if t.Title == s.Track.Title {
+					if views.PlaybackID(t) == id || t.Title == s.Track.Title {
+						m.queueCursor = i
 						visibleRows := max(0, m.panelHeight()-2)
 						if visibleRows > 0 && (i < m.queueMiniOffset || i >= m.queueMiniOffset+visibleRows) {
 							m.queueMiniOffset = max(0, i-visibleRows/2)
@@ -1358,7 +1362,7 @@ type cmdEntry struct {
 var allCommands = []cmdEntry{
 	{"save", "save <name>", "Save queue as a playlist in Apple Music"},
 	{"seek", "seek <seconds>", "Jump to a position in the current song"},
-	{"discover", "discover <n>|auto", "Queue n discovered songs now, or auto-discover indefinitely"},
+	{"discover", "discover <n>|auto|stop|metric", "Queue n discovered songs now, auto-discover until stopped, or pick the similarity"},
 	{"vol", "vol <0-100|+n|-n>", "Set, raise, or lower volume (e.g. vol 80, vol +10, vol -5)"},
 	{"quality", "quality <high|standard|256|64>", "Set Apple Music AAC bitrate"},
 	{"art", "art", "Toggle album-art view (cover + track info instead of the bar)"},
@@ -1464,6 +1468,21 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 		return nil
 	case strings.HasPrefix(cmd, "discover"):
 		arg := strings.TrimSpace(strings.TrimPrefix(cmd, "discover"))
+		if arg == "stop" || (arg == "" && m.discovery.enabled) {
+			m.stopDiscovery()
+			return nil
+		}
+		if arg == "metric" {
+			// Pick the similarity level; the picker starts discovery when confirmed.
+			sim := m.discovery.similarity
+			if sim == 0 {
+				sim = 0.7
+			}
+			if m.playerState.Track != nil && !m.vibe.PickerActive() {
+				m.vibe.ShowPicker(sim)
+			}
+			return nil
+		}
 		if arg == "" || arg == "auto" {
 			return m.startDiscovery(true, 1)
 		}
@@ -1785,6 +1804,19 @@ func (m *Model) startDiscovery(autoMode bool, n int) tea.Cmd {
 	return m.runDiscoverySearch()
 }
 
+// stopDiscovery turns discovery mode off and clears its session state.
+func (m *Model) stopDiscovery() {
+	if !m.discovery.enabled {
+		return
+	}
+	m.discovery.enabled = false
+	m.discovery.seed = nil
+	m.discovery.refilling = false
+	m.discovery.triggeredForID = ""
+	m.syncDiscoveryView()
+	m.appendLog("[discovery] stopped")
+}
+
 // startRadioFrom activates radio mode seeded by the given track, replacing
 // any radio session already in progress.
 func (m *Model) startRadioFrom(seed *provider.Track) tea.Cmd {
@@ -2075,27 +2107,6 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 			return m.loveSongCmd(t, loved)
 		}
 
-	case "d":
-		m.lastKey = ""
-		if m.discovery.enabled {
-			// Toggle off.
-			m.discovery.enabled = false
-			m.discovery.seed = nil
-			m.discovery.refilling = false
-			m.discovery.triggeredForID = ""
-			m.syncDiscoveryView()
-			m.appendLog("[discovery] stopped")
-		} else if m.playerState.Track != nil && !m.vibe.PickerActive() {
-			// Open the metric picker; pre-select the closest option to the
-			// current similarity (defaults to 0.7 on first use).
-			sim := m.discovery.similarity
-			if sim == 0 {
-				sim = 0.7
-			}
-			m.vibe.ShowPicker(sim)
-		}
-		return nil
-
 	case "v":
 		m.lastKey = ""
 		m.vibe.Focus()
@@ -2168,10 +2179,6 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		m.lastKey = ""
 		m.moveQueueCursor(-1)
 
-	case "esc":
-		m.lastKey = ""
-		m.clearQueueCursor()
-
 	case "shift+up":
 		m.lastKey = ""
 		m.setQueueCursor(0)
@@ -2182,7 +2189,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 
 	case "q":
 		m.lastKey = ""
-		m.toggleQueueHighlight()
+		m.followPlayingTrack()
 
 	case "c":
 		m.lastKey = ""
@@ -3179,7 +3186,9 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 		}
 		lines[sil] = centerStr(muted.Render("silence is not a vibe"), contentW)
 		if credit > sil {
-			lines[credit] = centerStr(muted.Render("made with ❤️ by simonepelosi · press ? for about"), contentW)
+			// "♥" instead of the "❤️" emoji: the variation-selector form is measured as one
+			// cell but drawn as two by some terminals, which shifted the right border.
+			lines[credit] = centerStr(muted.Render("made with ♥ by simonepelosi · press ? for about"), contentW)
 		}
 		if m.errMsg != "" {
 			var errRendered string
@@ -3488,45 +3497,29 @@ func (m *Model) statusPlayLines(w int) []string {
 	accent := styles.KeyName
 	dot := muted.Render("  ·  ")
 
-	discoverHint := accent.Render("d") + muted.Render(" metric")
-	if m.discovery.enabled {
-		discoverHint = accent.Render("d") + styles.Playing.Render(" ● discovery")
-	} else if m.vibe.PickerActive() {
-		discoverHint = accent.Render("d") + styles.Playing.Render(" picking…")
-	}
-
-	radioHint := accent.Render("R") + muted.Render(" +5 related")
-	if m.radio.enabled {
-		radioHint = accent.Render(":radio") + styles.Playing.Render(" 📻 on")
-	}
-
-	if m.activePanel < 0 && m.queueCursorActive() {
-		// A queue entry is highlighted in the main view.
-		parts := []string{
-			accent.Render("↑/↓") + muted.Render(" pick"),
-			accent.Render("spc/enter") + muted.Render(" play it"),
-			accent.Render("d") + muted.Render(" remove"),
-			accent.Render("K/J") + muted.Render(" move"),
-			accent.Render("⇧↑/⇧↓") + muted.Render(" top/end"),
-			accent.Render("D") + muted.Render(" cut to end"),
-			accent.Render("^⇧D") + muted.Render(" cut above"),
-			accent.Render("R") + muted.Render(" +5 after it"),
-			accent.Render("c") + muted.Render(" clear all"),
-			accent.Render("esc") + muted.Render(" done"),
-		}
-		return wrapFit(parts, dot, w)
-	}
-
 	parts := []string{
 		accent.Render("spc") + muted.Render(" play/pause"),
+		accent.Render("↑/↓") + muted.Render(" pick"),
+		accent.Render("enter") + muted.Render(" play picked"),
+		accent.Render("q") + muted.Render(" back to playing"),
 		accent.Render("n/p") + muted.Render(" next/prev"),
-		accent.Render("↑/↓ q") + muted.Render(" queue"),
 		accent.Render("←/→") + muted.Render(" seek ±10s"),
-		accent.Render("f") + muted.Render(" fav"),
+		accent.Render("d") + muted.Render(" remove"),
+		accent.Render("D/^⇧D") + muted.Render(" cut below/above"),
+		accent.Render("K/J") + muted.Render(" move"),
+		accent.Render("R") + muted.Render(" +5 related"),
 		accent.Render("s") + muted.Render(" random"),
+		accent.Render("f") + muted.Render(" fav"),
 		accent.Render("r") + muted.Render(" repeat"),
-		discoverHint,
-		radioHint,
+		accent.Render("c") + muted.Render(" clear"),
+	}
+	if m.discovery.enabled {
+		parts = append(parts, accent.Render(":discover")+styles.Playing.Render(" ● on"))
+	} else if m.vibe.PickerActive() {
+		parts = append(parts, accent.Render(":discover")+styles.Playing.Render(" picking…"))
+	}
+	if m.radio.enabled {
+		parts = append(parts, accent.Render(":radio")+styles.Playing.Render(" 📻 on"))
 	}
 	return wrapFit(parts, dot, w)
 }

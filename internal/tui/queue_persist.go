@@ -38,6 +38,7 @@ func (m *Model) restoreQueue() {
 	m.queueIDs = ids
 	m.queue.SetTracks(m.queueTracks)
 	m.queueResumeIdx = st.CurrentIndex
+	m.followPlayingTrack()
 	m.appendLog(fmt.Sprintf("[queue] restored %d track(s) from the previous session", len(tracks)))
 }
 

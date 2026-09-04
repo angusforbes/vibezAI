@@ -36,8 +36,9 @@ func key(m *Model, k string) tea.Cmd {
 
 func TestQueueCursor_ArrowsMoveWithoutPlaying(t *testing.T) {
 	m, mock := navModel(t)
-	if m.queueCursorActive() {
-		t.Fatal("cursor should start inactive")
+	m.followPlayingTrack()
+	if !m.queueCursorActive() || m.queueCursor != 1 || !m.queueFollow {
+		t.Fatalf("highlight should start on the playing track and follow it: cursor=%d follow=%v", m.queueCursor, m.queueFollow)
 	}
 	key(m, "down") // from the playing track (1) to 2
 	if m.queueCursor != 2 {
@@ -56,8 +57,12 @@ func TestQueueCursor_ArrowsMoveWithoutPlaying(t *testing.T) {
 		t.Fatal("moving the cursor must not touch playback")
 	}
 	key(m, "esc")
-	if m.queueCursorActive() {
-		t.Fatal("esc should clear the cursor")
+	if m.queueCursor != 2 || m.queueFollow {
+		t.Fatal("esc must do nothing in the main view")
+	}
+	key(m, "q")
+	if m.queueCursor != 1 || !m.queueFollow {
+		t.Fatalf("q should put the highlight back on the playing track and follow it, got cursor=%d follow=%v", m.queueCursor, m.queueFollow)
 	}
 	key(m, "G")
 	if m.queueCursor != 3 {
@@ -86,8 +91,8 @@ func TestQueueCursor_SpaceStartsHighlightedTrack(t *testing.T) {
 	if len(m.queueTracks) != 4 || len(m.queueIDs) != 4 {
 		t.Fatalf("queue must stay intact, got %d tracks", len(m.queueTracks))
 	}
-	if m.queueCursorActive() {
-		t.Fatal("cursor should clear after starting a track")
+	if m.queueCursor != 3 || !m.queueFollow {
+		t.Fatalf("after starting a track the highlight should sit on it and follow playback, got cursor=%d follow=%v", m.queueCursor, m.queueFollow)
 	}
 }
 
@@ -120,7 +125,7 @@ func TestQueueCursor_EnterStartsHighlightedTrack(t *testing.T) {
 	}
 }
 
-func TestQueueCursor_DRemovesHighlighted_DWithoutCursorIsDiscovery(t *testing.T) {
+func TestQueueCursor_DRemovesHighlighted_EvenThePlayingOne(t *testing.T) {
 	m, mock := navModel(t)
 	key(m, "down") // cursor on "Three"
 	if cmd := key(m, "d"); cmd != nil {
@@ -135,17 +140,16 @@ func TestQueueCursor_DRemovesHighlighted_DWithoutCursorIsDiscovery(t *testing.T)
 	if m.queueCursor != 2 {
 		t.Fatalf("cursor should stay on the next entry (2), got %d", m.queueCursor)
 	}
-	if m.vibe.PickerActive() {
-		t.Fatal("d with a cursor must not open the discovery picker")
+	if m.vibe.PickerActive() || m.discovery.enabled {
+		t.Fatal("d must not touch discovery any more")
 	}
 
-	key(m, "esc")
-	key(m, "d") // no cursor: the old discovery behaviour
-	if !m.vibe.PickerActive() {
-		t.Fatal("d without a cursor should still open the discovery metric picker")
+	key(m, "q") // back on the playing track ("Two", index 1)
+	if cmd := key(m, "d"); cmd != nil {
+		_ = cmd()
 	}
-	if len(m.queueTracks) != 3 {
-		t.Fatal("d without a cursor must not remove anything")
+	if len(m.queueTracks) != 2 || mock.removeFromQueueIdx[1] != 1 {
+		t.Fatalf("d on the playing track should remove it too: %+v / %v", m.queueTracks, mock.removeFromQueueIdx)
 	}
 }
 
@@ -168,10 +172,12 @@ func TestQueueCursor_KJMoveHighlightedTrack(t *testing.T) {
 		t.Fatalf("J should move it back down: %v cursor=%d", m.queueIDs, m.queueCursor)
 	}
 
-	key(m, "esc")
-	key(m, "K") // no cursor: highlights the playing track instead of moving it
-	if m.queueCursor != 1 || m.queueIDs[1] != "2" {
-		t.Fatalf("K without a cursor should only highlight the playing track: %v cursor=%d", m.queueIDs, m.queueCursor)
+	key(m, "q") // highlight back on the playing track ("Two", index 1), following
+	if cmd := key(m, "K"); cmd != nil {
+		_ = cmd()
+	}
+	if m.queueIDs[0] != "2" || m.queueCursor != 0 || !m.queueFollow {
+		t.Fatalf("K should move the playing track up and keep following it: %v cursor=%d follow=%v", m.queueIDs, m.queueCursor, m.queueFollow)
 	}
 }
 
@@ -207,18 +213,36 @@ func TestQueueCursor_AutoScrollOnlyWhenNoCursor(t *testing.T) {
 	}
 }
 
-func TestQ_TogglesHighlightOnPlayingTrack(t *testing.T) {
+func TestQ_PutsHighlightBackOnPlayingTrack(t *testing.T) {
 	m, mock := navModel(t)
+	key(m, "down")
+	key(m, "down") // cursor on "Four"
 	key(m, "q")
-	if m.queueCursor != 1 {
-		t.Fatalf("q should highlight the playing track (1), got %d", m.queueCursor)
+	if m.queueCursor != 1 || !m.queueFollow {
+		t.Fatalf("q should snap to the playing track (1) and follow, got %d follow=%v", m.queueCursor, m.queueFollow)
 	}
 	key(m, "q")
-	if m.queueCursorActive() {
-		t.Fatal("q again should drop the highlight")
+	if m.queueCursor != 1 || !m.queueFollow {
+		t.Fatal("q again should change nothing")
 	}
 	if m.activePanel >= 0 || mock.setQueueIDs != nil {
 		t.Fatal("q must not open a panel or touch playback")
+	}
+}
+
+func TestHighlightFollowsPlaybackUntilMoved(t *testing.T) {
+	m, _ := navModel(t)
+	m.followPlayingTrack()
+	next := m.queueTracks[2]
+	m.Update(playerStateMsg{Track: &next, Playing: true})
+	if m.queueCursor != 2 {
+		t.Fatalf("following highlight should move to the new track (2), got %d", m.queueCursor)
+	}
+	key(m, "up") // user moves it to 1
+	later := m.queueTracks[3]
+	m.Update(playerStateMsg{Track: &later, Playing: true})
+	if m.queueCursor != 1 {
+		t.Fatalf("a moved highlight must stay put across track changes, got %d", m.queueCursor)
 	}
 }
 

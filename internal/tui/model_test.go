@@ -1597,50 +1597,6 @@ func TestHandleNormalKey_F_NoTrack_NoOp(t *testing.T) {
 	_ = cmd // no-op
 }
 
-func TestHandleNormalKey_D_OpensPicker(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	track := &provider.Track{Title: "Seed Song", Artist: "Artist", ID: "seed"}
-	m.playerState.Track = track
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'd', Text: "d"}, "d")
-	_ = cmd
-	if !m.vibe.PickerActive() {
-		t.Error("d key with track should open the metric picker")
-	}
-	if m.discovery.enabled {
-		t.Error("d key should not immediately start discovery; picker must be confirmed first")
-	}
-}
-
-func TestHandleNormalKey_D_ClosesPickerIfOpen(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	track := &provider.Track{Title: "Seed Song", Artist: "Artist", ID: "seed"}
-	m.playerState.Track = track
-	// First d → opens picker.
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'd', Text: "d"}, "d")
-	if !m.vibe.PickerActive() {
-		t.Fatal("expected picker to be active after first d")
-	}
-	// Second d → closes picker.
-	m.handleNormalKey(tea.KeyPressMsg{Code: 'd', Text: "d"}, "d")
-	if m.vibe.PickerActive() {
-		t.Error("second d should close the picker")
-	}
-}
-
-func TestHandleNormalKey_D_StopDiscovery(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	m.discovery.enabled = true
-	m.discovery.seed = &provider.Track{ID: "seed"}
-	cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'd', Text: "d"}, "d")
-	_ = cmd
-	if m.discovery.enabled {
-		t.Error("d key when discovery is on should stop discovery")
-	}
-}
-
 func TestHandleNormalKey_R_StartRadio(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
@@ -3686,5 +3642,28 @@ func TestNoResultsError(t *testing.T) {
 	}
 	if strings.Count(got, "catalog song search") != 1 {
 		t.Errorf("noResultsError = %q, want the repeated reason collapsed to one", got)
+	}
+}
+
+func TestCommand_DiscoverMetric_OpensPicker(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.playerState.Track = &provider.Track{Title: "Seed Song", Artist: "Artist", ID: "seed"}
+	_ = m.executeCommand("discover metric")
+	if !m.vibe.PickerActive() || m.discovery.enabled {
+		t.Fatalf(":discover metric should open the picker without starting discovery (picker=%v enabled=%v)", m.vibe.PickerActive(), m.discovery.enabled)
+	}
+}
+
+func TestCommand_Discover_TogglesOff(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.discovery.enabled = true
+	m.discovery.seed = &provider.Track{ID: "seed"}
+	_ = m.executeCommand("discover")
+	if m.discovery.enabled {
+		t.Fatal(":discover while running should stop discovery")
+	}
+	_ = m.executeCommand("discover stop") // no-op when off
+	if m.discovery.enabled {
+		t.Fatal("stop must keep discovery off")
 	}
 }

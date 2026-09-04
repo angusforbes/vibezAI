@@ -10,56 +10,62 @@ import (
 
 // Queue navigation in the main view.
 //
-// The queue lives under "Now Playing"; there is no separate queue panel. The
-// list has a cursor: ↑/↓ (or k/j) highlight an entry without touching
-// playback, q highlights the playing track (or drops the highlight), space or
-// enter jumps to the highlighted track with the whole queue left in place, d
-// (also x/delete) removes it, K/J move it, R seeds radio from it, c clears the
-// queue, gg/G jump to the ends and esc drops the cursor so the list follows the
-// playing track again. shift+↑/↓ jump to the top/bottom of the list, shift+d
-// removes the highlighted entry and everything below it, and ctrl+shift+d
-// removes everything above it. R inserts five related songs right after the
-// highlighted (else playing) track, once; s jumps to a random queued song.
-// Every other key behaves exactly as without a highlight.
+// The queue lives under the track block; there is no separate queue panel and
+// no highlight mode. One entry is always highlighted: it follows the playing
+// track until ↑/↓ (or k/j), gg/G or shift+↑/↓ move it, and q puts it back on
+// the playing track. space is play/pause when the highlight sits on the
+// playing track and otherwise jumps to the highlighted entry (queue kept);
+// enter always plays the highlighted entry. d (also x/delete) removes it, K/J
+// move it, shift+d removes it and everything below, ctrl+shift+d removes
+// everything above, R inserts five related songs right after it, c clears the
+// queue and s jumps to a random queued song. Nothing else changes with the
+// highlight's position, and esc does nothing in this view.
 
-// noQueueCursor means no entry is highlighted; the list follows playback.
+// noQueueCursor is the highlight value while the queue is empty.
 const noQueueCursor = -1
 
-// queueCursorActive reports whether a queue entry is highlighted.
+// queueCursorActive reports whether a queue entry is highlighted, which is
+// the case whenever the queue is not empty.
 func (m *Model) queueCursorActive() bool {
 	return m.queueCursor >= 0 && m.queueCursor < len(m.queueTracks)
 }
 
-// clearQueueCursor drops the highlight; the mini-queue follows playback again.
-func (m *Model) clearQueueCursor() {
-	m.queueCursor = noQueueCursor
+// followPlayingTrack (the q key, and the state after a jump) puts the
+// highlight on the playing track and keeps it there as tracks change.
+func (m *Model) followPlayingTrack() {
+	m.queueFollow = true
+	if len(m.queueTracks) == 0 {
+		m.queueCursor = noQueueCursor
+		return
+	}
+	cur := m.currentQueueIndex()
+	if cur < 0 {
+		cur = max(0, min(m.queueCursor, len(m.queueTracks)-1))
+	}
+	m.queueCursor = cur
+	m.ensureQueueCursorVisible()
 }
 
-// setQueueCursor highlights idx (clamped) and scrolls it into view.
+// setQueueCursor moves the highlight to idx (clamped), scrolls it into view
+// and stops it from following playback.
 func (m *Model) setQueueCursor(idx int) {
 	if len(m.queueTracks) == 0 {
 		m.queueCursor = noQueueCursor
 		return
 	}
+	m.queueFollow = false
 	m.queueCursor = max(0, min(idx, len(m.queueTracks)-1))
 	m.ensureQueueCursorVisible()
 }
 
-// moveQueueCursor moves the highlight by delta rows. The first move starts
-// from the playing track (or the restore point, or the first visible row).
+// moveQueueCursor moves the highlight by delta rows.
 func (m *Model) moveQueueCursor(delta int) {
 	if len(m.queueTracks) == 0 {
 		m.queueCursor = noQueueCursor
 		return
 	}
 	if !m.queueCursorActive() {
-		start := m.currentQueueIndex()
-		if start < 0 {
-			m.setQueueCursor(m.queueMiniOffset)
-			return
-		}
-		m.setQueueCursor(start + delta)
-		return
+		m.followPlayingTrack()
 	}
 	m.setQueueCursor(m.queueCursor + delta)
 }
@@ -78,20 +84,6 @@ func (m *Model) ensureQueueCursorVisible() {
 	m.queueMiniOffset = max(0, m.queueMiniOffset)
 }
 
-// toggleQueueHighlight (the q key) puts the highlight on the playing track,
-// or drops it when something is already highlighted.
-func (m *Model) toggleQueueHighlight() {
-	if m.queueCursorActive() {
-		m.clearQueueCursor()
-		return
-	}
-	if cur := m.currentQueueIndex(); cur >= 0 {
-		m.setQueueCursor(cur)
-		return
-	}
-	m.setQueueCursor(m.queueMiniOffset)
-}
-
 // clearQueue (the c key) empties the queue in the model and the engine.
 func (m *Model) clearQueue() tea.Cmd {
 	if len(m.queueTracks) == 0 && len(m.queueIDs) == 0 {
@@ -100,7 +92,7 @@ func (m *Model) clearQueue() tea.Cmd {
 	m.appendLog("[queue] cleared")
 	m.queueTracks = nil
 	m.queueIDs = nil
-	m.clearQueueCursor()
+	m.queueFollow = true
 	m.syncQueue()
 	return m.playerCmd(func(p player.Player) error { return p.ClearQueue() })
 }
@@ -127,10 +119,23 @@ func (m *Model) jumpToRandomQueued() tea.Cmd {
 	return m.jumpToQueueIndex(idx)
 }
 
-// clampQueueCursor keeps the cursor inside the queue after edits.
+// clampQueueCursor keeps the highlight valid after queue edits: inside the
+// queue, and on the playing track while it is following playback.
 func (m *Model) clampQueueCursor() {
+	if len(m.queueTracks) == 0 {
+		m.queueCursor = noQueueCursor
+		return
+	}
+	if m.queueFollow {
+		if cur := m.currentQueueIndex(); cur >= 0 {
+			m.queueCursor = cur
+		}
+	}
 	if m.queueCursor >= len(m.queueTracks) {
-		m.queueCursor = len(m.queueTracks) - 1 // -1 when the queue is empty
+		m.queueCursor = len(m.queueTracks) - 1
+	}
+	if m.queueCursor < 0 {
+		m.queueCursor = 0
 	}
 }
 
@@ -147,6 +152,9 @@ func (m *Model) jumpToQueueIndex(idx int) tea.Cmd {
 	m.playerState.Loading = true
 	m.playerState.Playing = false
 	m.playerState.Position = 0
+	m.queueFollow = true
+	m.queueCursor = idx
+	m.ensureQueueCursorVisible()
 	if m.playerState.Track == nil {
 		ids := append([]string(nil), m.queueIDs...)
 		m.queueResumeIdx = noQueueCursor
@@ -212,43 +220,31 @@ func (m *Model) moveQueueTrack(idx, delta int) (int, tea.Cmd) {
 // queue entry. It reports whether the key was consumed. Movement keys live in
 // handleNormalKey's no-panel switch; this covers the actions.
 func (m *Model) handleQueueCursorKey(k string) (tea.Cmd, bool) {
-	switch k {
-	case "K", "ctrl+up", "J", "ctrl+down":
-		if !m.queueCursorActive() {
-			// Nothing highlighted yet: highlight the playing track so the
-			// next press moves it.
-			if cur := m.currentQueueIndex(); cur >= 0 {
-				m.setQueueCursor(cur)
-			}
-			m.lastKey = ""
-			return nil, true
-		}
-		delta := 1
-		if k == "K" || k == "ctrl+up" {
-			delta = -1
-		}
-		newIdx, cmd := m.moveQueueTrack(m.queueCursor, delta)
-		m.setQueueCursor(newIdx)
-		m.lastKey = ""
-		return cmd, true
-	}
-
 	if !m.queueCursorActive() {
 		return nil, false
 	}
 	switch k {
+	case "K", "ctrl+up", "J", "ctrl+down":
+		delta := 1
+		if k == "K" || k == "ctrl+up" {
+			delta = -1
+		}
+		follow := m.queueFollow
+		newIdx, cmd := m.moveQueueTrack(m.queueCursor, delta)
+		m.queueCursor = newIdx
+		m.queueFollow = follow // moving the playing track keeps following it
+		m.ensureQueueCursorVisible()
+		m.lastKey = ""
+		return cmd, true
 	case "space", "enter":
 		if k == "space" && m.queueCursor == m.currentQueueIndex() && m.playerState.Track != nil {
-			return nil, false // plain play/pause on the playing track
+			return nil, false // highlight on the playing track: plain play/pause
 		}
-		idx := m.queueCursor
-		m.clearQueueCursor()
 		m.lastKey = ""
-		return m.jumpToQueueIndex(idx), true
+		return m.jumpToQueueIndex(m.queueCursor), true
 	case "d", "x", "delete":
 		idx := m.queueCursor
 		cmd := m.removeQueueAt(idx)
-		m.clampQueueCursor()
 		if m.queueCursorActive() {
 			m.ensureQueueCursorVisible()
 		}
@@ -276,7 +272,9 @@ func (m *Model) deleteQueueHead(before int) tea.Cmd {
 	m.queueTracks = m.queueTracks[before:]
 	m.queueIDs = m.queueIDs[before:]
 	m.syncQueue()
-	m.setQueueCursor(0)
+	if !m.queueFollow {
+		m.setQueueCursor(0)
+	}
 	m.appendLog(fmt.Sprintf("[queue] removed the %d track(s) above position %d", before, before+1))
 	return m.playerCmd(func(p player.Player) error {
 		for i := before - 1; i >= 0; i-- {
@@ -304,10 +302,8 @@ func (m *Model) deleteQueueTail(from int) tea.Cmd {
 	m.queueTracks = m.queueTracks[:from]
 	m.queueIDs = m.queueIDs[:from]
 	m.syncQueue()
-	if from > 0 {
+	if from > 0 && !includesPlaying {
 		m.setQueueCursor(from - 1)
-	} else {
-		m.clearQueueCursor()
 	}
 	m.appendLog(fmt.Sprintf("[queue] removed %d track(s) from position %d to the end", removed, from+1))
 	return m.playerCmd(func(p player.Player) error {

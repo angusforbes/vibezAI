@@ -257,21 +257,20 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | `f` | Heart / favourite current track |
 | `v` | Open vibe input (mood-driven search) |
 | `e` | Toggle equalizer panel |
-| `d` | Toggle discovery mode |
 | `R` | Insert five related songs after the playing track (once) |
 | `/` | Open search |
 | `l` | Toggle library panel |
-| `q` | Highlight the playing track in the queue (again: drop the highlight) |
-| `↑` / `↓` (`k` / `j`) | Highlight a queue entry in the main view without changing playback |
-| `space` / `enter` (with a highlighted entry) | Jump to the highlighted queue entry; the queue stays as it is |
-| `d` / `x` (with a highlighted entry) | Remove the highlighted queue entry |
+| `q` | Put the queue highlight back on the playing track (it follows playback until you move it) |
+| `↑` / `↓` (`k` / `j`) | Move the queue highlight without changing playback |
+| `space` | Play/pause when the highlight is on the playing track, otherwise jump to the highlighted entry (queue kept) |
+| `enter` | Play the highlighted queue entry (queue kept) |
+| `d` / `x` | Remove the highlighted queue entry |
 | `K` / `J` (with a highlighted entry) | Move the highlighted queue entry up / down |
 | `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom of the queue |
 | `shift+d` (with a highlighted entry) | Remove the highlighted entry and everything below it (stops playback if the playing track is among them) |
 | `ctrl+shift+d` (with a highlighted entry) | Remove everything above the highlighted entry (if the playing track is among them, playback moves to the highlighted entry) |
 | `R` (with a highlighted entry) | Insert five related songs after the highlighted entry (once) |
 | `c` | Clear the queue |
-| `esc` | Drop the highlight; the queue follows the playing track again |
 | `:q` / `ctrl+c` | Quit |
 
 ### Search (`/`)
@@ -303,7 +302,7 @@ Vim-style command mode — press `:` from anywhere to open the command prompt.
 | Command | Description |
 |---------|-------------|
 | `:save <name>` | Save the current queue as an Apple Music playlist |
-| `:discover <n>\|auto` | Queue *n* discovered songs now, or keep auto-discovering |
+| `:discover <n>\|auto\|stop\|metric` | Queue *n* discovered songs now, auto-discover until `:discover stop`, or pick the similarity metric |
 | `:vol <0-100>` | Set volume to an absolute level (e.g. `:vol 80`) |
 | `:vol +n` / `:vol -n` | Raise or lower volume by *n* percent (e.g. `:vol +10`) |
 | `:vol` | Show current volume in the status bar |
