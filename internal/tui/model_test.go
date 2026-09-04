@@ -3888,6 +3888,9 @@ func TestIdleBlock_CreditsOriginalAndUpdate(t *testing.T) {
 			t.Fatalf("idle block should contain %q:\n%s", want, joined)
 		}
 	}
+	if strings.Contains(joined, "press ?") || strings.Contains(joined, "·") {
+		t.Fatalf("the credit line carries no hint or separator any more:\n%s", joined)
+	}
 	if len(lines) != nowPlayingTextRows {
 		t.Fatalf("the block must keep its %d rows, got %d", nowPlayingTextRows, len(lines))
 	}
