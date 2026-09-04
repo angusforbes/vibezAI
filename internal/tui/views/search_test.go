@@ -586,36 +586,31 @@ func TestSearch_Navigation_CrossesSectionBoundary(t *testing.T) {
 		},
 	}, false, nil)
 
-	// Initially on the track.
-	if s.SelectedTrack() == nil {
-		t.Fatal("expected track to be selected initially")
-	}
-
-	// One down: should move to the album (crosses the Albums header).
-	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	// Sections are ordered Playlists, Albums, Library, Tracks: the album comes first.
 	if s.SelectedAlbum() == nil {
-		t.Fatalf("expected album to be selected after navigating down past the Tracks section")
-	}
-	if s.SelectedAlbum().Title != "Only Album" {
-		t.Errorf("SelectedAlbum().Title = %q, want %q", s.SelectedAlbum().Title, "Only Album")
+		t.Fatal("expected album to be selected initially")
 	}
 
-	// One up: should go back to the track.
-	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
-	if s.SelectedTrack() == nil {
-		t.Fatalf("expected track to be re-selected after navigating up")
+	// One down: should move to the track (crosses the Tracks header).
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "Only Track" {
+		t.Fatalf("expected the track to be selected after navigating down past the Albums section")
 	}
-	if s.SelectedTrack().Title != "Only Track" {
-		t.Errorf("SelectedTrack().Title = %q, want %q", s.SelectedTrack().Title, "Only Track")
+
+	// One up: back to the album.
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
+	if s.SelectedAlbum() == nil || s.SelectedAlbum().Title != "Only Album" {
+		t.Fatalf("expected the album to be re-selected after navigating up")
 	}
 }
 
-func TestSearch_Navigation_AllThreeSections(t *testing.T) {
+func TestSearch_Navigation_AllSections(t *testing.T) {
 	s := NewSearch(nil)
 	s.SetSize(80, 60)
 	s.SetResults(&provider.SearchResult{
 		Tracks: []provider.Track{
 			{Title: "Track One", CatalogID: "t1"},
+			{Title: "Mine", ID: "i.lib1"},
 		},
 		Albums: []provider.Album{
 			{ID: "a1", Title: "Album One"},
@@ -625,27 +620,54 @@ func TestSearch_Navigation_AllThreeSections(t *testing.T) {
 		},
 	}, false, nil)
 
-	// Start: track selected.
-	if s.SelectedTrack() == nil {
-		t.Fatal("step 0: expected track")
+	// Order: Playlists, Albums, Library, Tracks.
+	if s.SelectedPlaylist() == nil {
+		t.Fatal("step 0: expected playlist")
 	}
-
-	// Step 1: album.
 	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	if s.SelectedAlbum() == nil {
 		t.Fatal("step 1: expected album")
 	}
-
-	// Step 2: playlist.
 	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	if s.SelectedPlaylist() == nil {
-		t.Fatal("step 2: expected playlist")
+	if s.SelectedTrack() == nil || s.SelectedTrack().ID != "i.lib1" {
+		t.Fatal("step 2: expected the library track")
 	}
-
-	// Step 3: no further — stays on playlist.
 	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	if s.SelectedPlaylist() == nil {
-		t.Fatal("step 3: expected still playlist at end of list")
+	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "Track One" {
+		t.Fatal("step 3: expected the catalog track")
+	}
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "Track One" {
+		t.Fatal("step 4: expected to stay on the last item")
+	}
+}
+
+func TestSearch_SectionsCappedAtFive(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 60)
+	var tracks []provider.Track
+	for i := range 8 {
+		tracks = append(tracks, provider.Track{Title: fmt.Sprintf("Cat %d", i), CatalogID: fmt.Sprintf("c%d", i)})
+		tracks = append(tracks, provider.Track{Title: fmt.Sprintf("Lib %d", i), ID: fmt.Sprintf("i.l%d", i)})
+	}
+	var albums []provider.Album
+	for i := range 7 {
+		albums = append(albums, provider.Album{ID: fmt.Sprintf("a%d", i), Title: fmt.Sprintf("Album %d", i)})
+	}
+	s.SetResults(&provider.SearchResult{Tracks: tracks, Albums: albums}, false, nil)
+	items, headers := 0, 0
+	for _, r := range s.rows {
+		if r.header {
+			headers++
+		} else {
+			items++
+		}
+	}
+	if headers != 3 || items != 15 {
+		t.Fatalf("expected 3 sections of 5 items (albums, library, tracks), got %d headers / %d items", headers, items)
+	}
+	if s.rows[0].label != "Albums" || s.rows[6].label != "Library" || s.rows[12].label != "Tracks" {
+		t.Fatalf("unexpected section order: %q %q %q", s.rows[0].label, s.rows[6].label, s.rows[12].label)
 	}
 }
 
@@ -763,24 +785,29 @@ func TestSearch_ScrollUp_AlbumSectionHeaderRemainsVisible(t *testing.T) {
 		},
 	}, false, nil)
 
-	// Navigate into the Albums section and then scroll down a bit.
-	for range 4 {
+	// Albums come first: go down to the track at the end, then back up to
+	// the first album (the row right after the Albums header).
+	for range 3 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	// Navigate back up to the first album (index just after the Albums header).
-	for range 2 {
+	if s.SelectedTrack() == nil {
+		t.Fatal("expected the track at the end of the list")
+	}
+	for range 3 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	}
-
+	if s.SelectedAlbum() == nil || s.SelectedAlbum().Title != "Album One" {
+		t.Fatal("expected the first album")
+	}
 	v := s.View()
 	if !strings.Contains(v, "Albums") {
 		t.Errorf("Albums header should be visible after scrolling back up, view: %q", v)
 	}
 }
 
-func TestSearch_ColorSeeding_PlaylistsWhenHeaderScrolledPast(t *testing.T) {
+func TestSearch_ColorSeeding_TracksWhenHeaderScrolledPast(t *testing.T) {
 	s := NewSearch(nil)
-	// Give enough height to see items but not the full list.
+	// Enough height to see items but not the full list.
 	s.SetSize(80, 6)
 	s.SetResults(&provider.SearchResult{
 		Tracks: []provider.Track{
@@ -793,29 +820,30 @@ func TestSearch_ColorSeeding_PlaylistsWhenHeaderScrolledPast(t *testing.T) {
 		},
 	}, false, nil)
 
-	// Navigate all the way down to the playlist.
-	for range 4 {
+	// Playlists come first.
+	if s.SelectedPlaylist() == nil {
+		t.Fatal("expected the playlist to be selected initially")
+	}
+	if v := s.View(); !strings.Contains(v, "My Playlist") {
+		t.Errorf("playlist name should be visible in the view, got: %q", v)
+	}
+
+	// Navigate all the way down to the last track; its section header has
+	// scrolled out of the viewport by then.
+	for range 3 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-
-	// The selected item must be the playlist.
-	if s.SelectedPlaylist() == nil {
-		t.Fatal("expected playlist to be selected after navigating down")
+	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "T3" {
+		t.Fatal("expected T3 to be selected after navigating down")
 	}
-
-	// View() must render without panic and contain the playlist name.
-	// (The colour-seeding fix ensures currentAccent is Playlists green,
-	// not the default Tracks amber, even when the Playlists header has
-	// scrolled out of the viewport.)
-	v := s.View()
-	if !strings.Contains(v, "My Playlist") {
-		t.Errorf("playlist name should be visible in the view, got: %q", v)
+	if v := s.View(); !strings.Contains(v, "T3") {
+		t.Errorf("T3 should be visible in the view, got: %q", v)
 	}
 }
 
-func TestSearch_ColorSeeding_AlbumsWhenHeaderScrolledPast(t *testing.T) {
+func TestSearch_ColorSeeding_TracksAfterAlbums(t *testing.T) {
 	s := NewSearch(nil)
-	s.SetSize(80, 4) // very tight: forces the Albums header to scroll past
+	s.SetSize(80, 4) // very tight: forces headers to scroll past
 	s.SetResults(&provider.SearchResult{
 		Tracks: []provider.Track{
 			{Title: "T1", CatalogID: "t1"},
@@ -827,19 +855,20 @@ func TestSearch_ColorSeeding_AlbumsWhenHeaderScrolledPast(t *testing.T) {
 		},
 	}, false, nil)
 
-	// Navigate to the album (past all tracks and their header).
-	for range 4 {
+	if s.SelectedAlbum() == nil {
+		t.Fatal("expected the album to be selected initially")
+	}
+	if v := s.View(); !strings.Contains(v, "Album Visible") {
+		t.Errorf("album title should be visible, got: %q", v)
+	}
+	for range 3 {
 		s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-
-	if s.SelectedAlbum() == nil {
-		t.Fatal("expected album to be selected")
+	if s.SelectedTrack() == nil || s.SelectedTrack().Title != "T3" {
+		t.Fatal("expected T3 after navigating past the albums")
 	}
-
-	// Must not panic and must contain the album title.
-	v := s.View()
-	if !strings.Contains(v, "Album Visible") {
-		t.Errorf("album title should be visible, got: %q", v)
+	if v := s.View(); !strings.Contains(v, "T3") {
+		t.Errorf("T3 should be visible, got: %q", v)
 	}
 }
 
@@ -856,22 +885,19 @@ func TestSearch_SelectedIndex_MixedSections(t *testing.T) {
 		},
 	}, false, nil)
 
-	// Item 0 = T1
-	if s.SelectedIndex() != 0 {
-		t.Errorf("initial SelectedIndex = %d, want 0", s.SelectedIndex())
+	// Sections run Playlists, Albums, Library, Tracks. Item 0 = A1.
+	if s.SelectedIndex() != 0 || s.SelectedAlbum() == nil {
+		t.Errorf("initial SelectedIndex = %d (album=%v), want 0 on the album", s.SelectedIndex(), s.SelectedAlbum() != nil)
 	}
-	// Item 1 = T2
+	// Item 1 = T1 (crosses the Tracks header)
 	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	if s.SelectedIndex() != 1 {
-		t.Errorf("after 1 down SelectedIndex = %d, want 1", s.SelectedIndex())
+	if s.SelectedIndex() != 1 || s.SelectedTrack() == nil || s.SelectedTrack().Title != "T1" {
+		t.Errorf("after 1 down SelectedIndex = %d, want 1 on T1", s.SelectedIndex())
 	}
-	// Item 2 = A1 (crosses the Albums header)
+	// Item 2 = T2
 	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
-	if s.SelectedIndex() != 2 {
-		t.Errorf("after 2 down SelectedIndex = %d, want 2", s.SelectedIndex())
-	}
-	if s.SelectedAlbum() == nil {
-		t.Error("item 2 should be an album")
+	if s.SelectedIndex() != 2 || s.SelectedTrack() == nil || s.SelectedTrack().Title != "T2" {
+		t.Errorf("after 2 down SelectedIndex = %d, want 2 on T2", s.SelectedIndex())
 	}
 }
 

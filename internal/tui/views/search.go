@@ -81,7 +81,7 @@ func rowLines(r searchRow) int {
 }
 
 // SearchModel holds search results rendered as a unified multi-section list
-// (Tracks, Albums, Playlists) with keyboard navigation.
+// (Playlists, Albums, Library, Tracks) with keyboard navigation.
 type SearchModel struct {
 	provider provider.Provider
 	results  *provider.SearchResult
@@ -124,30 +124,53 @@ func (m *SearchModel) SetState(tracks []provider.Track, loading bool, err error)
 	m.SetResults(result, loading, err)
 }
 
+// searchSectionCap is the most items shown per section. The panel is a
+// narrow column, so each section shows its best few matches.
+const searchSectionCap = 5
+
+// isLibraryTrack reports whether a search hit is the user's own library copy.
+func isLibraryTrack(t provider.Track) bool {
+	return strings.HasPrefix(t.ID, "i.")
+}
+
+// rebuildRows lays the results out as Playlists, Albums, Library (tracks the
+// user owns) and Tracks (catalog), each capped at searchSectionCap.
 func (m *SearchModel) rebuildRows() {
 	m.rows = nil
 	if m.results == nil {
 		return
 	}
-	if len(m.results.Tracks) > 0 {
-		m.rows = append(m.rows, searchRow{header: true, label: "Tracks"})
-		for i := range m.results.Tracks {
-			t := &m.results.Tracks[i]
+	if n := min(len(m.results.Playlists), searchSectionCap); n > 0 {
+		m.rows = append(m.rows, searchRow{header: true, label: "Playlists"})
+		for i := range n {
+			m.rows = append(m.rows, searchRow{playlist: &m.results.Playlists[i]})
+		}
+	}
+	if n := min(len(m.results.Albums), searchSectionCap); n > 0 {
+		m.rows = append(m.rows, searchRow{header: true, label: "Albums"})
+		for i := range n {
+			m.rows = append(m.rows, searchRow{album: &m.results.Albums[i]})
+		}
+	}
+	var library, catalog []*provider.Track
+	for i := range m.results.Tracks {
+		t := &m.results.Tracks[i]
+		if isLibraryTrack(*t) {
+			library = append(library, t)
+		} else {
+			catalog = append(catalog, t)
+		}
+	}
+	if n := min(len(library), searchSectionCap); n > 0 {
+		m.rows = append(m.rows, searchRow{header: true, label: "Library"})
+		for _, t := range library[:n] {
 			m.rows = append(m.rows, searchRow{track: t})
 		}
 	}
-	if len(m.results.Albums) > 0 {
-		m.rows = append(m.rows, searchRow{header: true, label: "Albums"})
-		for i := range m.results.Albums {
-			a := &m.results.Albums[i]
-			m.rows = append(m.rows, searchRow{album: a})
-		}
-	}
-	if len(m.results.Playlists) > 0 {
-		m.rows = append(m.rows, searchRow{header: true, label: "Playlists"})
-		for i := range m.results.Playlists {
-			p := &m.results.Playlists[i]
-			m.rows = append(m.rows, searchRow{playlist: p})
+	if n := min(len(catalog), searchSectionCap); n > 0 {
+		m.rows = append(m.rows, searchRow{header: true, label: "Tracks"})
+		for _, t := range catalog[:n] {
+			m.rows = append(m.rows, searchRow{track: t})
 		}
 	}
 }
@@ -291,6 +314,8 @@ func sectionColor(label string) color.Color {
 		return styles.ColorPrimary // violet  #C678DD
 	case "Playlists":
 		return styles.ColorSecondary // green  #98C379
+	case "Library":
+		return styles.ColorAccent // the user's own copies
 	default: // "Tracks"
 		return styles.ColorAccentWarm // warm amber
 	}
