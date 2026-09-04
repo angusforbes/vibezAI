@@ -727,8 +727,13 @@ func TestSearch_MoreLessStepsOfFive(t *testing.T) {
 		t.Fatalf("less again: %d shown, want 2", shown())
 	}
 	s.ShowLess("Albums")
-	if shown() != 0 || !strings.Contains(s.View(), "− less (none shown)") || !strings.Contains(s.View(), "+ 5 more") {
-		t.Fatalf("a section can fold to nothing: %d shown, view %q", shown(), s.View())
+	// Folded to nothing: header + "+ 5 more" only, no "less" row, and the
+	// highlight lands on the more row.
+	if len(s.rows) != 2 || strings.Contains(s.View(), "less") || !strings.Contains(s.View(), "+ 5 more") {
+		t.Fatalf("a folded section should show only its more row: rows=%d view %q", len(s.rows), s.View())
+	}
+	if sec, more, ok := s.SelectedToggle(); !ok || sec != "Albums" || !more {
+		t.Fatalf("highlight should move to the more row when the less row disappears, got %q %v %v", sec, more, ok)
 	}
 	s.ShowMore("Albums")
 	if shown() != 5 {

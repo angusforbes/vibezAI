@@ -192,16 +192,25 @@ func (m *SearchModel) adjustShown(section string, delta int) {
 	m.shown[section] = max(0, min(total, m.shownCount(section, total)+delta))
 	more := delta > 0
 	m.rebuildRows()
+	// Stay on the control that was used; when "less" folded the section to
+	// nothing that row is gone, so land on the section's "more" row instead.
+	target := -1
 	for i, r := range m.rows {
-		if r.toggle && r.label == section && r.more == more {
-			m.cursor = i
-			break
+		if r.toggle && r.label == section && (r.more == more || target < 0 && r.more) {
+			target = i
+			if r.more == more {
+				break
+			}
 		}
+	}
+	if target >= 0 {
+		m.cursor = target
 	}
 	m.ensureCursorVisible()
 }
 
-// sectionRows appends a header, the shown items and the two control rows.
+// sectionRows appends a header, the shown items and the control rows: "+ 5
+// more" always, "− 5 less" only while something is shown.
 func (m *SearchModel) sectionRows(label string, total int, item func(i int) searchRow) {
 	if total == 0 {
 		return
@@ -211,10 +220,10 @@ func (m *SearchModel) sectionRows(label string, total int, item func(i int) sear
 	for i := range n {
 		m.rows = append(m.rows, item(i))
 	}
-	m.rows = append(m.rows,
-		searchRow{toggle: true, label: label, more: true, step: min(searchSectionCap, total-n)},
-		searchRow{toggle: true, label: label, more: false, step: min(searchSectionCap, n)},
-	)
+	m.rows = append(m.rows, searchRow{toggle: true, label: label, more: true, step: min(searchSectionCap, total-n)})
+	if n > 0 {
+		m.rows = append(m.rows, searchRow{toggle: true, label: label, more: false, step: min(searchSectionCap, n)})
+	}
 }
 
 // searchSectionCap is how many items a section shows by default and the step
@@ -467,10 +476,8 @@ func (m *SearchModel) View() string {
 				label = fmt.Sprintf("+ %d more", row.step)
 			case row.more:
 				label = "+ more (all shown)"
-			case row.step > 0:
-				label = fmt.Sprintf("− %d less", row.step)
 			default:
-				label = "− less (none shown)"
+				label = fmt.Sprintf("− %d less", row.step)
 			}
 			ts := tagStyle
 			if row.step == 0 {
