@@ -265,6 +265,11 @@ Then set `"theme": "<name>"` in `config.json` and restart vibez.
 | `/` | Open search |
 | `l` | Toggle library panel |
 | `q` | Toggle queue panel |
+| `↑` / `↓` (`k` / `j`) | Highlight a queue entry in the main view without changing playback |
+| `space` / `enter` (with a highlighted entry) | Play the highlighted queue entry |
+| `d` / `x` (with a highlighted entry) | Remove the highlighted queue entry |
+| `K` / `J` (with a highlighted entry) | Move the highlighted queue entry up / down |
+| `esc` | Drop the highlight; the queue follows the playing track again |
 | `:q` / `ctrl+c` | Quit |
 
 ### Search (`/`)

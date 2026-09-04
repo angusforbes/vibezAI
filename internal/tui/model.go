@@ -305,6 +305,7 @@ type Model struct {
 	queueStatePath   string           // file the queue is saved to between runs ("" = off)
 	queueDirty       bool             // queue changed since it was last saved
 	queueResumeIdx   int              // restored queue: track to start from on first play, -1 = none
+	queueCursor      int              // highlighted mini-queue entry in the main view, -1 = follow playback
 
 	// Discovery mode
 	discovery discoveryMode
@@ -405,6 +406,7 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	m.library = &libraryPanel{m: views.NewLibrary(prov)}
 	m.queue = &queuePanel{m: views.NewQueue()}
 	m.queueStatePath = opts.QueueStatePath
+	m.queueCursor = noQueueCursor
 	m.lyricsP = &lyricsPanel{m: views.NewLyrics()}
 	m.lyricsClient = lyrics.NewClient()
 	m.feedP = &feedPanel{m: views.NewFeed()}
@@ -627,14 +629,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.lastLyricsTrackID = "" // stale; will fetch on panel open
 				}
 			}
-			// Auto-scroll mini-queue to keep the current track visible.
-			for i, t := range m.queueTracks {
-				if t.Title == s.Track.Title {
-					visibleRows := max(0, m.panelHeight()-2)
-					if visibleRows > 0 && (i < m.queueMiniOffset || i >= m.queueMiniOffset+visibleRows) {
-						m.queueMiniOffset = max(0, i-visibleRows/2)
+			// Auto-scroll mini-queue to keep the current track visible, unless the
+			// user is moving the queue cursor (see queue_nav.go).
+			if m.queueCursor < 0 {
+				for i, t := range m.queueTracks {
+					if t.Title == s.Track.Title {
+						visibleRows := max(0, m.panelHeight()-2)
+						if visibleRows > 0 && (i < m.queueMiniOffset || i >= m.queueMiniOffset+visibleRows) {
+							m.queueMiniOffset = max(0, i-visibleRows/2)
+						}
+						break
 					}
-					break
 				}
 			}
 		}
@@ -2003,48 +2008,23 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		switch k {
 		case "enter":
 			if idx, t := m.queue.SelectedTrack(); t != nil {
-				ids := m.queueIDs[idx:]
-				m.queueTracks = m.queueTracks[idx:]
-				m.queueIDs = ids
-				m.syncQueue()
-				m.appendLog(fmt.Sprintf("[queue] playing from position %d: %s — %s", idx+1, t.Artist, t.Title))
-				m.playerState.Loading = true
-				m.playerState.Playing = false
-				m.playerState.Position = 0
-				return m.playerCmd(func(p player.Player) error { return p.SetQueue(ids) })
+				return m.playQueueFrom(idx)
 			}
 		case "d":
-			if idx, t := m.queue.SelectedTrack(); idx >= 0 {
-				title := ""
-				if t != nil {
-					title = t.Artist + " — " + t.Title
-				}
-				m.queueTracks = append(m.queueTracks[:idx], m.queueTracks[idx+1:]...)
-				m.queueIDs = append(m.queueIDs[:idx], m.queueIDs[idx+1:]...)
-				m.syncQueue()
-				m.appendLog(fmt.Sprintf("[queue] removed #%d: %s", idx+1, title))
-				i := idx
-				return m.playerCmd(func(p player.Player) error { return p.RemoveFromQueue(i) })
+			if idx, _ := m.queue.SelectedTrack(); idx >= 0 {
+				return m.removeQueueAt(idx)
 			}
 		case "K", "shift+up", "ctrl+up":
 			if idx, _ := m.queue.SelectedTrack(); idx > 0 {
-				m.queueTracks[idx-1], m.queueTracks[idx] = m.queueTracks[idx], m.queueTracks[idx-1]
-				m.queueIDs[idx-1], m.queueIDs[idx] = m.queueIDs[idx], m.queueIDs[idx-1]
-				m.syncQueue()
-				m.queue.Select(idx - 1)
-				m.appendLog(fmt.Sprintf("[queue] moved #%d up", idx+1))
-				from, to := idx, idx-1
-				return m.playerCmd(func(p player.Player) error { return p.MoveInQueue(from, to) })
+				newIdx, cmd := m.moveQueueTrack(idx, -1)
+				m.queue.Select(newIdx)
+				return cmd
 			}
 		case "J", "shift+down", "ctrl+down":
 			if idx, _ := m.queue.SelectedTrack(); idx >= 0 && idx < len(m.queueTracks)-1 {
-				m.queueTracks[idx], m.queueTracks[idx+1] = m.queueTracks[idx+1], m.queueTracks[idx]
-				m.queueIDs[idx], m.queueIDs[idx+1] = m.queueIDs[idx+1], m.queueIDs[idx]
-				m.syncQueue()
-				m.queue.Select(idx + 1)
-				m.appendLog(fmt.Sprintf("[queue] moved #%d down", idx+1))
-				from, to := idx, idx+1
-				return m.playerCmd(func(p player.Player) error { return p.MoveInQueue(from, to) })
+				newIdx, cmd := m.moveQueueTrack(idx, 1)
+				m.queue.Select(newIdx)
+				return cmd
 			}
 		case "c":
 			m.appendLog("[queue] cleared")
@@ -2084,6 +2064,14 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 			return nil
 		case "left", "h", "right", "l", "up", "k", "down", "j", "0", "r":
 			return m.eqP.Update(msg)
+		}
+	}
+
+	// Main view with a highlighted queue entry: space/enter start it, d/x/delete
+	// remove it, K/J move it (see queue_nav.go). Everything else falls through.
+	if m.activePanel < 0 && !m.debugView {
+		if cmd, handled := m.handleQueueCursorKey(k); handled {
+			return cmd
 		}
 	}
 
@@ -2247,25 +2235,27 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 
 	case "j", "down":
 		m.lastKey = ""
-		if len(m.queueTracks) > 0 {
-			m.queueMiniOffset++
-		}
+		m.moveQueueCursor(1)
 
 	case "k", "up":
 		m.lastKey = ""
-		if m.queueMiniOffset > 0 {
-			m.queueMiniOffset--
-		}
+		m.moveQueueCursor(-1)
+
+	case "esc":
+		m.lastKey = ""
+		m.clearQueueCursor()
 
 	case "g":
 		if m.lastKey == "g" {
 			m.lastKey = ""
+			m.setQueueCursor(0)
 		} else {
 			m.lastKey = "g"
 		}
 
 	case "G":
 		m.lastKey = ""
+		m.setQueueCursor(len(m.queueTracks) - 1)
 
 	case "enter":
 		m.lastKey = ""
@@ -3406,14 +3396,19 @@ func (m *Model) queuePanelLines(w, h int) []string {
 	for i, t := range tracks {
 		idx := fmt.Sprintf("%*d. ", indexW, i+1)
 		label := t.Artist + " — " + t.Title
-		if t.Title == currentTitle {
-			numStr := styles.ControlActive.Render(idx)
-			line := truncateStr(label, w-2-indexW-2)
-			trackLines = append(trackLines, numStr+styles.ControlActive.Render("▶ "+line))
-		} else {
-			numStr := styles.QueueItemMuted.Render(idx)
-			line := truncateStr(label, w-2-indexW-2)
-			trackLines = append(trackLines, numStr+styles.QueueItem.Render(line))
+		line := truncateStr(label, w-2-indexW-2)
+		switch {
+		case i == m.queueCursor:
+			// Highlighted entry: space/enter plays it, d removes it, K/J move it.
+			marker := "› "
+			if t.Title == currentTitle {
+				marker = "▶ "
+			}
+			trackLines = append(trackLines, styles.ControlActive.Render(idx)+styles.Selected.Render(marker+line))
+		case t.Title == currentTitle:
+			trackLines = append(trackLines, styles.ControlActive.Render(idx)+styles.ControlActive.Render("▶ "+line))
+		default:
+			trackLines = append(trackLines, styles.QueueItemMuted.Render(idx)+styles.QueueItem.Render(line))
 		}
 	}
 	if len(trackLines) == 0 {
@@ -3609,9 +3604,23 @@ func (m *Model) statusPlayLines(w int) []string {
 		radioHint = accent.Render("R") + styles.Playing.Render(" 📻 radio")
 	}
 
+	if m.activePanel < 0 && m.queueCursorActive() {
+		// A queue entry is highlighted in the main view.
+		parts := []string{
+			accent.Render("↑/↓") + muted.Render(" pick"),
+			accent.Render("spc/enter") + muted.Render(" play it"),
+			accent.Render("d") + muted.Render(" remove"),
+			accent.Render("K/J") + muted.Render(" move"),
+			accent.Render("gg/G") + muted.Render(" top/end"),
+			accent.Render("esc") + muted.Render(" done"),
+		}
+		return wrapFit(parts, dot, w)
+	}
+
 	parts := []string{
 		accent.Render("spc") + muted.Render(" play/pause"),
 		accent.Render("n/p") + muted.Render(" next/prev"),
+		accent.Render("↑/↓") + muted.Render(" queue"),
 		accent.Render("←/→") + muted.Render(" seek ±10s"),
 		accent.Render("f") + muted.Render(" fav"),
 		accent.Render("s") + muted.Render(" shuffle"),

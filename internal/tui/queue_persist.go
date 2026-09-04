@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/simone-vibes/vibez/internal/player"
 	"github.com/simone-vibes/vibez/internal/provider"
 	"github.com/simone-vibes/vibez/internal/queuestate"
 	"github.com/simone-vibes/vibez/internal/tui/views"
@@ -47,6 +46,7 @@ func (m *Model) restoreQueue() {
 func (m *Model) syncQueue() {
 	m.queue.SetTracks(m.queueTracks)
 	m.queueDirty = true
+	m.clampQueueCursor()
 }
 
 // flushQueueState saves the queue if it changed since the last save.
@@ -88,17 +88,8 @@ func (m *Model) startRestoredQueue() tea.Cmd {
 	if idx < 0 || idx >= len(m.queueIDs) {
 		idx = 0
 	}
-	m.queueResumeIdx = -1
-	ids := m.queueIDs[idx:]
-	m.queueTracks = m.queueTracks[idx:]
-	m.queueIDs = ids
-	m.syncQueue()
-	t := m.queueTracks[0]
-	m.appendLog(fmt.Sprintf("[queue] resuming the restored queue at %d: %s — %s", idx+1, t.Artist, t.Title))
-	m.playerState.Loading = true
-	m.playerState.Playing = false
-	m.playerState.Position = 0
-	return m.playerCmd(func(p player.Player) error { return p.SetQueue(ids) })
+	m.appendLog(fmt.Sprintf("[queue] resuming the restored queue at position %d", idx+1))
+	return m.playQueueFrom(idx)
 }
 
 // trackChanged reports whether the now-playing track differs between two states.

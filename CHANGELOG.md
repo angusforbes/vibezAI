@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Navigate the queue from the main view** — the mini-queue under Now Playing has a cursor: `↑`/`↓` (or `k`/`j`) highlight an entry without touching playback, `space` or `enter` starts the highlighted track (the entries above it are dropped, as in the queue panel), `d` (also `x`/`delete`) removes it, `K`/`J` move it, `gg`/`G` jump to the ends and `esc` drops the highlight so the list follows the playing track again. `n`/`p` still skip immediately. `d` without a highlighted entry keeps toggling discovery mode. The dedicated queue panel (`q`) is unchanged and shares the same code paths.
 - **The queue survives quitting vibez** — the playback queue is saved to `~/.config/vibez/queue.json` (next to `config.json`, owner-only permissions, written atomically) whenever it changes and again on exit, and is shown again on the next launch without starting playback. Press `space` to resume from the track that was playing, or `enter` on any queue entry to start there. The engine's queue is only filled on that first play, so a relaunch never plays by itself. Radio and discovery modes are session state and are not restored.
 
 ## [0.7.0] — 2026-08-29
