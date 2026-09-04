@@ -3893,7 +3893,7 @@ func TestIdleBlock_CreditsOriginalAndUpdate(t *testing.T) {
 	}
 }
 
-func TestHandleSearchKey_SlashTogglesVibesMode(t *testing.T) {
+func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.provider = &mockProvider{}
 	m.mode = modeSearch
@@ -3901,8 +3901,16 @@ func TestHandleSearchKey_SlashTogglesVibesMode(t *testing.T) {
 	if m.searchVibe {
 		t.Fatal("regular search is the default")
 	}
-	if cmd := m.handleSearchKey("/", tea.KeyPressMsg{Code: '/', Text: "/"}); cmd != nil || !m.searchVibe {
-		t.Fatalf("/ should switch to vibes mode without searching (cmd=%v vibe=%v)", cmd != nil, m.searchVibe)
+	// A plain slash is text: "AC/DC" must stay searchable.
+	for _, r := range "AC/DC" {
+		m.handleSearchKey(string(r), tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	if m.searchQuery != "AC/DC" || m.searchVibe {
+		t.Fatalf("typing a slash must not toggle anything: query=%q vibe=%v", m.searchQuery, m.searchVibe)
+	}
+	m.searchQuery, m.searchCursor = "", 0
+	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil || !m.searchVibe {
+		t.Fatalf("ctrl+/ should switch to vibes mode without searching (cmd=%v vibe=%v)", cmd != nil, m.searchVibe)
 	}
 	lines := m.searchFindLines(40, 6)
 	if !strings.Contains(lines[2], "V") || strings.Contains(lines[2], "/") {
@@ -3922,8 +3930,8 @@ func TestHandleSearchKey_SlashTogglesVibesMode(t *testing.T) {
 		t.Fatalf("footer should announce vibes mode and Enter = find songs: %q", footer)
 	}
 	// Back to regular search: the text is looked up the regular way.
-	if cmd := m.handleSearchKey("/", tea.KeyPressMsg{Code: '/', Text: "/"}); cmd == nil || m.searchVibe {
-		t.Fatalf("/ again should return to regular search and look the text up (cmd=%v vibe=%v)", cmd != nil, m.searchVibe)
+	if cmd := m.handleSearchKey("ctrl+_", tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}); cmd == nil || m.searchVibe {
+		t.Fatalf("ctrl+/ again (legacy ctrl+_ spelling) should return to regular search and look the text up (cmd=%v vibe=%v)", cmd != nil, m.searchVibe)
 	}
 	if lines := m.searchFindLines(40, 6); !strings.Contains(lines[2], "/") {
 		t.Fatalf("regular mode shows the slash prompt: %q", lines[2])
