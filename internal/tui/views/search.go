@@ -73,6 +73,7 @@ type searchRow struct {
 	list     *SavedList // saved-lists source: the list this header stands for
 	group    bool       // feed source: a recommendation group's header
 	child    bool       // a track listed under its opened album or playlist (one indented line)
+	parent   string     // child rows: selKey of the album or playlist they belong to
 }
 
 // isItem reports whether this row is selectable: an item, a more/less toggle
@@ -745,9 +746,34 @@ func (m *SearchModel) childRows(parent searchRow) []searchRow {
 	}
 	out := make([]searchRow, 0, len(exp.tracks))
 	for i := range exp.tracks {
-		out = append(out, searchRow{track: &exp.tracks[i], child: true})
+		out = append(out, searchRow{track: &exp.tracks[i], child: true, parent: key})
 	}
 	return out
+}
+
+// childKeys lists the selection keys of a collection's loaded tracks.
+func (m *SearchModel) childKeys(collectionKey string) []string {
+	exp := m.expansions[collectionKey]
+	if exp == nil {
+		return nil
+	}
+	keys := make([]string, 0, len(exp.tracks))
+	for _, t := range exp.tracks {
+		keys = append(keys, PlaybackID(t))
+	}
+	return keys
+}
+
+// setSelected marks or unmarks a key.
+func (m *SearchModel) setSelected(key string, on bool) {
+	if on {
+		if m.selected == nil {
+			m.selected = map[string]bool{}
+		}
+		m.selected[key] = true
+		return
+	}
+	delete(m.selected, key)
 }
 
 // ToggleCollection opens the highlighted album or playlist so its tracks are
@@ -786,6 +812,11 @@ func (m *SearchModel) SetCollectionTracks(key string, tracks []provider.Track, e
 		return // the results changed meanwhile
 	}
 	m.expansions[key] = &expansion{tracks: tracks, err: err}
+	if m.selected[key] { // a marked collection shows all of its tracks marked
+		for _, k := range m.childKeys(key) {
+			m.setSelected(k, true)
+		}
+	}
 	cur := ""
 	if m.cursor >= 0 && m.cursor < len(m.rows) {
 		cur = m.rows[m.cursor].key()
@@ -800,8 +831,8 @@ func (m *SearchModel) selectedExpansionTracks(seen map[string]bool) []SelectedIt
 	var out []SelectedItem
 	for i := range m.rows {
 		r := m.rows[i]
-		if !r.child || r.track == nil {
-			continue
+		if !r.child || r.track == nil || m.selected[r.parent] {
+			continue // a marked collection already brings all of its tracks
 		}
 		key := PlaybackID(*r.track)
 		if m.selected[key] && !seen[key] {
@@ -1019,19 +1050,23 @@ func (m *SearchModel) ToggleSelected() {
 	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return
 	}
-	key := selKey(m.rows[m.cursor])
+	row := m.rows[m.cursor]
+	key := selKey(row)
 	if key == "" {
 		return
 	}
 	m.stash = nil
-	if m.selected[key] {
-		delete(m.selected, key)
-		return
+	on := !m.selected[key]
+	m.setSelected(key, on)
+	// An album or playlist carries its listed tracks with it, so what is
+	// marked on screen is exactly what would be added.
+	for _, k := range m.childKeys(key) {
+		m.setSelected(k, on)
 	}
-	if m.selected == nil {
-		m.selected = map[string]bool{}
+	// Dropping one track of a marked collection means "not the whole thing".
+	if row.child && !on && row.parent != "" {
+		delete(m.selected, row.parent)
 	}
-	m.selected[key] = true
 }
 
 // SelectAndMove selects the highlighted item, moves the highlight to the next
@@ -1059,10 +1094,10 @@ func (m *SearchModel) pick(row int) {
 		return
 	}
 	m.stash = nil
-	if m.selected == nil {
-		m.selected = map[string]bool{}
+	m.setSelected(key, true)
+	for _, k := range m.childKeys(key) {
+		m.setSelected(k, true)
 	}
-	m.selected[key] = true
 }
 
 // SelectedItems returns the multi-selection in result order — playlists,

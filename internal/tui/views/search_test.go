@@ -1368,12 +1368,12 @@ func TestSearch_OpenAlbumListsItsTracksAsSelectableChildren(t *testing.T) {
 	if len(items) != 1 || items[0].Track == nil || items[0].Track.ID != "k2" {
 		t.Fatalf("a marked child is its own item: %+v", items)
 	}
-	// Marking the album as well: the album comes first, the child follows.
+	// Marking the album as well: it covers its tracks, so the add is the album alone.
 	s.cursor = 1
 	s.ToggleSelected()
 	items = s.SelectedItems()
-	if len(items) != 2 || items[0].Album == nil || items[1].Track == nil {
-		t.Fatalf("album then its marked track: %+v", items)
+	if len(items) != 1 || items[0].Album == nil || !s.IsSelected(kids[0]) || !s.IsSelected(kids[2]) {
+		t.Fatalf("a marked album stands for all of its (now marked) tracks: %+v", items)
 	}
 	// Fold: the children vanish; open again: no fetch, tracks kept.
 	if _, fetch := s.ToggleCollection(); fetch {
@@ -1393,5 +1393,55 @@ func TestSearch_OpenAlbumListsItsTracksAsSelectableChildren(t *testing.T) {
 		if r.child {
 			t.Fatal("a new result set starts with everything folded")
 		}
+	}
+}
+
+func TestSearch_MarkingAnOpenCollectionMarksItsTracks(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 60)
+	s.SetResults(&provider.SearchResult{Albums: []provider.Album{{ID: "a1", Title: "LP", Artist: "Band"}}}, false, nil)
+	s.cursor = 1
+	s.ToggleCollection()
+	kids := []provider.Track{{ID: "k1", CatalogID: "k1", Title: "One", Artist: "Band"}, {ID: "k2", CatalogID: "k2", Title: "Two", Artist: "Band"}}
+	s.SetCollectionTracks("album:a1", kids, nil)
+	// Mark the album: both children show as marked, the add is the album alone.
+	s.ToggleSelected()
+	if !s.IsSelected(kids[0]) || !s.IsSelected(kids[1]) || strings.Count(ansi.Strip(s.View()), "✓") != 2 {
+		t.Fatalf("marking the album should mark its listed tracks (✓ on both children): %q", ansi.Strip(s.View()))
+	}
+	if items := s.SelectedItems(); len(items) != 1 || items[0].Album == nil {
+		t.Fatalf("with the album marked the add is the album alone, got %+v", items)
+	}
+	// Dropping one track: the album is no longer "the whole thing", the other track stays.
+	s.cursor = 3 // second child
+	s.ToggleSelected()
+	if s.selected["album:a1"] || s.IsSelected(kids[1]) || !s.IsSelected(kids[0]) {
+		t.Fatalf("dropping a child unmarks the album and keeps the other child: %v", s.selected)
+	}
+	if items := s.SelectedItems(); len(items) != 1 || items[0].Track == nil || items[0].Track.ID != "k1" {
+		t.Fatalf("the add is now the remaining track, got %+v", items)
+	}
+	// Unmarking the album unmarks its tracks too.
+	s.cursor = 1
+	s.ToggleSelected() // marks album + both children again
+	s.ToggleSelected() // and off
+	if s.SelectionCount() != 0 {
+		t.Fatalf("unmarking the album clears its tracks, left %v", s.selected)
+	}
+	// A collection marked while folded shows its tracks marked once opened.
+	s.SetResults(&provider.SearchResult{Albums: []provider.Album{{ID: "a2", Title: "LP2", Artist: "Band"}}}, false, nil)
+	s.cursor = 1
+	s.ToggleSelected()
+	s.ToggleCollection()
+	s.SetCollectionTracks("album:a2", kids, nil)
+	if !s.IsSelected(kids[0]) || !s.IsSelected(kids[1]) {
+		t.Fatal("tracks arriving for a marked collection come in marked")
+	}
+	// Sweeping over an open collection brings its tracks along.
+	s.ClearSelection()
+	s.cursor = 0       // header
+	s.SelectAndMove(1) // lands on the album, marks it (and its children)
+	if !s.IsSelected(kids[0]) || !s.selected["album:a2"] {
+		t.Fatalf("a swept collection marks its tracks too: %v", s.selected)
 	}
 }
