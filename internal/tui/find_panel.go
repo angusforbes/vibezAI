@@ -32,14 +32,18 @@ func (m *Model) findLines(w, h int) []string {
 
 // findHeader is the column title, underlined like the Queue's and bold while
 // Search has the keys, followed by the mode the way the Queue shows its track
-// count: "Apple Music" (plain search) or "Claude Code" (vibes lookups).
+// count: "Apple Music" (plain search), "Claude Code" (vibes lookups) or
+// "Saved lists" (the track lists kept with :save).
 //
 // While a lookup is in flight the mode text is the busy indicator: its colours
 // run through the glow palette until the results land.
 func (m *Model) findHeader() string {
 	mode := "Apple Music"
-	if m.searchVibe {
+	switch m.searchSrc {
+	case searchClaude:
 		mode = "Claude Code"
+	case searchSaved:
+		mode = "Saved lists"
 	}
 	label := styles.QueueItemMuted.Render("  " + mode)
 	if m.search.Loading() {
@@ -54,8 +58,11 @@ func (m *Model) searchFindLines(w, h int) []string {
 	textStyle := lipgloss.NewStyle().Foreground(styles.ColorFg)
 
 	glyph := "AM" // Apple Music's own search
-	if m.searchVibe {
+	switch m.searchSrc {
+	case searchClaude:
 		glyph = "CC" // Claude Code plans these lookups
+	case searchSaved:
+		glyph = "SV" // the saved track lists
 	}
 	// The query wraps onto further rows instead of running off the right
 	// edge; continuation rows are indented under the text. At most half the
@@ -78,6 +85,9 @@ func (m *Model) searchFindLines(w, h int) []string {
 	listView := m.search.View()
 	if m.search.Loading() {
 		listView = "" // the animated mode text in the header says it all
+	}
+	if listView == "" && m.searchSrc == searchSaved {
+		listView = "  " + muted.Render("no saved lists yet; :save makes one")
 	}
 	if listView == "" && !m.search.Loading() && m.searchQuery != "" {
 		listView = "  " + muted.Render("no results")

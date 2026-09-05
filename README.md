@@ -28,7 +28,7 @@ vibezAI is a keyboard-driven Apple Music player for the terminal. Full tracks st
 </p>
 
 - **Tracks** (left) is the one list of what plays. It survives restarts, you move through it in place, and nothing you do in the right column ever replaces it.
-- **Search** (right) has two prompts. `AM` searches Apple Music as you type: Playlists, Albums, Library (your own copies) and Tracks, five per section, with `+ 5 more` / `− 5 less` rows and headers that fold. `CC` sends a plain-English description to Claude Code, which plans the search and ranks the results.
+- **Search** (right) has three sources, and `Ctrl+/` cycles them. `AM` searches Apple Music as you type: Playlists, Albums, Library (your own copies) and Tracks, five per section, with `+ 5 more` / `− 5 less` rows and headers that fold. `CC` sends a plain-English description to Claude Code, which plans the search and ranks the results. `SV` lists the track lists kept with `:save`, the previous session's Tracks first, each a header that opens to all of its songs; add the whole list from its header or pick songs from it.
 - **Tab** moves the keys between the two columns. The column that has them shows its title in bold; the mode text next to "Search" glows while a lookup is running.
 - Everything that works in a column is listed once, in the footer.
 
@@ -94,9 +94,9 @@ Results, songs as well as whole albums and playlists, can be marked with `Ctrl+�
 
 | Key | Action |
 |-----|--------|
-| *(type)* | `AM`: search as you type. `CC`: edit the description |
-| `ctrl+/` | Switch between the `AM` and `CC` prompts; the text already typed is looked up in the new mode |
-| `enter` | Open or fold a section header, grow or shrink a section by five; in `CC`, look up a new description |
+| *(type)* | `AM`: search as you type. `CC`: edit the description. `SV`: nothing to type |
+| `ctrl+/` | Cycle the source: `AM` → `CC` → `SV` (saved lists) → `AM`; the text already typed is looked up in the new mode |
+| `enter` | Open or fold a section header (a saved list opens whole), grow or shrink a section by five; in `CC`, look up a new description |
 | `↑` / `↓` | Move the highlight |
 | `ctrl+↑` / `ctrl+↓` | Sweep-select: mark the highlighted item and everything passed over |
 | `ctrl+→` | Toggle the highlighted item in or out of the selection |
@@ -115,8 +115,7 @@ Typing `:` keeps both columns on screen and swaps the footer for the command lis
 |---------|-------------|
 | `:model <fable\|sonnet\|haiku\|default\|id>` | Model Claude Code uses for `CC` lookups; bare `:model` shows the current one |
 | `:effort <low\|medium\|high\|xhigh\|max\|default>` | Effort for those lookups |
-| `:save [name]` | Save Tracks as a named list in `~/.config/vibez/tracklists/`. Without a name the list is dated and named after its songs by Claude Code (from the artists and genres when the CLI is not there) |
-| `:load [name]` | Replace Tracks with a saved list. Inside `:load`, `space` steps through the saved lists, the previous session's Tracks (`last session`) first |
+| `:save [name]` | Save Tracks as a named list in `~/.config/vibez/tracklists/`; the lists appear in Search under `SV`. Without a name the list is dated and named after its songs by Claude Code (from the artists and genres when the CLI is not there) |
 | `:quality <high\|standard\|256\|64>` | AAC bitrate |
 | `:debug-logs` | Toggle the debug log, where Claude's terms and rankings are recorded |
 | `:q` / `:quit` | Quit |
@@ -165,7 +164,7 @@ vibezAI started from vibez 0.7.0. The engines, themes, equalizer, discovery and 
 | Area | vibez 0.7.0 | vibezAI |
 |------|-------------|---------|
 | Layout | Queue with a separate Queue panel, Library panel, Vibe panel and a header row | Two columns, Tracks and Search, and nothing else on screen |
-| Queue | In memory only | Tracks persist to `queue.json`; navigated in place with `↑/↓`, `enter`, `d`, `D`, `K/J`; never replaced by a search; `:save` / `:load` keep named lists |
+| Queue | In memory only | Tracks persist to `queue.json`; navigated in place with `↑/↓`, `enter`, `d`, `D`, `K/J`; never replaced by a search; `:save` keeps named lists that Search offers under `SV` |
 | Search | Single flat result list, `enter` plays and replaces the queue | Sections (Playlists, Albums, Library, Tracks) with `+ 5 more` / `− 5 less`, foldable headers, paging through Apple's results, duplicates never added |
 | Vibe mode | `v` opens a prompt; a keyword table maps words to genres and dumps 15 shuffled songs into the queue | `CC` prompt inside Search; Claude Code plans the terms and ranks a pool of 40 candidates; results shown as a section headed by the model, nothing added until you say so |
 | Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+↑/↓` and `ctrl+→`, albums and playlists included |

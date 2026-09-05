@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/simone-vibes/vibez/internal/provider"
 	"github.com/simone-vibes/vibez/internal/queuestate"
@@ -31,6 +32,18 @@ func fillTracks(m *Model) {
 		m.queueIDs[i] = views.PlaybackID(tr)
 	}
 	m.syncQueue()
+}
+
+// writeList puts a list on disk directly, leaving the model's Tracks alone.
+func writeList(t *testing.T, dir, name string, tracks []provider.Track) {
+	t.Helper()
+	if err := queuestate.Save(filepath.Join(dir, "tracklists", name+".json"), queuestate.FromTracks(tracks, -1)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func ctrlSlash(m *Model) tea.Cmd {
+	return m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl})
 }
 
 func TestSaveTrackList_WritesANamedListNextToQueueJSON(t *testing.T) {
@@ -59,79 +72,14 @@ func TestSaveTrackList_WritesANamedListNextToQueueJSON(t *testing.T) {
 	if !strings.Contains(m.errMsg, "can't") {
 		t.Fatalf("a name that leaves the directory is refused: %q", m.errMsg)
 	}
-}
-
-func TestLoadTrackList_IdleEngineBehavesLikeTheLaunchRestore(t *testing.T) {
-	dir := t.TempDir()
-	m, _ := newListModel(t, dir)
-	fillTracks(m)
-	_ = m.executeCommand("save mix")
-
-	m2, mock := newListModel(t, dir) // fresh model, nothing in the engine
-	_ = m2.executeCommand("load mix")
-	if len(m2.queueTracks) != 3 || len(m2.queueIDs) != 3 || m2.queueIDs[1] != "i.lib" {
-		t.Fatalf("Tracks is replaced by the list: %v", m2.queueIDs)
+	if _, err := os.Stat(filepath.Join(dir, "tracklists", "last session.json")); err == nil {
+		t.Fatal("no previous session, so no last-session list")
 	}
-	if !strings.HasPrefix(m2.errMsg, "✓") {
-		t.Fatalf("load confirms: %q", m2.errMsg)
-	}
-	if mock.setQueueIDs != nil || len(mock.syncCalls) != 0 || mock.playCalled {
-		t.Fatalf("loading into an idle engine must not touch the player: %+v", mock)
-	}
-	if !m2.queueDirty {
-		t.Fatal("the loaded list becomes the queue that queue.json remembers")
-	}
-	if m2.queueCursor != 0 || m2.queueResumeIdx != 0 {
-		t.Fatalf("highlight and resume point on the list's first track, got cursor %d resume %d", m2.queueCursor, m2.queueResumeIdx)
-	}
-	// The first play hands the list to the engine, like a restored queue.
-	if cmd := m2.togglePlayPause(); cmd != nil {
-		_ = cmd()
-	}
-	if got := mock.setQueueAtIDs; len(got) != 3 || got[0] != "100" {
-		t.Fatalf("SetQueueAt ids = %v", got)
-	}
-}
-
-func TestLoadTrackList_WhilePlayingSwitchesToTheList(t *testing.T) {
-	dir := t.TempDir()
-	m, mock := newListModel(t, dir)
-	fillTracks(m)
-	_ = m.executeCommand("save mix")
-	playing := provider.Track{ID: "999", Title: "Other"}
-	m.playerState.Track = &playing
-	m.playerState.Playing = true
-	cmd := m.executeCommand("load mix")
-	if cmd == nil {
-		t.Fatal("loading over a playing track hands the list to the engine")
-	}
-	_ = cmd()
-	if len(mock.syncCalls) != 1 || len(mock.syncCalls[0].IDs) != 3 || mock.syncCalls[0].Play != "100" {
-		t.Fatalf("SyncQueue with the list, starting its first track: %+v", mock.syncCalls)
-	}
-	if m.queueResumeIdx != noQueueCursor {
-		t.Fatalf("the engine holds the queue now, resume idx = %d", m.queueResumeIdx)
-	}
-}
-
-func TestLoadTrackList_NamesTheListsAndReportsUnknownOnes(t *testing.T) {
-	dir := t.TempDir()
-	m, _ := newListModel(t, dir)
-	_ = m.executeCommand("load")
-	if !strings.Contains(m.errMsg, "no saved lists") {
-		t.Fatalf("a bare :load with nothing saved: %q", m.errMsg)
-	}
-	fillTracks(m)
-	_ = m.executeCommand("save b side")
-	time.Sleep(20 * time.Millisecond) // distinct mtimes: the newest save comes first
-	_ = m.executeCommand("save a side")
-	_ = m.executeCommand("load")
-	if !strings.Contains(m.errMsg, "saved lists: a side, b side") {
-		t.Fatalf("a bare :load names the lists, newest first: %q", m.errMsg)
-	}
-	_ = m.executeCommand("load nope")
-	if !strings.Contains(m.errMsg, `no track list "nope"`) || !strings.Contains(m.errMsg, "a side") {
-		t.Fatalf("an unknown name lists what exists: %q", m.errMsg)
+	// The order the SV source shows: newest save first.
+	time.Sleep(20 * time.Millisecond)
+	_ = m.executeCommand("save newer")
+	if got := m.savedTrackLists(); len(got) != 2 || got[0] != "newer" || got[1] != "road trip" {
+		t.Fatalf("newest first: %v", got)
 	}
 }
 
@@ -148,13 +96,11 @@ func TestLastSession_IsAListAtLaunchAndReserved(t *testing.T) {
 	if !strings.Contains(m.errMsg, "reserved") {
 		t.Fatalf("the name is reserved: %q", m.errMsg)
 	}
-	// After something else replaced Tracks, it comes back like any list, at
-	// its saved position.
-	m.queueTracks, m.queueIDs = nil, nil
-	m.syncQueue()
-	_ = m.executeCommand("load last session")
-	if len(m.queueTracks) != 3 || m.queueResumeIdx != 1 || m.queueCursor != 1 {
-		t.Fatalf("last session loads with its saved position: %d tracks, resume %d, cursor %d", len(m.queueTracks), m.queueResumeIdx, m.queueCursor)
+	// It is the first list the SV source shows, even after newer saves.
+	_ = m.executeCommand("save newer")
+	m.setSearchSource(searchSaved)
+	if l := m.search.SelectedSavedList(); l == nil || l.Name != lastSessionList || len(l.Tracks) != 3 {
+		t.Fatalf("last session comes first in SV, got %+v", l)
 	}
 	// A launch with nothing to restore drops the stale list.
 	m2, _ := newListModel(t, t.TempDir())
@@ -163,39 +109,104 @@ func TestLastSession_IsAListAtLaunchAndReserved(t *testing.T) {
 	}
 }
 
-func TestCycleLoadName_SpaceStepsThroughTheLists(t *testing.T) {
+func TestSavedSource_CtrlSlashCyclesThroughIt(t *testing.T) {
 	dir := t.TempDir()
 	m, _ := newListModel(t, dir)
+	writeList(t, dir, "mix", persistTracks())
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	ctrlSlash(m)
+	if m.searchSrc != searchClaude {
+		t.Fatalf("AM → CC first, got %v", m.searchSrc)
+	}
+	if cmd := ctrlSlash(m); cmd != nil || m.searchSrc != searchSaved || m.search != m.searchSV {
+		t.Fatalf("CC → saved lists, nothing looked up (cmd=%v src=%v)", cmd != nil, m.searchSrc)
+	}
+	lines := m.searchFindLines(60, 12)
+	joined := ansi.Strip(strings.Join(lines, "\n"))
+	if !strings.Contains(joined, "Saved lists") || !strings.Contains(lines[2], "SV") {
+		t.Fatalf("the SV source names itself in the header and the prompt:\n%s", joined)
+	}
+	if !strings.Contains(joined, "mix  ·  3 tracks") || strings.Contains(joined, "One") {
+		t.Fatalf("the lists show as folded headers with their size:\n%s", joined)
+	}
+	footer := ansi.Strip(strings.Join(m.statusLines(200), " "))
+	if !strings.Contains(footer, "SV ") || !strings.Contains(footer, "^/ apple music") {
+		t.Fatalf("the footer shows the SV prompt and where ^/ goes next: %q", footer)
+	}
+	ctrlSlash(m)
+	if m.searchSrc != searchApple || m.search != m.searchAM {
+		t.Fatalf("saved lists → AM, got %v", m.searchSrc)
+	}
+	// With nothing saved the source says so.
+	m3, _ := newListModel(t, t.TempDir())
+	m3.mode = modeSearch
+	m3.search.SetSize(60, 12)
+	m3.setSearchSource(searchSaved)
+	if v := ansi.Strip(strings.Join(m3.searchFindLines(60, 12), "\n")); !strings.Contains(v, "no saved lists yet") {
+		t.Fatalf("an empty SV source explains itself:\n%s", v)
+	}
+}
+
+func TestSavedSource_AddsASongOrTheWholeList(t *testing.T) {
+	dir := t.TempDir()
+	m, _ := newListModel(t, dir)
+	writeList(t, dir, "mix", persistTracks())
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.setSearchSource(searchSaved)
+	if l := m.search.SelectedSavedList(); l == nil || l.Name != "mix" {
+		t.Fatalf("the highlight starts on the first list's header, got %+v", l)
+	}
+	// Enter opens the list whole; the first song is one row down.
+	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	if v := m.search.View(); !strings.Contains(v, "One") || !strings.Contains(v, "Three") || strings.Contains(v, "more") {
+		t.Fatalf("enter opens all songs, no +5 more rows: %q", v)
+	}
+	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	if tr := m.search.SelectedTrack(); tr == nil || tr.Title != "One" {
+		t.Fatalf("the first song is highlighted, got %+v", tr)
+	}
+	if cmd := m.addSelection(false); cmd != nil {
+		_ = cmd()
+	}
+	if len(m.queueTracks) != 1 || m.queueTracks[0].Title != "One" {
+		t.Fatalf("one song added to Tracks: %+v", m.queueTracks)
+	}
+	// Back on the header, ^, adds the whole list; the song already there is not doubled.
+	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})
+	if cmd := m.addSelection(false); cmd != nil {
+		_ = cmd()
+	}
+	if len(m.queueTracks) != 3 {
+		t.Fatalf("the whole list is in Tracks, once: %+v", m.queueTracks)
+	}
+	// ctrl+→ marks the header: the whole list goes with the selection.
+	m.search.ToggleSelected()
+	items := m.search.SelectedItems()
+	if len(items) != 1 || items[0].List == nil || items[0].List.Name != "mix" {
+		t.Fatalf("a marked header stands for the whole list: %+v", items)
+	}
+	if v := m.search.View(); !strings.Contains(v, "▶ ") {
+		t.Fatalf("the header stays highlighted: %q", v)
+	}
+	// Enter again folds it back to the header.
+	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	if v := m.search.View(); strings.Contains(v, "One") {
+		t.Fatalf("enter folds the list: %q", v)
+	}
+}
+
+func TestSavedSource_ShowsAFreshSaveAtOnce(t *testing.T) {
+	dir := t.TempDir()
+	m, _ := newListModel(t, dir)
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.setSearchSource(searchSaved)
 	fillTracks(m)
-	_ = m.executeCommand("save older")
-	time.Sleep(20 * time.Millisecond)
-	_ = m.executeCommand("save newer")
-	m.mode = modeCommand
-	m.cmdBuf = "load"
-	for _, want := range []string{"load newer", "load older", "load newer"} {
-		m.handleCommandKey("space")
-		if m.cmdBuf != want {
-			t.Fatalf("space steps through the lists, newest first, wrapping: got %q, want %q", m.cmdBuf, want)
-		}
-	}
-	m.cmdBuf = "load ro"
-	m.handleCommandKey("space")
-	if m.cmdBuf != "load ro " {
-		t.Fatalf("while a name is being typed, space is a space: %q", m.cmdBuf)
-	}
-	m.cmdBuf = "save my"
-	m.handleCommandKey("space")
-	if m.cmdBuf != "save my " {
-		t.Fatalf("outside :load, space is a space: %q", m.cmdBuf)
-	}
-	m.cmdBuf = "load"
-	plain := ansi.Strip(strings.Join(m.statusNavLines(300), " "))
-	if !strings.Contains(plain, "spc next saved list") {
-		t.Fatalf("the CMD row names the space key inside :load: %q", plain)
-	}
-	m.cmdBuf = "save"
-	if plain := ansi.Strip(strings.Join(m.statusNavLines(300), " ")); strings.Contains(plain, "spc next") {
-		t.Fatalf("the hint is only there inside :load: %q", plain)
+	_ = m.executeCommand("save fresh")
+	if l := m.search.SelectedSavedList(); l == nil || l.Name != "fresh" {
+		t.Fatalf("a save while SV is showing appears at once, got %+v", l)
 	}
 }
 
@@ -213,7 +224,7 @@ func TestAutoSave_NamesTheListFromItsSongs(t *testing.T) {
 	if !strings.HasPrefix(m.errMsg, "✓") || !strings.Contains(m.errMsg, names[0]) {
 		t.Fatalf("the status line shows the name: %q", m.errMsg)
 	}
-	// The name Claude would send arrives as a message and is cleaned the same way.
+	// The name Claude would send arrives as a message and is used as given.
 	st := queuestate.FromTracks(persistTracks(), -1)
 	m.finishAutoSave(trackListNamedMsg{stamp: "2026-09-05_13-10", short: "late night jazz", state: st})
 	if _, err := os.Stat(filepath.Join(dir, "tracklists", "2026-09-05_13-10_late night jazz.json")); err != nil {
@@ -236,6 +247,20 @@ func TestFallbackListName(t *testing.T) {
 	}
 	if got := fallbackListName(nil); got != "tracks" {
 		t.Fatalf("nothing to go on: %q", got)
+	}
+}
+
+func TestLoadCommand_IsGone(t *testing.T) {
+	m, _ := newListModel(t, t.TempDir())
+	_ = m.executeCommand("load mix")
+	if !strings.Contains(m.errMsg, "unknown command") {
+		t.Fatalf("the lists are reached through Search, not :load: %q", m.errMsg)
+	}
+	m.mode = modeCommand
+	m.cmdBuf = "save my"
+	m.handleCommandKey("space")
+	if m.cmdBuf != "save my " {
+		t.Fatalf("space types a space again: %q", m.cmdBuf)
 	}
 }
 

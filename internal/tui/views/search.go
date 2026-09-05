@@ -65,11 +65,12 @@ type searchRow struct {
 	track    *provider.Track
 	album    *provider.Album
 	playlist *provider.Playlist
-	toggle   bool   // "+ 5 more" / "− 5 less" control row of a section
-	more     bool   // toggle rows: true = the "more" control, false = "less"
-	step     int    // toggle rows: how many items the control would add or remove (0 = nothing to do)
-	note     string // muted, non-selectable line (what a vibe lookup searched for)
-	title    string // header display text when it differs from label (the section key)
+	toggle   bool       // "+ 5 more" / "− 5 less" control row of a section
+	more     bool       // toggle rows: true = the "more" control, false = "less"
+	step     int        // toggle rows: how many items the control would add or remove (0 = nothing to do)
+	note     string     // muted, non-selectable line (what a vibe lookup searched for)
+	title    string     // header display text when it differs from label (the section key)
+	list     *SavedList // saved-lists source: the list this header stands for
 }
 
 // isItem reports whether this row is selectable: an item, a more/less toggle
@@ -85,6 +86,13 @@ func rowLines(r searchRow) int {
 		return 1
 	}
 	return 2
+}
+
+// SavedList is one of the user's saved track lists, shown by the saved-lists
+// source as its own foldable section.
+type SavedList struct {
+	Name   string
+	Tracks []provider.Track
 }
 
 // SearchModel holds search results rendered as a unified multi-section list
@@ -107,6 +115,11 @@ type SearchModel struct {
 	vibe      bool
 	vibeTitle string // header text for the vibe section ("Fable 5.1"); "" = "Vibes"
 	vibeNote  []string
+
+	// saved marks the saved-lists source: one foldable section per list,
+	// folded to its header by default and opened whole.
+	saved bool
+	lists []SavedList
 
 	// selected holds the keys (see selKey) of the songs, albums and playlists
 	// picked for a multi-add (Shift+↑/↓ sweep, Shift+→ toggle); cleared when
@@ -143,6 +156,7 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.err = err
 	m.results = result
 	m.vibe, m.vibeTitle, m.vibeNote = false, "", nil
+	m.saved, m.lists = false, nil
 	m.selected, m.stash = nil, nil
 	m.shown = nil // a new result set starts at the default count per section
 	m.catalogNext, m.catalogMore = 0, false
@@ -166,6 +180,7 @@ func (m *SearchModel) SetVibeResults(tracks []provider.Track, title string, note
 	m.vibe = true
 	m.vibeTitle = title
 	m.vibeNote = note
+	m.saved, m.lists = false, nil
 	m.selected, m.stash = nil, nil
 	m.shown = nil
 	m.catalogNext, m.catalogMore = 0, false
@@ -177,6 +192,34 @@ func (m *SearchModel) SetVibeResults(tracks []provider.Track, title string, note
 
 // VibeResults reports whether the list shows a vibe result set.
 func (m *SearchModel) VibeResults() bool { return m.vibe }
+
+// SetSavedLists shows the user's saved track lists, one foldable section
+// each, all folded to their headers. Enter on a header opens the list whole;
+// the header stands for the whole list when adding or marking.
+func (m *SearchModel) SetSavedLists(lists []SavedList) {
+	m.loading, m.err = false, nil
+	m.results = nil
+	m.vibe, m.vibeTitle, m.vibeNote = false, "", nil
+	m.saved, m.lists = true, lists
+	m.selected, m.stash = nil, nil
+	m.shown = nil // every list starts folded
+	m.catalogNext, m.catalogMore = 0, false
+	m.paging, m.pendingReveal = false, 0
+	m.rebuildRows()
+	m.cursor = m.advance(-1, 1)
+	m.scroll = 0
+}
+
+// SavedLists reports whether the list shows the saved-lists source.
+func (m *SearchModel) SavedLists() bool { return m.saved }
+
+// SelectedSavedList returns the saved list whose header is highlighted, or nil.
+func (m *SearchModel) SelectedSavedList() *SavedList {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		return nil
+	}
+	return m.rows[m.cursor].list
+}
 
 // firstEntryRow is the first selectable row that is not a header, so a new
 // result set starts on its first match rather than on a section title.
@@ -207,9 +250,12 @@ func (m *SearchModel) ToggleSectionOpen(section string) {
 	if m.shown == nil {
 		m.shown = map[string]int{}
 	}
-	if m.shownCount(section, total) > 0 {
+	switch {
+	case m.shownCount(section, total) > 0:
 		m.shown[section] = 0
-	} else {
+	case m.saved:
+		m.shown[section] = total // a saved list opens whole
+	default:
 		m.shown[section] = searchSectionCap
 	}
 	m.rebuildRows()
@@ -243,6 +289,14 @@ func (m *SearchModel) SelectedToggle() (section string, more bool, ok bool) {
 
 // sectionTotal returns how many results a section has.
 func (m *SearchModel) sectionTotal(section string) int {
+	if m.saved {
+		for _, l := range m.lists {
+			if l.Name == section {
+				return len(l.Tracks)
+			}
+		}
+		return 0
+	}
 	if m.results == nil {
 		return 0
 	}
@@ -273,6 +327,9 @@ func (m *SearchModel) shownCount(section string, total int) int {
 	n, ok := m.shown[section]
 	if !ok {
 		n = searchSectionCap
+		if m.saved {
+			n = 0 // a saved list starts folded to its header
+		}
 	}
 	return max(0, min(n, total))
 }
@@ -514,6 +571,10 @@ func isLibraryTrack(t provider.Track) bool {
 // items and grows or shrinks in steps of five through its control rows.
 func (m *SearchModel) rebuildRows() {
 	m.rows = nil
+	if m.saved {
+		m.rebuildSavedRows()
+		return
+	}
 	if m.results == nil {
 		return
 	}
@@ -544,6 +605,26 @@ func (m *SearchModel) rebuildRows() {
 	}
 	m.sectionRows("Library", len(library), func(i int) searchRow { return searchRow{track: library[i]} })
 	m.sectionRows("Tracks", len(catalog), func(i int) searchRow { return searchRow{track: catalog[i]} })
+}
+
+// rebuildSavedRows lays the saved lists out as one section each. The header
+// names the list and its size; enter opens it to all of its songs or folds it
+// back. There are no "+ 5 more" rows here: a list is seen whole.
+func (m *SearchModel) rebuildSavedRows() {
+	for li := range m.lists {
+		l := &m.lists[li]
+		size := fmt.Sprintf("%d tracks", len(l.Tracks))
+		if len(l.Tracks) == 1 {
+			size = "1 track"
+		}
+		m.rows = append(m.rows, searchRow{header: true, label: l.Name, title: l.Name + "  ·  " + size, list: l})
+		if m.shownCount(l.Name, len(l.Tracks)) == 0 {
+			continue
+		}
+		for i := range l.Tracks {
+			m.rows = append(m.rows, searchRow{track: &l.Tracks[i]})
+		}
+	}
 }
 
 // advance returns the index of the next selectable row in direction dir (+1/-1)
@@ -619,11 +700,14 @@ type SelectedItem struct {
 	Track    *provider.Track
 	Album    *provider.Album
 	Playlist *provider.Playlist
+	List     *SavedList // a whole saved list (its header, in the saved-lists source)
 }
 
 // selKey identifies a selectable row across rebuilds.
 func selKey(r searchRow) string {
 	switch {
+	case r.list != nil:
+		return "list:" + r.list.Name
 	case r.track != nil:
 		return PlaybackID(*r.track)
 	case r.album != nil:
@@ -716,7 +800,13 @@ func (m *SearchModel) pick(row int) {
 // SelectedItems returns the multi-selection in result order — playlists,
 // then albums, then songs — folded or not yet revealed entries included.
 func (m *SearchModel) SelectedItems() []SelectedItem {
-	if len(m.selected) == 0 || m.results == nil {
+	if len(m.selected) == 0 {
+		return nil
+	}
+	if m.saved {
+		return m.selectedSavedItems()
+	}
+	if m.results == nil {
 		return nil
 	}
 	res := m.results
@@ -734,6 +824,29 @@ func (m *SearchModel) SelectedItems() []SelectedItem {
 	for i := range res.Tracks {
 		if m.selected[PlaybackID(res.Tracks[i])] {
 			out = append(out, SelectedItem{Track: &res.Tracks[i]})
+		}
+	}
+	return out
+}
+
+// selectedSavedItems is the multi-selection of the saved-lists source: whole
+// lists first, then songs, in list order, a song only once even when it sits
+// in several lists.
+func (m *SearchModel) selectedSavedItems() []SelectedItem {
+	out := make([]SelectedItem, 0, len(m.selected))
+	seen := map[string]bool{}
+	for li := range m.lists {
+		if l := &m.lists[li]; m.selected["list:"+l.Name] {
+			out = append(out, SelectedItem{List: l})
+		}
+	}
+	for li := range m.lists {
+		for i := range m.lists[li].Tracks {
+			t := &m.lists[li].Tracks[i]
+			if key := PlaybackID(*t); m.selected[key] && !seen[key] {
+				seen[key] = true
+				out = append(out, SelectedItem{Track: t})
+			}
 		}
 	}
 	return out
@@ -828,6 +941,15 @@ func sectionColor(label string) color.Color {
 	}
 }
 
+// rowAccent is the accent of a header row: saved lists share one colour, the
+// search sections have theirs by label.
+func rowAccent(r searchRow) color.Color {
+	if r.list != nil {
+		return styles.ColorSecondary
+	}
+	return sectionColor(r.label)
+}
+
 // View renders the multi-section result list within the allocated height.
 func (m *SearchModel) View() string {
 	if m.loading {
@@ -855,7 +977,7 @@ func (m *SearchModel) View() string {
 	currentAccent := sectionColor("Tracks")
 	for i := start - 1; i >= 0; i-- {
 		if m.rows[i].header {
-			currentAccent = sectionColor(m.rows[i].label)
+			currentAccent = rowAccent(m.rows[i])
 			break
 		}
 	}
@@ -864,14 +986,17 @@ func (m *SearchModel) View() string {
 		row := m.rows[i]
 
 		if row.header {
-			currentAccent = sectionColor(row.label)
+			currentAccent = rowAccent(row)
 			hs := lipgloss.NewStyle().
 				Foreground(currentAccent).
 				Bold(true).
 				Italic(true)
 			prefix := "  "
-			if i == m.cursor {
+			switch {
+			case i == m.cursor:
 				prefix = lipgloss.NewStyle().Foreground(currentAccent).Render("▶ ")
+			case row.list != nil && m.selected[selKey(row)]:
+				prefix = lipgloss.NewStyle().Foreground(currentAccent).Render("✓ ")
 			}
 			name := row.label
 			if row.title != "" {

@@ -375,15 +375,16 @@ type Model struct {
 
 	// Search accumulation (mode == modeSearch)
 	searchQuery  string
-	searchCursor int    // rune index of the cursor within searchQuery
-	searchGen    int    // incremented on every keystroke; used to discard stale results
-	searchShown  string // query whose results the search panel currently lists
-	searchVibe   bool   // Search input is in vibes mode ("CC " prompt): Enter finds songs for a description
-	vibeShown    string // vibe description whose songs the panel currently lists
+	searchCursor int          // rune index of the cursor within searchQuery
+	searchGen    int          // incremented on every keystroke; used to discard stale results
+	searchShown  string       // query whose results the search panel currently lists
+	searchSrc    searchSource // what the Search column asks: Apple Music, Claude Code or the saved lists (Ctrl+/ cycles)
+	vibeShown    string       // vibe description whose songs the panel currently lists
 	// Each mode keeps its own result list, so Ctrl+/ switches between them
 	// without redoing a lookup; m.search points at the active one.
 	searchAM *views.SearchModel // Apple Music search results
 	searchCC *views.SearchModel // Claude Code (vibes) results
+	searchSV *views.SearchModel // the saved track lists, one foldable section each
 
 	// Command accumulation (mode == modeCommand)
 	cmdBuf string
@@ -455,6 +456,7 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	m.vibePlanner = vibe.NewPlanner(cfg.VibeAgent, cfg.VibeModel, cfg.VibeEffort)
 	m.searchAM = views.NewSearch(prov)
 	m.searchCC = views.NewSearch(prov)
+	m.searchSV = views.NewSearch(prov)
 	m.search = m.searchAM
 	m.favorites = make(map[string]bool)
 	m.aboutP = &aboutPanel{m: views.NewAbout()}
@@ -1065,9 +1067,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.searchAM = views.NewSearch(msg.Provider)
 		m.searchCC = views.NewSearch(msg.Provider)
-		m.search = m.searchAM
-		if m.searchVibe {
-			m.search = m.searchCC
+		m.searchSV = views.NewSearch(msg.Provider)
+		m.search = m.searchFor(m.searchSrc)
+		if m.searchSrc == searchSaved {
+			m.refreshSavedLists()
 		}
 		m.helperPaths = msg.HelperPaths
 		m.appendLog("[engine] backend: " + msg.Backend)
@@ -1241,18 +1244,20 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		m.mode = modeNormal
 		return nil
 	case "ctrl+/", "ctrl+_":
-		// Toggle between regular search ("/ " prompt, searches as you type) and
-		// vibes mode ("CC " prompt, Enter finds songs for a description). A plain
-		// "/" is text ("AC/DC"); terminals without the kitty protocol report
-		// Ctrl+/ as ctrl+_ (0x1F), so both spellings are accepted.
-		m.setSearchMode(!m.searchVibe)
-		// Each mode keeps the songs it found last time. Only look the text up
-		// when this mode has nothing for it yet: an empty query has nothing
-		// to look up, the same text keeps its results.
-		if m.searchQuery == "" {
+		// Cycle the source: Apple Music ("AM", searches as you type) → Claude
+		// Code ("CC", Enter finds songs for a description) → the saved lists
+		// ("SV") → Apple Music. A plain "/" is text ("AC/DC"); terminals
+		// without the kitty protocol report Ctrl+/ as ctrl+_ (0x1F), so both
+		// spellings are accepted.
+		m.setSearchSource(m.searchSrc.next())
+		// Each source keeps what it showed last time. Only look the text up
+		// when this source has nothing for it yet: an empty query has nothing
+		// to look up, the same text keeps its results, and the saved lists
+		// never look anything up.
+		if m.searchQuery == "" || m.searchSrc == searchSaved {
 			return nil
 		}
-		if m.searchVibe {
+		if m.searchSrc == searchClaude {
 			if m.searchQuery == m.vibeShown {
 				return nil
 			}
@@ -1265,7 +1270,7 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 	case "enter":
 		// Vibes mode: Enter on a description that has not been looked up yet
 		// finds songs for it; once its songs are listed, Enter acts on rows.
-		if m.searchVibe && m.searchQuery != "" && m.searchQuery != m.vibeShown {
+		if m.searchSrc == searchClaude && m.searchQuery != "" && m.searchQuery != m.vibeShown {
 			return m.startVibeSearch(m.searchQuery)
 		}
 		// Enter on a section header folds it or opens it again.
@@ -1404,7 +1409,6 @@ type cmdEntry struct {
 // from it, so the two can never disagree.
 var allCommands = []cmdEntry{
 	{"save", "save [name]", "Save Tracks as a named list; without a name it is dated and named after the songs"},
-	{"load", "load [name]", "Replace Tracks with a saved list; space steps through the saved lists"},
 	{"quality", "quality <high|standard|256|64>", "Set Apple Music AAC bitrate"},
 	{"model", "model <fable|sonnet|haiku|default|id>", "Model Claude Code uses for CC lookups; bare :model shows the current one"},
 	{"effort", "effort <low|medium|high|xhigh|max|default>", "Effort Claude Code spends on CC lookups"},
@@ -1461,10 +1465,7 @@ func (m *Model) handleCommandKey(k string) tea.Cmd {
 			m.cmdBuf = m.cmdBuf[:len(m.cmdBuf)-1]
 		}
 	case "space":
-		// Inside :load the space key steps through the saved lists.
-		if !m.cycleLoadName() {
-			m.cmdBuf += " "
-		}
+		m.cmdBuf += " "
 	default:
 		if len(k) == 1 && k[0] >= 32 {
 			m.cmdBuf += k
@@ -1618,13 +1619,6 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 
 	case cmd == "save" || strings.HasPrefix(cmd, "save "):
 		return m.saveTrackList(strings.TrimPrefix(cmd, "save"))
-
-	case cmd == "load" || strings.HasPrefix(cmd, "load "):
-		if arg := strings.TrimSpace(strings.TrimPrefix(cmd, "load")); arg != "" {
-			return m.loadTrackList(arg)
-		}
-		m.listTrackLists()
-		return nil
 
 	case strings.HasPrefix(cmd, "save-playlist "):
 		// Unlisted: the Tracks panel as a new playlist in Apple Music.
@@ -2247,10 +2241,25 @@ func (m *Model) addSelection(play bool) tea.Cmd {
 		case m.search.SelectedPlaylist() != nil:
 			pl := m.search.SelectedPlaylist()
 			items, label = []views.SelectedItem{{Playlist: pl}}, pl.Name
+		case m.search.SelectedSavedList() != nil:
+			l := m.search.SelectedSavedList()
+			items, label = []views.SelectedItem{{List: l}}, l.Name
 		default:
 			return nil
 		}
 	}
+	// Saved lists carry their songs already: they unfold here, in place.
+	expanded := make([]views.SelectedItem, 0, len(items))
+	for _, it := range items {
+		if it.List == nil {
+			expanded = append(expanded, it)
+			continue
+		}
+		for i := range it.List.Tracks {
+			expanded = append(expanded, views.SelectedItem{Track: &it.List.Tracks[i]})
+		}
+	}
+	items = expanded
 	// The selection stays marked after the add (Ctrl+← clears it).
 	collections := 0
 	for _, it := range items {
@@ -2386,8 +2395,8 @@ func (m *Model) fetchMoreTracksCmd(wanted, hops int) tea.Cmd {
 }
 
 func (m *Model) scheduleSearch(query string) tea.Cmd {
-	if m.searchVibe {
-		return nil // vibes mode only searches on Enter
+	if m.searchSrc != searchApple {
+		return nil // only Apple Music searches as you type
 	}
 	if query == "" {
 		m.searchAM.SetResults(nil, false, nil)
@@ -2414,20 +2423,31 @@ func (m *Model) startVibeSearch(query string) tea.Cmd {
 	return m.runVibeSearch(query)
 }
 
-// setSearchMode switches the Search column between Apple Music search and
-// Claude Code vibes, each with its own result list; the active list takes
-// over the column size.
-func (m *Model) setSearchMode(vibe bool) {
-	m.searchVibe = vibe
+// setSearchSource switches the Search column between Apple Music, Claude
+// Code and the saved lists, each with its own result list; the active list
+// takes over the column size. The saved lists are read again on the way in,
+// so a fresh :save is there.
+func (m *Model) setSearchSource(src searchSource) {
+	m.searchSrc = src
 	w, h := m.search.Size()
-	if vibe {
-		m.search = m.searchCC
-	} else {
-		m.search = m.searchAM
-	}
+	m.search = m.searchFor(src)
 	if w > 0 && h > 0 {
 		m.search.SetSize(w, h)
 	}
+	if src == searchSaved {
+		m.refreshSavedLists()
+	}
+}
+
+// searchFor is the result list that belongs to a source.
+func (m *Model) searchFor(src searchSource) *views.SearchModel {
+	switch src {
+	case searchClaude:
+		return m.searchCC
+	case searchSaved:
+		return m.searchSV
+	}
+	return m.searchAM
 }
 
 // handleVibeSearchResult shows the songs found for a vibe description in the
@@ -3641,13 +3661,16 @@ func (m *Model) statusNavLines(w int) []string {
 		// The mode label is SEARCH for both prompts; the prompt glyph and the
 		// panel header say whether Apple Music or Claude Code is answering.
 		label, glyph, toggle := "SEARCH", "AM ", accent.Render("^/")+muted.Render(" claude")
-		if m.searchVibe {
-			glyph, toggle = "CC ", accent.Render("^/")+muted.Render(" apple music")
+		switch m.searchSrc {
+		case searchClaude:
+			glyph, toggle = "CC ", accent.Render("^/")+muted.Render(" saved lists")
+		case searchSaved:
+			glyph, toggle = "SV ", accent.Render("^/")+muted.Render(" apple music")
 		}
 		// Every key that works here, always listed; only Enter's meaning
 		// changes, when a new description waits to be looked up by Claude.
 		enter := accent.Render("Enter") + muted.Render(" open/fold")
-		if m.searchVibe && m.searchQuery != m.vibeShown {
+		if m.searchSrc == searchClaude && m.searchQuery != m.vibeShown {
 			enter = accent.Render("Enter") + muted.Render(" find songs")
 		}
 		actions := []string{
@@ -3699,9 +3722,6 @@ func (m *Model) statusNavLines(w int) []string {
 				part += muted.Render(args)
 			}
 			parts = append(parts, part)
-		}
-		if m.cmdBuf == "load" || strings.HasPrefix(m.cmdBuf, "load ") {
-			parts = append(parts, accent.Render("spc")+muted.Render(" next saved list"))
 		}
 		parts = append(parts, accent.Render("Esc")+muted.Render(" cancel"))
 		return wrapFit(parts, dot, w)
@@ -4185,3 +4205,15 @@ func playerEQBandsToConfig(bands []player.EQBand) []config.EQBand {
 	}
 	return out
 }
+
+// searchSource is what the Search column asks; Ctrl+/ cycles through them.
+type searchSource int
+
+const (
+	searchApple  searchSource = iota // "AM": Apple Music, searches as you type
+	searchClaude                     // "CC": Claude Code finds songs for a description on Enter
+	searchSaved                      // "SV": the saved track lists, one foldable section each
+)
+
+// next is the source Ctrl+/ moves to.
+func (s searchSource) next() searchSource { return (s + 1) % 3 }

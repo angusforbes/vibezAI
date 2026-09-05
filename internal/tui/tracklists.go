@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -19,12 +18,12 @@ import (
 )
 
 // Named track lists. `:save [name]` writes the Tracks panel to
-// <config dir>/tracklists/<name>.json in the queue.json format, and
-// `:load [name]` puts such a list back into Tracks; inside `:load` the space
-// key steps through the saved lists so nobody has to remember a name. The
-// automatic queue.json (the previous session's Tracks, restored at launch)
-// keeps working alongside: at launch it is also kept as the list named
-// "last session", and a loaded list becomes the queue the next launch restores.
+// <config dir>/tracklists/<name>.json in the queue.json format. The Search
+// column offers the lists under its SV source (Ctrl+/ cycles AM → CC → SV):
+// one foldable section per list, from which a whole list or single songs are
+// added to Tracks like any other search hit. The automatic queue.json (the
+// previous session's Tracks, restored at launch) keeps working alongside: at
+// launch it is also kept as the list named "last session".
 
 const (
 	trackListsDirName = "tracklists"
@@ -51,7 +50,7 @@ type trackListNamedMsg struct {
 }
 
 // trackListsDir is the directory the named lists live in; "" when the queue
-// is not persisted at all, in which case the commands are refused.
+// is not persisted at all, in which case saving is refused.
 func (m *Model) trackListsDir() string {
 	if m.queueStatePath == "" {
 		return ""
@@ -78,9 +77,9 @@ func (m *Model) trackListPath(name string) string {
 	return filepath.Join(m.trackListsDir(), name+".json")
 }
 
-// savedTrackLists returns the saved lists in the order the space key steps
-// through them: the previous session's Tracks first, then the newest save
-// first, names breaking ties.
+// savedTrackLists returns the saved lists in the order the SV source shows
+// them: the previous session's Tracks first, then the newest save first,
+// names breaking ties.
 func (m *Model) savedTrackLists() []string {
 	dir := m.trackListsDir()
 	if dir == "" {
@@ -122,6 +121,23 @@ func (m *Model) savedTrackLists() []string {
 	return names
 }
 
+// refreshSavedLists reads the saved lists into the Search column's SV source.
+func (m *Model) refreshSavedLists() {
+	if m.searchSV == nil {
+		return
+	}
+	var lists []views.SavedList
+	for _, name := range m.savedTrackLists() {
+		st, err := queuestate.Load(m.trackListPath(name))
+		if err != nil {
+			m.appendLog(fmt.Sprintf("[tracklist] %q could not be read: %v", name, err))
+			continue
+		}
+		lists = append(lists, views.SavedList{Name: name, Tracks: st.ProviderTracks()})
+	}
+	m.searchSV.SetSavedLists(lists)
+}
+
 // snapshotLastSession keeps the queue restored at launch as the "last
 // session" list, or removes that list when there was nothing to restore.
 func (m *Model) snapshotLastSession(st queuestate.State) {
@@ -142,30 +158,6 @@ func (m *Model) snapshotLastSession(st queuestate.State) {
 func (m *Model) flashStatus(msg string, d time.Duration) {
 	m.errMsg = msg
 	m.errExpiry = time.Now().Add(d)
-}
-
-// cycleLoadName is the space key inside `:load`: instead of typing a space it
-// steps through the saved lists, the previous session's Tracks first, then
-// the newest saves, so nobody has to remember a name. While a name that is
-// not a saved list is being typed, space is a space.
-func (m *Model) cycleLoadName() bool {
-	if m.cmdBuf != "load" && !strings.HasPrefix(m.cmdBuf, "load ") {
-		return false
-	}
-	names := m.savedTrackLists()
-	if len(names) == 0 {
-		return false
-	}
-	next := 0
-	if cur := strings.TrimSpace(strings.TrimPrefix(m.cmdBuf, "load")); cur != "" {
-		i := slices.Index(names, cur)
-		if i < 0 {
-			return false
-		}
-		next = (i + 1) % len(names)
-	}
-	m.cmdBuf = "load " + names[next]
-	return true
 }
 
 // saveTrackList is `:save [name]`: the Tracks panel, as it is, to a named
@@ -203,7 +195,8 @@ func (m *Model) trackListSnapshot() (queuestate.State, bool) {
 	return queuestate.FromTracks(m.queueTracks, m.currentQueueIndex()), true
 }
 
-// writeTrackList saves st under name and reports it in the status line.
+// writeTrackList saves st under name, reports it in the status line and, when
+// the Search column is showing the saved lists, puts it in view.
 func (m *Model) writeTrackList(name string, st queuestate.State) {
 	path := m.trackListPath(name)
 	existed := !fileMissing(path)
@@ -218,6 +211,9 @@ func (m *Model) writeTrackList(name string, st queuestate.State) {
 	}
 	m.appendLog(fmt.Sprintf("[tracklist] %s %q with %d track(s)", verb, name, len(st.Tracks)))
 	m.flashStatus(fmt.Sprintf("✓ \"%s\" %s: %d tracks", name, verb, len(st.Tracks)), 5*time.Second)
+	if m.searchSrc == searchSaved {
+		m.refreshSavedLists()
+	}
 }
 
 // autoSaveTrackList is a bare `:save`: the name is the date and time plus a
@@ -314,80 +310,6 @@ func topKey(counts map[string]int) (string, int) {
 		}
 	}
 	return best, n
-}
-
-// loadTrackList is `:load <name>`: the saved list replaces Tracks. With the
-// engine idle it behaves like the restore at launch: the list is shown and
-// the first play starts it at its saved position. While the engine holds a
-// track, the list is handed over at once and starts there, because the track
-// that was playing is not in the list any more.
-func (m *Model) loadTrackList(raw string) tea.Cmd {
-	name, err := trackListName(raw)
-	if err != nil {
-		m.flashStatus(":load "+err.Error(), 3*time.Second)
-		return nil
-	}
-	path := m.trackListPath(name)
-	if m.trackListsDir() == "" || fileMissing(path) {
-		m.flashStatus(fmt.Sprintf("no track list \"%s\"%s", name, m.savedListsHint()), 4*time.Second)
-		return nil
-	}
-	st, err := queuestate.Load(path)
-	if err != nil {
-		m.appendLog("[tracklist] load failed: " + err.Error())
-		m.flashStatus(":load failed: "+err.Error(), 4*time.Second)
-		return nil
-	}
-	tracks := st.ProviderTracks()
-	if len(tracks) == 0 {
-		m.flashStatus(fmt.Sprintf("\"%s\" is empty", name), 3*time.Second)
-		return nil
-	}
-	ids := make([]string, len(tracks))
-	for i, t := range tracks {
-		ids[i] = views.PlaybackID(t)
-	}
-	start := st.CurrentIndex
-	if start < 0 || start >= len(tracks) {
-		start = 0
-	}
-	m.queueTracks = tracks
-	m.queueIDs = ids
-	m.syncQueue()
-	m.appendLog(fmt.Sprintf("[tracklist] loaded %q: %d track(s)", name, len(tracks)))
-	m.flashStatus(fmt.Sprintf("✓ \"%s\" loaded: %d tracks", name, len(tracks)), 4*time.Second)
-	if m.playerState.Track == nil {
-		// Like a restored queue: nothing plays until asked, then from start.
-		m.queueResumeIdx = start
-		m.followPlayingTrack()
-		return nil
-	}
-	m.queueResumeIdx = noQueueCursor
-	m.playerState.Loading = true
-	m.playerState.Playing = false
-	m.playerState.Position = 0
-	m.queueFollow = true
-	m.queueCursor = start
-	m.ensureQueueCursorVisible()
-	return m.syncEngineQueue(ids[start])
-}
-
-// listTrackLists is a bare `:load` run with Enter: name the saved lists.
-func (m *Model) listTrackLists() {
-	names := m.savedTrackLists()
-	if len(names) == 0 {
-		m.flashStatus("no saved lists yet; :save makes one", 4*time.Second)
-		return
-	}
-	m.flashStatus("saved lists: "+strings.Join(names, ", ")+" (space inside :load steps through them)", 6*time.Second)
-}
-
-func (m *Model) savedListsHint() string {
-	names := m.savedTrackLists()
-	if len(names) == 0 {
-		return ""
-	}
-	return "; saved: " + strings.Join(names, ", ")
 }
 
 func fileMissing(path string) bool {
