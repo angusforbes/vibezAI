@@ -4268,7 +4268,7 @@ func TestCommandFooter_ListsEveryCommand(t *testing.T) {
 		t.Fatalf("at 90 columns the command list needs more than one row, got %d", len(lines))
 	}
 	plain := ansi.Strip(strings.Join(lines, " "))
-	if !strings.HasPrefix(strings.TrimSpace(plain), "CMD") || !strings.Contains(plain, ":vo_") {
+	if !strings.HasPrefix(strings.TrimSpace(plain), "CMD") || !strings.Contains(plain, ":vo█") {
 		t.Fatalf("the row opens with the mode chip and the typed command: %q", plain)
 	}
 	for _, c := range allCommands {
@@ -4291,7 +4291,7 @@ func TestCommandFooter_ListsEveryCommand(t *testing.T) {
 	// A long buffer is cut on the left so the cursor stays on the row.
 	m.cmdBuf = "save " + strings.Repeat("summer ", 20)
 	plain = ansi.Strip(m.statusNavLines(90)[0])
-	if !strings.Contains(plain, ":…") || !strings.Contains(plain, "summer _") {
+	if !strings.Contains(plain, ":…") || !strings.Contains(plain, "summer █") {
 		t.Fatalf("a long command is cut on the left, keeping the cursor: %q", plain)
 	}
 }
@@ -4309,7 +4309,7 @@ func TestCommandMode_KeepsTheSplitOnScreen(t *testing.T) {
 	if strings.Contains(view, "Commands") {
 		t.Fatalf("there is no command panel any more:\n%s", view)
 	}
-	if !strings.Contains(view, ":save") || !strings.Contains(view, ":vo_") {
+	if !strings.Contains(view, ":save") || !strings.Contains(view, ":vo█") {
 		t.Fatalf("the footer lists the commands and the typed one:\n%s", view)
 	}
 	// Tab completes the first match; there is no cursor to move.

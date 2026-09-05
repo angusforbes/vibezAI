@@ -3766,11 +3766,12 @@ func (m *Model) statusNavLines(w int) []string {
 		label := styles.ModeCommand.Render("CMD") + "  " + muted.Render(":")
 		runes := []rune(m.cmdBuf)
 		shown, _, cutLeft, _ := queryWindow(runes, len(runes), max(8, w-lipgloss.Width(label)-1))
-		buf := string(shown)
+		// Same prompt look as the SEARCH row: header-styled text, block cursor.
+		buf := styles.Header.Render(string(shown))
 		if cutLeft {
 			buf = muted.Render("…") + buf
 		}
-		parts := []string{label + buf + accent.Render("_")}
+		parts := []string{label + buf + accent.Render("█")}
 		for _, c := range allCommands {
 			parts = append(parts, accent.Render(":"+c.trigger))
 		}
