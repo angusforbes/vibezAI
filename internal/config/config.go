@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"testing"
 
 	"github.com/simone-vibes/vibez/internal/audioquality"
 )
@@ -146,6 +148,10 @@ func (c *Config) normalize() {
 	}
 }
 
+// SetPath fixes where Save writes when no override is given. Tests use it to
+// keep their configs away from the user's real file.
+func (c *Config) SetPath(path string) { c.path = path }
+
 func (c *Config) Save(override string) error {
 	path := override
 	if path == "" {
@@ -156,6 +162,12 @@ func (c *Config) Save(override string) error {
 		path, err = ConfigPath("")
 		if err != nil {
 			return err
+		}
+		if testing.Testing() && !strings.HasPrefix(path, os.TempDir()) {
+			// A test config without a path would land on the user's real
+			// config.json and wipe their tokens; refuse instead. Tests that
+			// point HOME at a temp dir still get to save.
+			return fmt.Errorf("refusing to save a test config to %s: call SetPath first", path)
 		}
 	}
 	if err := c.save(path); err != nil {

@@ -10,6 +10,8 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -177,12 +179,37 @@ func (m *stationMockProvider) GetStationTracks(_ context.Context, _ string) ([]p
 // --- helpers ---
 
 func testCfg() *config.Config {
-	return &config.Config{
+	cfg := &config.Config{
 		StoreFront: "us",
 		AuthPort:   7777,
 		Provider:   "apple",
 		Theme:      "default",
 		VibeAgent:  "keywords", // never spawn the Claude CLI from tests
+	}
+	// Saves from tests must never reach ~/.config/vibez/config.json (a test
+	// once overwrote the user's tokens that way); keep them in a temp file.
+	dir, err := os.MkdirTemp("", "vibez-test-cfg-")
+	if err != nil {
+		panic(err)
+	}
+	cfg.SetPath(filepath.Join(dir, "config.json"))
+	return cfg
+}
+
+func TestTestCfg_NeverSavesToTheRealConfig(t *testing.T) {
+	cfg := testCfg()
+	if err := cfg.Save(""); err != nil {
+		t.Fatalf("saving a test config should go to its temp path: %v", err)
+	}
+	home, _ := os.UserHomeDir()
+	real := filepath.Join(home, ".config", "vibez", "config.json")
+	before, _ := os.Stat(real)
+	bare := &config.Config{}
+	if err := bare.Save(""); err == nil {
+		t.Fatal("a pathless config must refuse to save under go test")
+	}
+	if after, _ := os.Stat(real); before != nil && after != nil && !after.ModTime().Equal(before.ModTime()) {
+		t.Fatal("the user's real config.json was touched by a test")
 	}
 }
 
@@ -2514,6 +2541,7 @@ func TestNowPlayingArtMode_LayoutIsMinimal(t *testing.T) {
 func TestExecuteCommand_ArtTogglesAndPersists(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	m := newModel(nil)
+	m.cfg.SetPath("") // save under the fake HOME so config.Load("") below finds it
 	m.supportsArtColor = func() bool { return true }
 
 	_ = m.executeCommand("art")
