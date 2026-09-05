@@ -4339,6 +4339,19 @@ func TestRetiredCommands_StillRunButAreNotListed(t *testing.T) {
 	}
 }
 
+func TestMute_IsGone(t *testing.T) {
+	// The laptop and the OS handle muting; the app no longer has a command.
+	m := newModel(newMockPlayer())
+	m.cmdBuf = "mu"
+	if suggs := m.commandSuggestions(); len(suggs) != 0 {
+		t.Fatalf("no command completes from 'mu', got %#v", suggs)
+	}
+	_ = m.executeCommand("mute")
+	if !strings.Contains(m.errMsg, "unknown command") {
+		t.Fatalf(":mute is not a command any more, got %q", m.errMsg)
+	}
+}
+
 func TestCtrlSlash_KeepsEachModesResultsAndSkipsRepeatLookups(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.provider = &termProvider{n: 3}

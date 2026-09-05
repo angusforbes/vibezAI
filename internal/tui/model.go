@@ -413,10 +413,6 @@ type Model struct {
 	memStats     string
 	helperPaths  []string
 
-	// Mute: preMuteVol holds the volume before mute so it can be restored.
-	// -1 means not muted.
-	preMuteVol float64
-
 	// Playlist picker (modePlaylistPicker)
 	playlistPickerTrack      *provider.Track
 	playlistPickerItems      []provider.Playlist
@@ -433,7 +429,6 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 		player:       plyr,
 		activePanel:  -1,
 		memProfiling: opts.MemProfiling,
-		preMuteVol:   -1,
 		artMode:      cfg.AlbumArt,
 		artwork:      artworkCache{rendered: map[art.Size][]string{}},
 		artHTTP:      &http.Client{Timeout: 5 * time.Second},
@@ -1411,7 +1406,6 @@ var allCommands = []cmdEntry{
 	{"quality", "quality <high|standard|256|64>", "Set Apple Music AAC bitrate"},
 	{"model", "model <fable|sonnet|haiku|default|id>", "Model Claude Code uses for CC lookups; bare :model shows the current one"},
 	{"effort", "effort <low|medium|high|xhigh|max|default>", "Effort Claude Code spends on CC lookups"},
-	{"mute", "mute", "Toggle mute"},
 	{"about", "about", "Show information about vibez"},
 	{"donate", "donate", "Support vibez development by donating"},
 	{"debug-logs", "debug-logs", "Toggle debug log panel"},
@@ -1588,19 +1582,6 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 		m.appendLog(fmt.Sprintf("[player] shuffle → %v", on))
 		return m.playerCmd(func(p player.Player) error { return p.SetShuffle(on) })
 
-	case cmd == "mute":
-		if m.preMuteVol >= 0 {
-			// Currently muted — restore previous volume.
-			vol := m.preMuteVol
-			m.preMuteVol = -1
-			m.appendLog(fmt.Sprintf("[vol] unmuted → %.0f%%", vol*100))
-			return m.playerCmd(func(p player.Player) error { return p.SetVolume(vol) })
-		}
-		// Mute: save current volume and set to 0.
-		m.preMuteVol = m.playerState.Volume
-		m.appendLog("[vol] muted")
-		return m.playerCmd(func(p player.Player) error { return p.SetVolume(0) })
-
 	case strings.HasPrefix(cmd, "quality"):
 		name, arg, _ := strings.Cut(cmd, " ")
 		arg = strings.TrimSpace(arg)
@@ -1664,7 +1645,6 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 			}
 			newVol = float64(n) / 100
 		}
-		m.preMuteVol = -1 // clear mute state on explicit vol change
 		m.appendLog(fmt.Sprintf("[vol] → %.0f%%", newVol*100))
 		vol := newVol
 		p := m.player
@@ -3619,9 +3599,6 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 	controlsStr := repeatStyle.Render(repeatIcon) + "   " +
 		shuffleStyle.Render("⇄") + "   " +
 		playStyle.Render(playIcon)
-	if m.preMuteVol >= 0 {
-		controlsStr += "   " + styles.Playing.Render("🔇")
-	}
 	controls := centerStr(controlsStr, contentW)
 
 	errLine := m.statusLine(contentW)
