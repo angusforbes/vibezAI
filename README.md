@@ -116,9 +116,7 @@ Typing `:` keeps both columns on screen and swaps the footer for the command lis
 | `:model <fable\|sonnet\|haiku\|default\|id>` | Model Claude Code uses for `CC` lookups; bare `:model` shows the current one |
 | `:effort <low\|medium\|high\|xhigh\|max\|default>` | Effort for those lookups |
 | `:save <name>` | Save Tracks as an Apple Music playlist |
-| `:vol <0-100\|+n\|-n>` | Volume |
 | `:quality <high\|standard\|256\|64>` | AAC bitrate |
-| `:seek <seconds>` | Jump inside the current song |
 | `:debug-logs` | Toggle the debug log, where Claude's terms and rankings are recorded |
 | `:q` / `:quit` | Quit |
 

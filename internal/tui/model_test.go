@@ -4276,7 +4276,7 @@ func TestCommandFooter_ListsEveryCommand(t *testing.T) {
 			t.Fatalf("the CMD row lists every command, always; %q is missing from %q", ":"+c.trigger, plain)
 		}
 	}
-	if !strings.Contains(plain, ":vol <0-100|+n|-n>") || !strings.Contains(plain, ":save <name>") || !strings.Contains(plain, ":effort <low|medium|high|xhigh|max|default>") {
+	if !strings.Contains(plain, ":quality <high|standard|256|64>") || !strings.Contains(plain, ":save <name>") || !strings.Contains(plain, ":effort <low|medium|high|xhigh|max|default>") {
 		t.Fatalf("each command shows what it takes: %q", plain)
 	}
 	if !strings.Contains(plain, "Esc cancel") || strings.Contains(plain, "Tab complete") || strings.Contains(plain, "Enter run") {
@@ -4304,7 +4304,7 @@ func TestCommandMode_KeepsTheSplitOnScreen(t *testing.T) {
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m.introStep = introDone // skip startup animation
 	m.mode = modeCommand
-	m.cmdBuf = "vo"
+	m.cmdBuf = "qua"
 	view := ansi.Strip(m.View().Content)
 	if !strings.Contains(view, "┬") {
 		t.Fatalf("typing a command keeps the Tracks/Search split on screen:\n%s", view)
@@ -4312,13 +4312,13 @@ func TestCommandMode_KeepsTheSplitOnScreen(t *testing.T) {
 	if strings.Contains(view, "Commands") {
 		t.Fatalf("there is no command panel any more:\n%s", view)
 	}
-	if !strings.Contains(view, ":save") || !strings.Contains(view, ":vo█") {
+	if !strings.Contains(view, ":save") || !strings.Contains(view, ":qua█") {
 		t.Fatalf("the footer lists the commands and the typed one:\n%s", view)
 	}
 	// Tab completes the first match; there is no cursor to move.
 	m.handleCommandKey("tab")
-	if m.cmdBuf != "vol " {
-		t.Fatalf("Tab completes vo → 'vol ', got %q", m.cmdBuf)
+	if m.cmdBuf != "quality " {
+		t.Fatalf("Tab completes qua → 'quality ', got %q", m.cmdBuf)
 	}
 }
 

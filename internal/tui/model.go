@@ -1401,8 +1401,6 @@ type cmdEntry struct {
 // from it, so the two can never disagree.
 var allCommands = []cmdEntry{
 	{"save", "save <name>", "Save the tracks as a playlist in Apple Music"},
-	{"seek", "seek <seconds>", "Jump to a position in the current song"},
-	{"vol", "vol <0-100|+n|-n>", "Set, raise, or lower volume (e.g. vol 80, vol +10, vol -5)"},
 	{"quality", "quality <high|standard|256|64>", "Set Apple Music AAC bitrate"},
 	{"model", "model <fable|sonnet|haiku|default|id>", "Model Claude Code uses for CC lookups; bare :model shows the current one"},
 	{"effort", "effort <low|medium|high|xhigh|max|default>", "Effort Claude Code spends on CC lookups"},
@@ -1610,74 +1608,6 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 			}
 			return saveAudioQualityMsg{kbps: kbps}
 		}
-
-	case strings.HasPrefix(cmd, "vol"):
-		arg := strings.TrimSpace(strings.TrimPrefix(cmd, "vol"))
-		if arg == "" {
-			m.errMsg = fmt.Sprintf("volume: %d%%", int(m.playerState.Volume*100))
-			m.errExpiry = time.Now().Add(3 * time.Second)
-			return nil
-		}
-		var newVol float64
-		switch {
-		case strings.HasPrefix(arg, "+"):
-			delta, err := strconv.Atoi(arg[1:])
-			if err != nil || delta < 0 {
-				m.errMsg = ":vol +n requires a positive number"
-				m.errExpiry = time.Now().Add(3 * time.Second)
-				return nil
-			}
-			newVol = clamp(m.playerState.Volume+float64(delta)/100, 0, 1)
-		case strings.HasPrefix(arg, "-"):
-			delta, err := strconv.Atoi(arg[1:])
-			if err != nil || delta < 0 {
-				m.errMsg = ":vol -n requires a positive number"
-				m.errExpiry = time.Now().Add(3 * time.Second)
-				return nil
-			}
-			newVol = clamp(m.playerState.Volume-float64(delta)/100, 0, 1)
-		default:
-			n, err := strconv.Atoi(arg)
-			if err != nil || n < 0 || n > 100 {
-				m.errMsg = ":vol requires 0-100, +n, or -n"
-				m.errExpiry = time.Now().Add(3 * time.Second)
-				return nil
-			}
-			newVol = float64(n) / 100
-		}
-		m.appendLog(fmt.Sprintf("[vol] → %.0f%%", newVol*100))
-		vol := newVol
-		p := m.player
-		return func() tea.Msg {
-			if p == nil {
-				return errMsg{fmt.Errorf("no player")}
-			}
-			if err := p.SetVolume(vol); err != nil {
-				return errMsg{err}
-			}
-			return saveVolumeMsg{vol}
-		}
-
-	case strings.HasPrefix(cmd, "seek"):
-		arg := strings.TrimSpace(strings.TrimPrefix(cmd, "seek"))
-		if arg == "" {
-			if m.playerState.Track != nil {
-				m.errMsg = fmt.Sprintf("position: %s / %s",
-					views.FormatDuration(m.playerState.Position),
-					views.FormatDuration(m.playerState.Track.Duration))
-				m.errExpiry = time.Now().Add(3 * time.Second)
-			}
-			return nil
-		}
-		n, err := strconv.Atoi(arg)
-		if err != nil || n < 0 {
-			m.errMsg = ":seek requires a non-negative number of seconds"
-			m.errExpiry = time.Now().Add(3 * time.Second)
-			return nil
-		}
-		pos := time.Duration(n) * time.Second
-		m.appendLog(fmt.Sprintf("[player] seek → %s", views.FormatDuration(pos)))
-		return m.playerCmd(func(p player.Player) error { return p.Seek(pos) })
 
 	case strings.HasPrefix(cmd, "save "), strings.HasPrefix(cmd, "save-playlist "):
 		name := cmd
