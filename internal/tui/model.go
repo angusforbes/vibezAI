@@ -375,7 +375,7 @@ type Model struct {
 	searchCursor int    // rune index of the cursor within searchQuery
 	searchGen    int    // incremented on every keystroke; used to discard stale results
 	searchShown  string // query whose results the search panel currently lists
-	searchVibe   bool   // Search input is in vibes mode ("V " prompt): Enter finds songs for a description
+	searchVibe   bool   // Search input is in vibes mode ("CC " prompt): Enter finds songs for a description
 	vibeShown    string // vibe description whose songs the panel currently lists
 
 	// Command accumulation (mode == modeCommand)
@@ -1217,7 +1217,7 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case "ctrl+/", "ctrl+_":
 		// Toggle between regular search ("/ " prompt, searches as you type) and
-		// vibes mode ("V " prompt, Enter finds songs for a description). A plain
+		// vibes mode ("CC " prompt, Enter finds songs for a description). A plain
 		// "/" is text ("AC/DC"); terminals without the kitty protocol report
 		// Ctrl+/ as ctrl+_ (0x1F), so both spellings are accepted.
 		m.searchVibe = !m.searchVibe
@@ -3520,7 +3520,7 @@ func (m *Model) statusNavLines(w int) []string {
 	case modeSearch:
 		label, glyph, toggle := "SEARCH", "/", accent.Render("^/")+muted.Render(" vibes")
 		if m.searchVibe {
-			label, glyph, toggle = "VIBES", "V ", accent.Render("^/")+muted.Render(" search")
+			label, glyph, toggle = "VIBES", "CC ", accent.Render("^/")+muted.Render(" search")
 		}
 		action := accent.Render("Enter") + muted.Render(" add & play") + "  " + accent.Render("⇧Enter") + muted.Render(" add")
 		if m.searchVibe && m.searchQuery != m.vibeShown {

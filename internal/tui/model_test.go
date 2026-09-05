@@ -3919,8 +3919,8 @@ func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 		t.Fatalf("ctrl+/ should switch to vibes mode without searching (cmd=%v vibe=%v)", cmd != nil, m.searchVibe)
 	}
 	lines := m.searchFindLines(40, 6)
-	if !strings.Contains(lines[2], "V") || strings.Contains(lines[2], "/") {
-		t.Fatalf("vibes mode shows a V prompt instead of the slash: %q", lines[2])
+	if !strings.Contains(lines[2], "CC") || strings.Contains(lines[2], "/") {
+		t.Fatalf("vibes mode shows a CC prompt (Claude Code) instead of the slash: %q", lines[2])
 	}
 	// Typing a description does not search as you type.
 	for _, r := range "chill" {

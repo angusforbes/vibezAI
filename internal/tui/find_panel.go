@@ -42,7 +42,7 @@ func (m *Model) searchFindLines(w, h int) []string {
 
 	glyph := "/"
 	if m.searchVibe {
-		glyph = "V"
+		glyph = "CC" // Claude Code plans these lookups
 	}
 	// The query wraps onto further rows instead of running off the right
 	// edge; continuation rows are indented under the text. At most half the
