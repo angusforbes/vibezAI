@@ -2061,10 +2061,10 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	// remove it, K/J move it (see queue_nav.go). Everything else falls through.
 	if m.activePanel < 0 && !m.debugView {
 		switch k {
-		case "ctrl+up", "ctrl+down", "ctrl+shift+up", "ctrl+shift+down", "ctrl+right", "ctrl+left":
-			// The Ctrl+arrows drive the Search list from here too, with the
-			// meanings they have in Search, so both lists can be worked
-			// without changing columns.
+		case "ctrl+up", "ctrl+down", "ctrl+shift+up", "ctrl+shift+down", "ctrl+right", "ctrl+left", "ctrl+/", "ctrl+_":
+			// The Ctrl+arrows drive the Search list from here too, and Ctrl+/
+			// cycles its source, with the meanings they have in Search, so
+			// both columns can be worked without changing columns.
 			m.lastKey = ""
 			return m.handleSearchKey(k, msg)
 		}
@@ -3743,13 +3743,14 @@ func (m *Model) statusNavLines(w int) []string {
 	case modeSearch:
 		// The mode label is SEARCH for both prompts; the prompt glyph and the
 		// panel header say whether Apple Music or Claude Code is answering.
-		label, glyph, toggle := "SEARCH", "AM ", accent.Render("^/")+muted.Render(" claude")
+		label, glyph := "SEARCH", "AM "
 		switch m.searchSrc {
 		case searchClaude:
-			glyph, toggle = "CC ", accent.Render("^/")+muted.Render(" saved lists")
+			glyph = "CC "
 		case searchSaved:
-			glyph, toggle = "SV ", accent.Render("^/")+muted.Render(" apple music")
+			glyph = "SV "
 		}
+		toggle := accent.Render("^/") + muted.Render(" "+m.nextSourceLabel())
 		// Every key that works here, always listed. While typing, Enter runs
 		// the text (a search or a lookup) and ends typing; browsing, it acts
 		// on rows. The list keys are Ctrl+something or arrows, so they work
@@ -3922,6 +3923,7 @@ func (m *Model) statusPlayParts() []string {
 		accent.Render("^↑/↓") + muted.Render(" search pick"),
 		accent.Render("^⇧↑/↓") + muted.Render(" search select"),
 		accent.Render("^→/^←") + muted.Render(" search toggle/clear"),
+		accent.Render("^/") + muted.Render(" "+m.nextSourceLabel()),
 	}
 	if m.discovery.enabled {
 		parts = append(parts, accent.Render(":discover")+styles.Playing.Render(" ● on"))
@@ -4324,3 +4326,15 @@ const (
 
 // next is the source Ctrl+/ moves to.
 func (s searchSource) next() searchSource { return (s + 1) % 3 }
+
+// nextSourceLabel names where Ctrl+/ goes from the current source, for the
+// footers: "claude", "saved lists" or "apple music".
+func (m *Model) nextSourceLabel() string {
+	switch m.searchSrc.next() {
+	case searchClaude:
+		return "claude"
+	case searchSaved:
+		return "saved lists"
+	}
+	return "apple music"
+}
