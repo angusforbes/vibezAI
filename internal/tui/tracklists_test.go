@@ -159,7 +159,7 @@ func TestSavedSource_AddsASongOrTheWholeList(t *testing.T) {
 		t.Fatalf("the highlight starts on the first list's header, got %+v", l)
 	}
 	// Enter opens the list whole; the first song is one row down.
-	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight})
 	if v := m.search.View(); !strings.Contains(v, "One") || !strings.Contains(v, "Three") || strings.Contains(v, "more") {
 		t.Fatalf("enter opens all songs, no +5 more rows: %q", v)
 	}
@@ -202,7 +202,7 @@ func TestSavedSource_AddsASongOrTheWholeList(t *testing.T) {
 		t.Fatalf("the header stays highlighted: %q", v)
 	}
 	// Enter again folds it back to the header.
-	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight})
 	if v := m.search.View(); strings.Contains(v, "One") {
 		t.Fatalf("enter folds the list: %q", v)
 	}
@@ -219,7 +219,7 @@ func TestSavedSource_CtrlDeleteRemovesTheList(t *testing.T) {
 	m.setSearchSource(searchSaved)
 	del := func() { m.handleSearchKey("ctrl+delete", tea.KeyPressMsg{Code: tea.KeyDelete, Mod: tea.ModCtrl}) }
 	// On a song row nothing is deleted; the status line says where to be.
-	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight})
 	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
 	del()
 	if got := m.savedTrackLists(); len(got) != 2 || !strings.Contains(m.errMsg, "header") {
@@ -266,7 +266,7 @@ func TestSavedSource_RefreshKeepsOpenListsAndTheHighlight(t *testing.T) {
 	m.search.SetSize(80, 20)
 	m.setSearchSource(searchSaved)
 	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl}) // header of older
-	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight})
 	m.refreshSavedLists()
 	if l := m.search.SelectedSavedList(); l == nil || l.Name != "older" {
 		t.Fatalf("a refresh keeps the highlighted list, got %+v", l)

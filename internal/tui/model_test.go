@@ -955,7 +955,7 @@ func TestSearchTyping_ToggleEnterAndEsc(t *testing.T) {
 		t.Fatalf("browsing: text goes nowhere, got %q", m.searchQuery)
 	}
 	footer := ansi.Strip(strings.Join(m.statusLines(400), " "))
-	if !strings.Contains(footer, "^' type") || !strings.Contains(footer, "Enter open/fold") {
+	if !strings.Contains(footer, "^' type") || !strings.Contains(footer, "→ open/fold") || !strings.Contains(footer, "Enter play tracks pick") {
 		t.Fatalf("browsing footer: %q", footer)
 	}
 	if s := (tea.KeyPressMsg{Code: 0x27, Mod: tea.ModCtrl}).String(); s != "ctrl+'" {
@@ -1044,6 +1044,59 @@ func TestCtrlSlashFromTracks_CyclesTheSearchSource(t *testing.T) {
 	}
 }
 
+func TestSearchBrowsing_EnterPlaysTracksPickSpaceTogglesRightActsOnRows(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	m.queueTracks = []provider.Track{{ID: "1", Title: "One"}, {ID: "2", Title: "Two"}, {ID: "3", Title: "Three"}}
+	m.queueIDs = []string{"1", "2", "3"}
+	m.syncQueue()
+	m.setQueueCursor(1)
+	seedSearchResults(m, provider.Track{Title: "Alpha", CatalogID: "a"})
+	footer := ansi.Strip(strings.Join(m.statusLines(600), " "))
+	for _, want := range []string{"Enter play tracks pick", "spc play/pause", "→ open/fold"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("browsing footer lists %q: %q", want, footer)
+		}
+	}
+	// Enter plays the track highlighted in Tracks; the keys stay in Search.
+	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter while browsing plays the Tracks pick")
+	}
+	_ = cmd()
+	if mp.setQueueAtStart != "2" || m.mode != modeSearch {
+		t.Fatalf("the second track starts, the keys stay in Search: start=%q mode=%v", mp.setQueueAtStart, m.mode)
+	}
+	// Space is play/pause and types nothing.
+	m.playerState.Track = &m.queueTracks[1]
+	m.playerState.Playing = true
+	if cmd := m.handleSearchKey("space", tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}); cmd != nil {
+		_ = cmd()
+	}
+	if !mp.pauseCalled || m.searchQuery != "" {
+		t.Fatalf("space pauses and types nothing: pause=%v query=%q", mp.pauseCalled, m.searchQuery)
+	}
+	// → acts on the Search row: the Tracks header folds.
+	m.handleSearchKey("ctrl+up", tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
+	if sec, ok := m.search.SelectedHeader(); !ok || sec != "Tracks" {
+		t.Fatalf("setup: the Tracks header, got %q %v", sec, ok)
+	}
+	m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight})
+	if v := m.search.View(); strings.Contains(v, "Alpha") {
+		t.Fatalf("→ on a header folds it: %q", v)
+	}
+	// While typing, Enter and space are the prompt's again.
+	m.searchTyping = true
+	m.handleSearchKey("space", tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+	if m.searchQuery != " " {
+		t.Fatalf("typing: space is text, got %q", m.searchQuery)
+	}
+	footer = ansi.Strip(strings.Join(m.statusLines(600), " "))
+	if strings.Contains(footer, "play tracks pick") || !strings.Contains(footer, "Enter search") {
+		t.Fatalf("typing footer: %q", footer)
+	}
+}
+
 func TestHandleSearchKey_CtrlComma_DoesNotCallSetQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
@@ -1121,14 +1174,14 @@ func TestHandleSearchKey_Enter_OnHeaderFoldsSection(t *testing.T) {
 	if sec, ok := m.search.SelectedHeader(); !ok || sec != "Tracks" {
 		t.Fatalf("expected the Tracks header to be selectable, got %q %v", sec, ok)
 	}
-	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight})
 	if m.search.SelectedTrack() != nil || len(m.search.Results()) != 1 {
 		t.Fatal("folding must keep the results but hide the tracks")
 	}
 	if v := m.search.View(); strings.Contains(v, "more") || strings.Contains(v, "less") {
 		t.Fatalf("a folded section shows its header only: %q", v)
 	}
-	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight})
 	if len(m.queueIDs) != 0 {
 		t.Fatal("enter on a header must never touch the queue")
 	}
@@ -3935,7 +3988,7 @@ func TestHandleSearchKey_EnterOnTracksMore_PagesApple(t *testing.T) {
 		t.Fatalf("setup: cursor should be on the Tracks more row, got %q more=%v ok=%v", sec, more, ok)
 	}
 
-	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	cmd := m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight})
 	if cmd == nil {
 		t.Fatal("enter on a pageable more row must fetch the next page")
 	}
@@ -3968,7 +4021,7 @@ func TestSearchMoreMsg_StaleOrFailedPages(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.provider = prov
 	searchAtTracksMore(m, 3)
-	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	cmd := m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight})
 	if cmd == nil {
 		t.Fatal("expected a fetch")
 	}
@@ -3994,7 +4047,7 @@ func TestHandleSearchKey_EnterOnTracksMore_ProviderCannotPage(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.provider = &mockProvider{}
 	searchAtTracksMore(m, 3)
-	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || m.search.Paging() {
+	if cmd := m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight}); cmd != nil || m.search.Paging() {
 		t.Fatal("a provider without paging must leave the panel as it is")
 	}
 }
@@ -4682,12 +4735,13 @@ func catalogTracks(n int) []provider.Track {
 func TestStatusLines_SearchModeDropsTheTracksKeys(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.mode = modeSearch
-	lines := m.statusLines(200)
+	lines := m.statusLines(400)
 	if len(lines) != 1 {
 		t.Fatalf("search mode shows only the SEARCH row, got %d rows: %q", len(lines), lines)
 	}
 	joined := strings.Join(lines, " ")
-	for _, stale := range []string{"cut below", "remove", "+5 related", "+5 library", "play/pause", "repeat", "random"} {
+	// (space is play/pause in Search too now, so it is not in this list.)
+	for _, stale := range []string{"cut below", "remove", "+5 related", "+5 library", "repeat", "random"} {
 		if strings.Contains(joined, stale) {
 			t.Fatalf("Tracks key %q must not be listed while searching: %q", stale, joined)
 		}
@@ -4735,13 +4789,13 @@ func TestHandleSearchKey_MultiSelectAddsAll(t *testing.T) {
 	if !strings.Contains(footer, "^, add") || !strings.Contains(footer, "^. add & play") {
 		t.Fatalf("the footer lists the add keys: %q", footer)
 	}
-	// Enter keeps its row meaning: on the "+ 1 more" row it reveals, adds nothing.
+	// → keeps its row meaning: on the "+ 1 more" row it reveals, adds nothing.
 	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
 	if sec, more, ok := m.search.SelectedToggle(); !ok || sec != "Tracks" || !more {
 		t.Fatalf("expected the more row, got %q %v %v", sec, more, ok)
 	}
-	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || len(m.queueIDs) != 0 || m.search.SelectionCount() != 3 {
-		t.Fatalf("Enter on a control row operates the control even with a selection (cmd=%v queue=%v sel=%d)", cmd != nil, m.queueIDs, m.search.SelectionCount())
+	if cmd := m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight}); cmd != nil || len(m.queueIDs) != 0 || m.search.SelectionCount() != 3 {
+		t.Fatalf("→ on a control row operates the control even with a selection (cmd=%v queue=%v sel=%d)", cmd != nil, m.queueIDs, m.search.SelectionCount())
 	}
 	// Ctrl+,: all three go to Tracks, nothing plays, selection cleared.
 	if cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}); cmd != nil {

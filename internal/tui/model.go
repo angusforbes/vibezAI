@@ -1241,13 +1241,24 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 	if !m.searchTyping {
 		// Browsing: the prompt takes nothing until Ctrl+' opens it, so keys
-		// cannot land in the query by accident. ":" opens command mode as it
-		// does from Tracks.
+		// cannot land in the query by accident. Enter and space are Tracks'
+		// keys here (play the highlighted track, play/pause), → acts on the
+		// Search row (open/fold, ±5) and ":" opens command mode as it does
+		// from Tracks.
 		switch {
 		case k == ":":
 			m.mode = modeCommand
 			m.cmdBuf = ""
 			return nil
+		case k == "enter":
+			if m.queueCursorActive() {
+				return m.jumpToQueueIndex(m.queueCursor)
+			}
+			return nil
+		case k == "space":
+			return m.togglePlayPause()
+		case k == "right":
+			return m.actOnSearchRow()
 		case isSearchEditKey(k):
 			return nil
 		}
@@ -1287,8 +1298,8 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	case "enter":
 		// Typing: Enter ends it and runs the text, an Apple Music search or a
-		// Claude Code lookup (unchanged text is not run again). Browsing:
-		// Enter acts on rows.
+		// Claude Code lookup (unchanged text is not run again). Browsing
+		// Enter is handled above: it plays the Tracks pick.
 		if m.searchTyping {
 			m.searchTyping = false
 			switch m.searchSrc {
@@ -1303,24 +1314,6 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			}
 			return nil
 		}
-		// Enter on a section header folds it or opens it again.
-		if section, ok := m.search.SelectedHeader(); ok {
-			m.search.ToggleSectionOpen(section)
-			return nil
-		}
-		// "+ 5 more" / "− 5 less" rows grow or shrink their section.
-		if section, more, ok := m.search.SelectedToggle(); ok {
-			if !more {
-				m.search.ShowLess(section)
-				return nil
-			}
-			// "+ 5 more" past the loaded catalog songs pages Apple's results.
-			if wanted := m.search.ShowMore(section); wanted > 0 {
-				return m.fetchMoreTracksCmd(wanted, 0)
-			}
-			return nil
-		}
-		// On a song, album or playlist Enter does nothing: adding is Ctrl+, / Ctrl+.
 		return nil
 	case "tab", "shift+tab":
 		// Hand the keys back to the queue; the query and results stay visible.
@@ -1442,6 +1435,27 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			m.searchQuery = string(runes)
 			m.searchCursor++
 			return nil
+		}
+	}
+	return nil
+}
+
+// actOnSearchRow is → while browsing: a section header folds or opens, a
+// "+ 5 more" / "− 5 less" row grows or shrinks its section ("+ 5 more" past
+// the loaded catalog songs pages Apple's results). On a song, album or
+// playlist it does nothing: adding is Ctrl+, / Ctrl+.
+func (m *Model) actOnSearchRow() tea.Cmd {
+	if section, ok := m.search.SelectedHeader(); ok {
+		m.search.ToggleSectionOpen(section)
+		return nil
+	}
+	if section, more, ok := m.search.SelectedToggle(); ok {
+		if !more {
+			m.search.ShowLess(section)
+			return nil
+		}
+		if wanted := m.search.ShowMore(section); wanted > 0 {
+			return m.fetchMoreTracksCmd(wanted, 0)
 		}
 	}
 	return nil
@@ -3752,9 +3766,10 @@ func (m *Model) statusNavLines(w int) []string {
 		}
 		toggle := accent.Render("^/") + muted.Render(" "+m.nextSourceLabel())
 		// Every key that works here, always listed. While typing, Enter runs
-		// the text (a search or a lookup) and ends typing; browsing, it acts
-		// on rows. The list keys are Ctrl+something or arrows, so they work
-		// and are listed either way.
+		// the text (a search or a lookup) and ends typing; browsing, Enter
+		// and space are Tracks' (play the pick, play/pause) and → acts on
+		// rows. The list keys are Ctrl+something or arrows, so they work and
+		// are listed either way.
 		var actions []string
 		if m.searchTyping {
 			run := " search"
@@ -3766,7 +3781,11 @@ func (m *Model) statusNavLines(w int) []string {
 				accent.Render("^'/Esc")+muted.Render(" stop typing"),
 			)
 		} else {
-			actions = append(actions, accent.Render("Enter")+muted.Render(" open/fold"))
+			actions = append(actions,
+				accent.Render("Enter")+muted.Render(" play tracks pick"),
+				accent.Render("spc")+muted.Render(" play/pause"),
+				accent.Render("→")+muted.Render(" open/fold"),
+			)
 			if m.searchSrc != searchSaved {
 				actions = append(actions, accent.Render("^'")+muted.Render(" type"))
 			}

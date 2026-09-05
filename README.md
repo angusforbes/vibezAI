@@ -69,7 +69,7 @@ Results, songs as well as whole albums and playlists, can be marked with `Ctrl+S
 
 `:save road trip` keeps the Tracks panel as a list called "road trip". A bare `:save` names it for you, as in `2026-09-05_13-10_late night jazz`: the date and time, then two to four words Claude Code picks from the songs (without the CLI, the artist or genre that dominates them). Lists are plain files in `~/.config/vibez/tracklists/`, in the same format as `queue.json`, and the Tracks you had when you last quit are kept there too, as `last session`.
 
-To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `SV`. Every list is a header with its size, `last session` first, then the newest saves. `Enter` opens one to all of its songs. `Ctrl+,` on the header adds the whole list to Tracks, on a song just that song, and `Ctrl+→` marks a header so a whole list joins a multi-selection. Adding never starts playback: with nothing playing, `space` starts what you have built. `Ctrl+Delete` on a header deletes the list, from disk and from the panel. Nothing here replaces Tracks; to start over from a list, clear Tracks with `c` first.
+To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `SV`. Every list is a header with its size, `last session` first, then the newest saves. `→` opens one to all of its songs. `Ctrl+,` on the header adds the whole list to Tracks, on a song just that song, and `Ctrl+→` marks a header so a whole list joins a multi-selection. Adding never starts playback: with nothing playing, `space` starts what you have built. `Ctrl+Delete` on a header deletes the list, from disk and from the panel. Nothing here replaces Tracks; to start over from a list, clear Tracks with `c` first.
 
 ## Key bindings
 
@@ -107,7 +107,9 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 |-----|--------|
 | `ctrl+'` | Start or stop typing into the prompt (`AM` and `CC`); nothing is looked up while you type |
 | `ctrl+/` | Cycle the source: `AM` → `CC` → `SV` (saved lists) → `AM`; text already typed is looked up when switching to `CC`, `AM` waits for `enter` |
-| `enter` | While typing: search (`AM`) or look up (`CC`) the text and stop typing. Otherwise: open or fold a section header (a saved list opens whole), grow or shrink a section by five |
+| `enter` | While typing: search (`AM`) or look up (`CC`) the text and stop typing. Otherwise: play the track highlighted in Tracks |
+| `space` | Play / pause (not while typing) |
+| `→` | Open or fold a section header (a saved list opens whole), grow or shrink a section by five |
 | `ctrl+↑` / `ctrl+↓` | Move the highlight |
 | `↑` / `↓` | Move the highlight in Tracks without leaving Search |
 | `ctrl+shift+↑` / `ctrl+shift+↓` | Sweep-select: mark the highlighted item and everything passed over |
