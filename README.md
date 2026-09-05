@@ -1,445 +1,214 @@
-<p align="center">Use `↑` / `↓` (or `ctrl+p` / `ctrl+n`) to cycle through suggestions, and `tab` to autocomplete.
+<p align="center">
+  <img src="assets/logo.png" width="160" alt="vibezAI logo">
+</p>
 
-  <img src="assets/logo.png" width="160" alt="vibez logo">
+<h1 align="center">♪ vibezAI</h1>
+
+<p align="center">
+  <strong>Apple Music in your terminal, with Claude Code as your DJ.</strong><br>
+  A fork of <a href="https://github.com/simonepelosi/vibez">vibez</a> by Simone Pelosi.
 </p>
 
 <p align="center">
-  <img src="assets/title.svg" alt="♪ vibez" width="460">
+  <a href="https://github.com/angusforbes/vibezAI/blob/main/LICENSE"><img src="https://img.shields.io/github/license/angusforbes/vibezAI?style=flat-square" alt="License"></a>
+  <a href="https://github.com/simonepelosi/vibez"><img src="https://img.shields.io/badge/fork_of-simonepelosi%2Fvibez-7aa2f7?style=flat-square" alt="Fork of simonepelosi/vibez"></a>
+  <a href="https://github.com/angusforbes/vibezAI/blob/main/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/angusforbes/vibezAI?style=flat-square" alt="Go version"></a>
 </p>
+
+[What it is](#what-it-is) · [Searching with Claude Code](#searching-with-claude-code) · [Key bindings](#key-bindings) · [Installation](#installation) · [Configuration](#configuration) · [How it differs from vibez](#how-it-differs-from-vibez)
+
+---
+
+## What it is
+
+vibezAI is a keyboard-driven Apple Music player for the terminal. Full tracks stream through a headless Chrome with Widevine, exactly as in vibez. What changed is the way you find and line up music: the screen is two columns, and the right one can hand your request to Claude Code.
 
 <p align="center">
-  <strong>Apple Music in your terminal. Vibe-driven. Keyboard-first.</strong>
+  <img src="assets/vibezai-search.png" alt="vibezAI: Tracks on the left, an Apple Music search on the right" width="920">
 </p>
+
+- **Tracks** (left) is the one list of what plays. It survives restarts, you move through it in place, and nothing you do in the right column ever replaces it.
+- **Search** (right) has two prompts. `AM` searches Apple Music as you type: Playlists, Albums, Library (your own copies) and Tracks, five per section, with `+ 5 more` / `− 5 less` rows and headers that fold. `CC` sends a plain-English description to Claude Code, which plans the search and ranks the results.
+- **Tab** moves the keys between the two columns. The column that has them shows its title in bold; the mode text next to "Search" glows while a lookup is running.
+- Everything that works in a column is listed once, in the footer.
+
+## Searching with Claude Code
+
+Press `Tab` to reach Search, then `Ctrl+/` to switch the prompt from `AM` to `CC`. Type what you want to hear the way you would say it to a friend and press `Enter`.
 
 <p align="center">
-  <a href="https://github.com/simonepelosi/vibez/actions"><img src="https://img.shields.io/github/actions/workflow/status/simonepelosi/vibez/ci.yml?style=flat-square&label=CI" alt="CI"></a>
-  <a href="https://github.com/simonepelosi/vibez/releases"><img src="https://img.shields.io/github/v/release/simonepelosi/vibez?style=flat-square" alt="Release"></a>
-  <a href="https://github.com/simonepelosi/vibez/blob/main/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/simonepelosi/vibez?style=flat-square" alt="Go version"></a>
-  <a href="https://github.com/simonepelosi/vibez/blob/main/LICENSE"><img src="https://img.shields.io/github/license/simonepelosi/vibez?style=flat-square" alt="License"></a>
-  <a href="https://github.com/simonepelosi/vibez/releases"><img src="https://img.shields.io/github/downloads/simonepelosi/vibez/total?style=flat-square&label=downloads" alt="Downloads"></a>
-  <a href="https://github.com/simonepelosi/vibez/stargazers"><img src="https://img.shields.io/github/stars/simonepelosi/vibez?style=flat-square" alt="Stars"></a>
+  <img src="assets/vibezai-claude.png" alt="vibezAI: a Claude Code lookup, planned by Fable 5.1" width="920">
 </p>
+
+Two lookups from the day this was written, with the terms Claude came back with:
+
+| You type | Claude's summary | Search terms it planned |
+|---|---|---|
+| `moody guitar instrumentals like Animals as Leaders but slower and more atmospheric` | Slow atmospheric progressive guitar instrumentals | Animals as Leaders · Plini instrumental · Intervals band · Chon · Polyphia slow songs · atmospheric post-rock instrumental |
+| `dreamy 70s soul for a rainy sunday` | Dreamy 70s soul for rainy Sunday | Marvin Gaye I Want You · Minnie Riperton Perfect Angel · Isaac Hayes Hot Buttered Soul · Curtis Mayfield · Roberta Flack First Take · mellow 70s soul |
+
+Other things that work well as prompts: an artist plus a direction ("early Radiohead but only the quiet songs"), an occasion ("brazilian jazz for cooking dinner"), an era and a feeling ("hopeful synth-pop from the mid 80s"), or a comparison ("bands that sound like Khruangbin but with vocals").
+
+**What happens underneath**
+
+1. **Plan.** The description goes to the Claude Code CLI (`claude -p`, no tools, no saved session) with a system prompt asking for four to six concrete Apple Music search terms: artists, songs, albums, at most two genre or mood phrases. It answers in JSON.
+2. **Search.** Each term runs through the normal Apple Music search in parallel. Hits are interleaved term by term, deduplicated by artist and title, and pooled up to forty candidates.
+3. **Rank.** The pool goes back to Claude with your description. It returns the best matches, up to fifteen, best first, favouring the mood, era and style you described and avoiding live, karaoke and tribute versions unless you asked for them.
+
+The result appears as one section headed by the model that did the planning, with Claude's one-line summary under it. Everything in it is selectable and addable like any search result.
+
+A lookup is two CLI calls, about seven seconds each with Fable 5.1 and roughly a cent in total; Sonnet is about twice as fast and a third of the price. `:model haiku` or `:model sonnet` switches, `:effort low` trims further, and both are remembered. When the CLI is unavailable, the built-in keyword table from vibez takes over and the header says so.
 
 <p align="center">
-  If you enjoy vibez, consider supporting its development — it helps keep the project alive! ☕<br><br>
-  <img src="https://progress-bar.xyz/0/?title=Apple%20Dev%20Key%20Goal%20%28%240%2F%24100%29&color=ff5e5b&width=400" alt="Apple Developer Key Progress"><br><br>
-  <a href="https://ko-fi.com/pelpsi"><img src="https://img.shields.io/badge/☕_buy_me_a_coffee-donate-ff5e5b?style=for-the-badge" alt="Donate on Ko-fi"></a>
+  <img src="assets/vibezai-select.png" alt="vibezAI: several results marked for adding" width="920">
 </p>
 
-[Installation](#installation) · [Usage](#usage) · [Features](#features) · [Key Bindings](#key-bindings) · [Roadmap](#roadmap)
+Results, songs as well as whole albums and playlists, can be marked with `Ctrl+↑/↓` sweeps and `Ctrl+→` toggles and then added together with `Ctrl+,` or `Ctrl+.`.
 
----
+## Key bindings
 
-vibez is an open-source TUI Apple Music player for Linux and macOS. Search, queue, and control playback entirely from the keyboard.
-
-Full tracks stream via Chrome with Widevine DRM. On Linux amd64, Chrome is auto-downloaded into vibez's private cache; on Linux arm64, vibez uses a system-installed Chromium plus a system Widevine CDM (Google publishes no arm64 Chrome for Linux). Where neither is available, WebKit + GStreamer remains available as a 30-second preview backend. On macOS, install Google Chrome before using Apple Music playback.
-
----
-
-## Features
-
-### 🎵 Music Playback
-
-- **Full-track streaming** via headless Chrome + Widevine DRM — the real deal, not 30-second clips
-- **Linux preview backend** via WebKit + GStreamer (30 s previews) when CDP playback is not selected
-- **Playback controls** — play/pause, next, previous, seek ±10 s, volume up/down
-- **Repeat modes** — cycle through off, repeat-all, and repeat-one
-- **Random jump** — `s` starts a random queued song right away; `:shuffle` toggles the engine's shuffled play order
-
-### 🔍 Apple Music Integration
-
-- **Browse your library** — playlists, albums, and tracks all in one place
-- **Real-time catalog search** — find any song, album, or artist from the full Apple Music catalog as you type
-- **Secure authentication** — MusicKit OAuth flow via an embedded Chrome window
-- **Find panel** — the right column is Apple Music search (`/`), which covers your library too; the queue stays on screen while you browse. Results come as Playlists, Albums, Library (your own copies) and Tracks, five per section to start; a section shows a "+ 5 more" row while matches are hidden and a "− 5 less" row while any are shown (Enter on them grows or shrinks it in steps of five). Enter on a section title folds the whole section or opens it again. A track already in your queue is never added twice: Tab points at the queued copy and Enter plays it. Tab adds without playing, Enter adds and plays, and nothing there ever replaces your queue
-
-### 📋 Queue Management
-
-- **Add tracks to queue** with `tab` from search, library, or recommendation feed
-- **Play next** — insert any song, album, playlist, or recommendation next in the queue with `shift+tab`
-- **Navigate the queue** — jump to any track or let it auto-advance
-- **One queue view** — the queue lives under Now Playing and is navigated in place; there is no separate panel to switch into
-- **Saved queue** — the queue is written to `~/.config/vibez/queue.json` and restored on the next launch; press `space` to pick up where you left off
-
-### 🖥️ System Integration
-
-- **Desktop notifications** — see the current track in your notification area
-- **MPRIS D-Bus on Linux** — desktop media keys and notifications integrate with supported desktop environments
-- **No external music player needed** — vibez does not depend on Cider, VLC, or Music.app
-- **Last.fm scrobbling** — optional integration; connect with `vibez auth lastfm login` and your listening history is tracked automatically
-- **WSL2 support** — set `"wsl": true` in config to enable audio workarounds for WSL2 environments
-
-### 🌀 Vibe Mode
-
-- **Describe music in plain English** — press `v`, type your mood or activity ("late night coding", "Sunday morning chill"), and vibez builds a queue of matching tracks
-- **Keyword-based mood engine** — maps your description to a mood, energy level, genres, and multiple search query variants for variety
-- **Diverse results** — runs several searches and shuffles up to 15 tracks into your queue so it never feels repetitive
-- **Works for any occasion** — focus, workout, party, road trip, heartbreak, romance, and more
-
-### 🔭 Discovery Mode
-
-- **Continuous automatic queuing** — press `d` to turn on discovery mode; vibez finds a similar track as soon as the last song in the queue starts playing, so the music never stops. Trigger timing will be fully configurable in a future release
-- **Adjustable similarity** — use `+`/`-` to dial between "same artist" (0.9) and "pure discovery" (0.0), giving you full control over how adventurous the next pick is
-- **Seed-aware** — the currently playing track is used as the seed; searches adapt progressively from same artist → same genre → completely random as similarity decreases
-- **Toggle anytime** — press `d` again to stop discovery and return to a manual queue
-
-### 📻 Related Songs and Radio
-
-- **Five related songs, once** — press `R` on the playing track or a highlighted queue entry: vibez fetches that song's Apple Music station and inserts up to five new picks right after it. Nothing keeps refilling afterwards and nothing you queued is removed
-- **Continuous radio** — `:radio` toggles the endless-station mode seeded by the playing track; its picks are appended after whatever is already lined up
-
-### ⌨️ Terminal UI
-
-- **Fully keyboard-driven** — every action reachable without touching the mouse
-- **Vim-style command mode** — press `:` to run commands like `:save <name>`, `:vol 80`, `:mute`, or `:q` / `:quit` to exit
-- **Vim-style navigation** — `gg` to jump to top, `G` to jump to bottom, `j`/`k` for list scrolling in panels
-- **Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea)** — a modern, composable TUI framework
-
-### 🔌 Extensibility
-
-- **Provider architecture** — the player core is decoupled from the music source
-- **More services coming** — Spotify, YouTube Music, Deezer, and Tidal are on the roadmap
-
-### 🎛️ Equalizer
-
-- **10-band parametric EQ** — press `e` to open a full-width equalizer panel
-- **Per-band control** — adjust frequency (32 Hz–16 kHz), Q factor, and gain (±12 dB) for each band
-- **Live preview** — changes apply immediately to the audio stream via Web Audio API
-- **Persistent settings** — your EQ curve is saved to `~/.config/vibez/config.json` and restored on next launch
-
-### 🎨 Themes
-
-- **Built-in themes** — `default` (Tokyo Night / Catppuccin), `dracula`, `gruvbox`, `nord`
-- **Custom themes** — create your own palette as a JSON file in `~/.config/vibez/themes/<name>.json`
-
----
-
-## Installation
-
-### One-liner (recommended)
-
-```sh
-curl --proto '=https' --tlsv1.2 -sSf \
-  https://raw.githubusercontent.com/simonepelosi/vibez/main/scripts/install.sh | sh
-```
-
-Installs the latest release binary to `~/.local/bin/` and updates your shell profile if needed.
-You can also inspect the script before running it — that's always a good idea.
-
-Covers Linux x86-64 and macOS (Apple Silicon and Intel). Linux/arm64 has no published
-binary yet — build [from source](#from-source) instead.
-
-> **Update:** re-running the same command updates vibez to the latest release.
-
-> **Custom install dir:** `VIBEZ_INSTALL_DIR=/usr/local/bin curl ... | sh`
-
-### macOS Chrome
-
-Install Google Chrome before using Apple Music playback on macOS:
-
-```sh
-brew install --cask google-chrome
-```
-
-### From source
-
-```bash
-git clone https://github.com/simonepelosi/vibez
-cd vibez
-make build-with-token   # requires APPLE_KEY_ID, APPLE_TEAM_ID, APPLE_PRIVATE_KEY
-make install            # same, plus copies the binary to ~/.local/bin
-```
-
-`make install` reads those credentials from the environment or a gitignored
-`.env`, so the copy on your `PATH` is rebuilt rather than left to go stale.
-Embedded tokens expire after 30 days — re-run it when the catalog starts
-returning 401s. Override the location with `make install PREFIX=/usr/local`.
-
-**Requirements:** Linux x86-64 or arm64, or macOS · Go 1.26+ · WebKit/GStreamer development packages on Linux · Google Chrome on macOS · on Linux arm64, a system Chromium + Widevine CDM for full-track playback (e.g. `pacman -S chromium widevine`) · Apple Developer Account with a MusicKit key
-
----
-
-## Usage
-
-```bash
-vibez                       # launch the TUI
-vibez --demo                # try vibez with built-in fake tracks — no account needed
-vibez auth login            # open Apple ID login (Chrome window)
-vibez auth status           # check current auth state
-vibez auth logout           # clear saved tokens
-vibez auth lastfm login     # connect your Last.fm account (optional)
-vibez auth lastfm status    # check Last.fm connection status
-vibez auth lastfm logout    # disconnect Last.fm
-vibez version               # print version
-```
-
----
-
-## Theming
-
-<table>
-  <tr>
-    <td align="center">
-      <img src="assets/default-vibez.png" alt="default theme"/><br>
-      <sub><b>default</b> (Tokyo Night / Catppuccin)</sub>
-    </td>
-    <td align="center">
-      <img src="assets/dracula-vibez.png" alt="dracula theme"/><br>
-      <sub><b>dracula</b></sub>
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="assets/gruvbox-vibez.png" alt="gruvbox theme"/><br>
-      <sub><b>gruvbox</b></sub>
-    </td>
-    <td align="center">
-      <img src="assets/nord-vibez.png" alt="nord theme"/><br>
-      <sub><b>nord</b></sub>
-    </td>
-  </tr>
-</table>
-
-Set the `theme` key in `~/.config/vibez/config.json`:
-
-```json
-{
-  "theme": "dracula"
-}
-```
-
-**Built-in themes:** `default`, `dracula`, `gruvbox`, `nord`
-
-### Custom themes
-
-Create `~/.config/vibez/themes/<name>.json` with any subset of fields — missing or invalid values fall back to `default`:
-
-```json
-{
-  "primary":      "#ff79c6",
-  "secondary":    "#50fa7b",
-  "muted":        "#6272a4",
-  "error":        "#ff5555",
-  "fg":           "#f8f8f2",
-  "subtle":       "#8be9fd",
-  "bg":           "#282a36",
-  "love":         "#ff6e6e",
-  "active":       "#50fa7b",
-  "progress":     "#8be9fd",
-  "surface":      "#44475a",
-  "accent":       "#bd93f9",
-  "accent_warm":  "#f1fa8c",
-  "bear":         "#ffb86c",
-  "glow_palette": ["#282a36","#383a52","#44475a","#6272a4","#9580ff","#bd93f9","#caa9fa","#e9e0ff"],
-  "mode_normal_bg":  "#50fa7b",
-  "mode_search_bg":  "#8be9fd",
-  "mode_command_bg": "#f1fa8c",
-  "mode_chip_fg":    "#282a36"
-}
-```
-
-Then set `"theme": "<name>"` in `config.json` and restart vibez.
-
----
-
-## Key Bindings
-
-### Global
+### Tracks (left column)
 
 | Key | Action |
 |-----|--------|
-| `space` | Play / Pause |
-| `n` | Next track |
-| `p` | Previous track |
-| `←` / `→` | Seek backward / forward 10 s |
-| `+` / `=` | Volume up |
-| `-` | Volume down |
-| `r` | Cycle repeat (off → all → one) |
-| `s` | Jump to a random queued song |
-| `v` | Open vibe input (mood-driven search) |
-| `e` | Toggle equalizer panel |
-| `R` | Insert five related songs after the playing track (once) |
-| `/` | Open search |
-| `q` | Put the queue highlight back on the playing track (it follows playback until you move it) |
-| `↑` / `↓` (`k` / `j`) | Move the queue highlight without changing playback |
 | `space` | Play / pause |
-| `enter` | Play the highlighted queue entry (queue kept); on the playing track it restarts it |
-| `d` / `x` | Remove the highlighted queue entry |
-| `K` / `J` (with a highlighted entry) | Move the highlighted queue entry up / down |
-| `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom of the queue |
-| `shift+d` (with a highlighted entry) | Remove the highlighted entry and everything below it (stops playback if the playing track is among them) |
-| `ctrl+shift+d` (with a highlighted entry) | Remove everything above the highlighted entry (if the playing track is among them, playback moves to the highlighted entry) |
-| `R` (with a highlighted entry) | Insert five related songs after the highlighted entry (once) |
-| `ctrl+shift+r` | Insert five random songs from your library after the highlighted entry |
-| `c` | Clear the queue |
-| `:q` / `ctrl+c` | Quit |
+| `↑` / `↓` | Move the highlight without changing playback |
+| `enter` | Play the highlighted track; on the playing track, restart it |
+| `q` | Put the highlight back on the playing track |
+| `n` / `p` | Next / previous |
+| `←` / `→` | Seek ±10 s |
+| `d` | Remove the highlighted track |
+| `D` / `ctrl+shift+d` | Cut everything from the highlight down / everything above it |
+| `K` / `J` | Move the highlighted track up / down |
+| `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom |
+| `R` | Insert five related songs after the highlighted track, once |
+| `T` | Insert five random songs from your library after the highlighted track |
+| `s` | Jump to a random track |
+| `r` | Cycle repeat |
+| `c` | Clear the list |
+| `Tab` | Move the keys to Search |
+| `:` | Command mode |
+| `y` / `F` / `e` / `?` | Lyrics / feed / equalizer / about |
 
-### Search (`/`)
-
-| Key | Action |
-|-----|--------|
-| *(type)* | Filter results in real time |
-| `↑` / `↓` | Navigate results |
-| `enter` | Add to the end of the queue and start it (never replaces the queue) |
-| `tab` | Add to the end of the queue without playing |
-| `shift+tab` | Play next (insert after current track) |
-| `esc` | Close |
-
-### Library (`l`)
+### Search (right column)
 
 | Key | Action |
 |-----|--------|
-| `↑` / `↓` | Navigate list |
-| `enter` | Open, or add to the end of the queue and start it |
-| `tab` | Add selected item/track to queue (when viewing albums/artists/playlists/tracks) or switch tab (when viewing library sections pane) |
-| `shift+tab` | Play next (insert selected item/track after current track) |
-| `esc` | Back / close |
+| *(type)* | `AM`: search as you type. `CC`: edit the description |
+| `ctrl+/` | Switch between the `AM` and `CC` prompts; the text already typed is looked up in the new mode |
+| `enter` | Open or fold a section header, grow or shrink a section by five; in `CC`, look up a new description |
+| `↑` / `↓` | Move the highlight |
+| `ctrl+↑` / `ctrl+↓` | Sweep-select: mark the highlighted item and everything passed over |
+| `ctrl+→` | Toggle the highlighted item in or out of the selection |
+| `ctrl+←` | Clear the selection; pressed again before anything changes, bring it back |
+| `ctrl+,` | Add the selection, or the highlighted item, to Tracks |
+| `ctrl+.` | The same, and start the first song |
+| `Tab` / `esc` | Move the keys back to Tracks |
+
+Albums and playlists are expanded to their songs when added. An item already in Tracks is never added twice; it is highlighted there instead.
 
 ### Command mode (`:`)
 
-Vim-style command mode — press `:` from anywhere to open the command prompt.
-
 | Command | Description |
 |---------|-------------|
-| `:save <name>` | Save the current queue as an Apple Music playlist |
-| `:discover <n>\|auto\|stop\|metric` | Queue *n* discovered songs now, auto-discover until `:discover stop`, or pick the similarity metric |
-| `:vol <0-100>` | Set volume to an absolute level (e.g. `:vol 80`) |
-| `:vol +n` / `:vol -n` | Raise or lower volume by *n* percent (e.g. `:vol +10`) |
-| `:vol` | Show current volume in the status bar |
-| `:art` | Toggle the album-art view: the cover (rendered as coloured half-blocks) with track, album, and elapsed time in place of the progress bar |
-| `:mute` | Toggle mute (run again to restore the previous volume) |
-| `:quality <high|standard|256|64>` | Set Apple Music AAC bitrate |
-| `:seek <seconds>` | Jump to an absolute position in the current song |
-| `:debug-logs` | Toggle the debug log panel |
-| `:q` / `:quit` | Quit vibez |
+| `:model <fable\|sonnet\|haiku\|default\|id>` | Model Claude Code uses for `CC` lookups; bare `:model` shows the current one |
+| `:effort <low\|medium\|high\|xhigh\|max\|default>` | Effort for those lookups |
+| `:save <name>` | Save Tracks as an Apple Music playlist |
+| `:radio` | Toggle continuous radio seeded by the playing track |
+| `:shuffle` | Toggle the engine's shuffled play order |
+| `:discover <n>\|auto\|stop\|metric` | Queue discovered songs now or continuously |
+| `:vol <0-100\|+n\|-n>` · `:mute` | Volume |
+| `:quality <high\|standard\|256\|64>` | AAC bitrate |
+| `:seek <seconds>` | Jump inside the current song |
+| `:art` | Toggle the album-art view |
+| `:debug-logs` | Toggle the debug log, where Claude's terms and rankings are recorded |
+| `:q` / `:quit` | Quit |
 
+## Installation
 
-### Discovery mode (`d`)
+vibezAI has no packaged releases; build it from source.
 
-| Key | Action |
-|-----|--------|
-| `+` / `=` | Increase similarity (stay closer to current artist / genre) |
-| `-` | Decrease similarity (explore further afield) |
-| `d` | Stop discovery mode |
+```bash
+git clone https://github.com/angusforbes/vibezAI
+cd vibezAI
+PKG_CONFIG_PATH=$PWD/pkg-config go build -ldflags "-X 'github.com/simone-vibes/vibez/internal/version.Version=0.7.0+queue'" -o vibezAI .
+install -m 555 vibezAI ~/.local/bin/vibezAI
+vibezAI --no-update auth login      # Apple ID sign-in in a Chrome window
+vibezAI --no-update                 # launch
+```
 
-### Equalizer (`e`)
+**Requirements**
 
-| Key | Action |
-|-----|--------|
-| `←` / `→` | Navigate between bands |
-| `↑` / `↓` | Increase / decrease gain (±0.5 dB per step) |
-| `0` | Reset current band to flat (0 dB) |
-| `r` | Reset all bands to flat |
-| `e` | Close equalizer panel |
+- Linux x86-64 (the setup this fork is developed on) · Go 1.26+ · WebKit/GStreamer development packages, or the `pkg-config` shim in the tree.
+- An Apple Music subscription and a **MusicKit developer token** in `apple_developer_token` of `~/.config/vibez/config.json`. The upstream vibez releases embed the author's token; a build of this fork has none. Either build with your own key (`make build-with-token`, see upstream) or run the stock vibez release once, which writes its token to the config file.
+- For `CC` lookups, [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` on `PATH`). Without it, the `CC` prompt falls back to vibez's keyword table.
 
----
+Pass `--no-update`: the self-updater would replace this fork with the upstream release.
 
-## Audio Engines
+## Configuration
+
+`~/.config/vibez/config.json` (the directory name is unchanged from vibez):
+
+| Key | Meaning |
+|-----|---------|
+| `vibe_agent` | `auto` (default: Claude when the CLI is installed, else keywords), `claude`, or `keywords` |
+| `vibe_model` | Model passed to the CLI. Empty means `claude-fable-5-1`; `default` leaves the CLI's own choice |
+| `vibe_effort` | `low` … `max`; empty leaves the CLI's default |
+| `theme` | `default`, `dracula`, `gruvbox`, `nord`, or a custom theme in `~/.config/vibez/themes/<name>.json` |
+| `audio_quality` | `high`/`256` (default) or `standard`/`64` |
+| `album_art` | Album-art view on start |
+| `wsl` | Audio workarounds for WSL2 |
+
+Tracks are saved to `~/.config/vibez/queue.json` after every change and restored on the next start without auto-playing.
+
+## How it differs from vibez
+
+vibezAI started from vibez 0.7.0. The engines, themes, equalizer, discovery and radio modes, Last.fm scrobbling and MPRIS integration are as upstream. The interface and the search are not.
+
+| Area | vibez 0.7.0 | vibezAI |
+|------|-------------|---------|
+| Layout | Queue with a separate Queue panel, Library panel, Vibe panel and a header row | Two columns, Tracks and Search, and nothing else on screen |
+| Queue | In memory only | Tracks persist to `queue.json`; navigated in place with `↑/↓`, `enter`, `d`, `D`, `K/J`; never replaced by a search |
+| Search | Single flat result list, `enter` plays and replaces the queue | Sections (Playlists, Albums, Library, Tracks) with `+ 5 more` / `− 5 less`, foldable headers, paging through Apple's results, duplicates never added |
+| Vibe mode | `v` opens a prompt; a keyword table maps words to genres and dumps 15 shuffled songs into the queue | `CC` prompt inside Search; Claude Code plans the terms and ranks a pool of 40 candidates; results shown as a section headed by the model, nothing added until you say so |
+| Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+↑/↓` and `ctrl+→`, albums and playlists included |
+| Related songs | Continuous radio | `R` inserts five related songs once; `:radio` for continuous |
+| Library | Browser panel | `T` inserts five random library songs; the library is searched as part of every search |
+| Footer | Changes with the mode | One fixed list per column |
+| Model choice | — | `:model`, `:effort`, config keys |
+| Name | vibez | vibezAI (binary, MPRIS identity, splash and About) |
+
+The Go module path is still `github.com/simone-vibes/vibez` so that upstream changes merge cleanly.
+
+## Audio engines
 
 | Engine | Tracks | How it works |
 |--------|--------|--------------|
-| **Chrome + Widevine** | Full tracks | Chrome (amd64) or system Chromium (arm64) via Playwright; MusicKit JS + Widevine DRM |
+| **Chrome + Widevine** | Full tracks | Chrome via Playwright; MusicKit JS + Widevine DRM |
 | **WebKit + GStreamer** *(Linux fallback)* | 30 s previews | Embedded webkit2gtk-4.1; GStreamer decodes preview URLs |
 
-On Linux amd64, Chrome is downloaded once to `~/.cache/vibez/chrome`. On Linux arm64, vibez uses the system Chromium with a persistent profile in `~/.cache/vibez/chromium-arm64` and a system-registered Widevine CDM (registered on a one-time warm-up launch). The Playwright driver is stored in `~/.cache/vibez/driver`. On macOS, vibez uses an installed Google Chrome app.
-
----
-
-## WSL2 Audio Setup
-
-Running vibez inside WSL2 can cause audio underruns or sample-rate distortion because the Hyper-V scheduler introduces jitter and PulseAudio / Windows may run at mismatched rates (44 100 Hz vs 48 000 Hz).
-
-Enable the WSL2 workaround by adding `"wsl": true` to `~/.config/vibez/config.json`:
-
-```json
-{
-  "wsl": true
-}
-```
-
-When enabled, vibez launches Chrome with:
-
-| Flag | Purpose |
-|------|---------|
-| `--audio-buffer-size=4096` | Larger buffer absorbs Hyper-V scheduler jitter |
-| `--disable-features=…,AudioServiceOutOfProcess` | Disables out-of-process audio service that causes distortion at mismatched sample rates |
-
-The flag is `false` by default so native Linux users are unaffected.
-
-### Audio quality
-
-Set `audio_quality` in `~/.config/vibez/config.json`:
-
-```json
-{
-  "audio_quality": "high"
-}
-```
-
-Supported values: `"high"`/`"256"` for 256 kbps AAC (default), `"standard"`/`"64"` for 64 kbps AAC. MusicKit JS/web playback maxes out at 256 kbps AAC; lossless and Hi-Res/ALAC are not available through the Chrome/CDP backend. WebKit + GStreamer uses fixed 30 s preview URLs and cannot change bitrate at runtime.
-
----
+Chrome is downloaded once to `~/.cache/vibez/chrome`; the Playwright driver lives in `~/.cache/vibez/driver`.
 
 ## Architecture
 
 ```
-vibez/
+vibezAI/
 ├── cmd/                    # CLI entry points (cobra)
 ├── internal/
-│   ├── config/             # Config file management
+│   ├── config/             # config.json, queue.json path
 │   ├── auth/               # MusicKit OAuth flow
-│   ├── lastfm/             # Last.fm scrobbling (optional)
-│   ├── provider/           # Provider interface + Apple Music implementation
-│   ├── player/
-│   │   ├── cdp/            # Chrome CDP player (Widevine, full tracks)
-│   │   ├── webkit/         # WebKit player (30 s previews, Linux)
-│   │   ├── gst/            # GStreamer decoder (Linux)
-│   │   └── mpris/          # Linux MPRIS D-Bus server
+│   ├── provider/           # Provider interface + Apple Music (search, paging, stations)
+│   ├── player/             # cdp (Chrome/Widevine), webkit, gst, mpris
+│   ├── queuestate/         # Tracks persistence
 │   ├── tui/
-│   │   ├── model.go        # Bubble Tea model + key handling
-│   │   ├── views/          # Search, queue, library, now-playing, bear
-│   │   └── styles/         # Lipgloss colour palette
-│   └── vibe/               # Vibe agent: mood → search query
-└── scripts/
-    └── gen-devtoken/       # Apple MusicKit JWT generator
+│   │   ├── model.go        # Bubble Tea model, key handling, footers
+│   │   ├── find_panel.go   # Search column: prompts, wrapping input
+│   │   ├── queue_*.go      # Tracks navigation, related songs, library picks
+│   │   └── views/          # search sections + multi-select, now playing, lyrics, about
+│   └── vibe/               # Planner + Reranker: Claude Code CLI, keyword fallback
+└── pkg-config/             # webkit2gtk shim for building on Arch
 ```
 
----
+## Credits and license
 
-## Roadmap
-
-- [x] Queue management (add, navigate, auto-advance)
-- [x] Last.fm scrobbling
-- [ ] **Spotify** provider
-- [ ] **YouTube Music** provider
-- [ ] LLM-powered vibe agent (OpenAI / Ollama)
-- [ ] Lyrics display
-- [ ] Desktop notifications on track change
-
----
-
-## Contributing
-
-Open an issue before sending a PR — happy to discuss ideas.
-
-```bash
-git clone https://github.com/simonepelosi/vibez
-cd vibez
-go mod tidy
-
-# Linux
-PKG_CONFIG_PATH=$PWD/pkg-config go build ./...
-PKG_CONFIG_PATH=$PWD/pkg-config go test ./...
-PKG_CONFIG_PATH=$PWD/pkg-config go run . --demo
-
-# macOS
-go build ./...
-go test ./...
-go run . --demo
-```
-
----
-
-## License
-
-MIT © Simone Pelosi
+vibez is © Simone Pelosi, MIT licensed; if you enjoy the player, consider [supporting the original project](https://ko-fi.com/pelpsi). The changes in this fork are by Angus Forbes and Claude, under the same MIT license.
