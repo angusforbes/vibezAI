@@ -895,6 +895,46 @@ func TestSearchArrows_PlainMoveTracksCtrlMoveSearchCtrlShiftSelect(t *testing.T)
 	}
 }
 
+func TestTracksCtrlArrows_DriveTheSearchList(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	m.queueTracks = []provider.Track{{ID: "1", Title: "One"}, {ID: "2", Title: "Two"}, {ID: "3", Title: "Three"}}
+	m.queueIDs = []string{"1", "2", "3"}
+	m.syncQueue()
+	m.setQueueCursor(0)
+	seedSearchResults(m, provider.Track{Title: "A", CatalogID: "a"}, provider.Track{Title: "B", CatalogID: "b"}, provider.Track{Title: "C", CatalogID: "c"})
+	m.mode = modeNormal // the keys are in Tracks
+	press := func(k string, code rune, mod tea.KeyMod) { m.handleNormalKey(tea.KeyPressMsg{Code: code, Mod: mod}, k) }
+	// From Tracks, Ctrl+↓ moves the Search highlight; Tracks and the mode stay.
+	press("ctrl+down", tea.KeyDown, tea.ModCtrl)
+	if m.search.SelectedIndex() != 1 || m.queueCursor != 0 || m.mode != modeNormal || m.queueIDs[0] != "1" {
+		t.Fatalf("^↓ in Tracks moves the Search highlight only: search=%d cursor=%d mode=%v ids=%v", m.search.SelectedIndex(), m.queueCursor, m.mode, m.queueIDs)
+	}
+	press("ctrl+shift+down", tea.KeyDown, tea.ModCtrl|tea.ModShift)
+	if m.search.SelectionCount() != 2 || m.search.SelectedIndex() != 2 {
+		t.Fatalf("^⇧↓ sweep-selects in Search: sel=%d search=%d", m.search.SelectionCount(), m.search.SelectedIndex())
+	}
+	press("ctrl+right", tea.KeyRight, tea.ModCtrl)
+	if m.search.SelectionCount() != 1 {
+		t.Fatalf("^→ toggles the highlighted Search row: sel=%d", m.search.SelectionCount())
+	}
+	press("ctrl+left", tea.KeyLeft, tea.ModCtrl)
+	if m.search.SelectionCount() != 0 {
+		t.Fatalf("^← clears the Search selection: sel=%d", m.search.SelectionCount())
+	}
+	// K and J still reorder Tracks; Ctrl+arrows no longer do.
+	press("J", 'J', 0)
+	if m.queueIDs[1] != "1" || m.queueCursor != 1 {
+		t.Fatalf("J moves the highlighted track down: ids=%v cursor=%d", m.queueIDs, m.queueCursor)
+	}
+	footer := ansi.Strip(strings.Join(m.statusLines(400), " "))
+	for _, want := range []string{"^↑/↓ search pick", "^⇧↑/↓ search select", "^→/^← search toggle/clear", "K/J move"} {
+		if !strings.Contains(footer, want) {
+			t.Fatalf("the TRACKS row lists %q: %q", want, footer)
+		}
+	}
+}
+
 func TestHandleSearchKey_CtrlComma_DoesNotCallSetQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
@@ -4526,7 +4566,7 @@ func TestStatusLines_SearchModeDropsTheTracksKeys(t *testing.T) {
 func TestStatusLines_TracksKeysAreOneFlow(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.mode = modeNormal
-	lines := m.statusLines(400)
+	lines := m.statusLines(600) // wide enough for the whole Tracks key list
 	if len(lines) != 1 {
 		t.Fatalf("on a wide terminal the Tracks key list is one row, got %d: %q", len(lines), lines)
 	}

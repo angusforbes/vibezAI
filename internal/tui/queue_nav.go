@@ -240,9 +240,9 @@ func (m *Model) handleQueueCursorKey(k string) (tea.Cmd, bool) {
 		return nil, false
 	}
 	switch k {
-	case "K", "ctrl+up", "J", "ctrl+down":
+	case "K", "J":
 		delta := 1
-		if k == "K" || k == "ctrl+up" {
+		if k == "K" {
 			delta = -1
 		}
 		follow := m.queueFollow

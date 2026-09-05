@@ -2020,6 +2020,14 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	// Main view with a highlighted queue entry: space/enter start it, d/x/delete
 	// remove it, K/J move it (see queue_nav.go). Everything else falls through.
 	if m.activePanel < 0 && !m.debugView {
+		switch k {
+		case "ctrl+up", "ctrl+down", "ctrl+shift+up", "ctrl+shift+down", "ctrl+right", "ctrl+left":
+			// The Ctrl+arrows drive the Search list from here too, with the
+			// meanings they have in Search, so both lists can be worked
+			// without changing columns.
+			m.lastKey = ""
+			return m.handleSearchKey(k, msg)
+		}
 		if cmd, handled := m.handleQueueCursorKey(k); handled {
 			return cmd
 		}
@@ -3839,6 +3847,9 @@ func (m *Model) statusPlayParts() []string {
 		accent.Render("s") + muted.Render(" random"),
 		accent.Render("r") + muted.Render(" repeat"),
 		accent.Render("c") + muted.Render(" clear"),
+		accent.Render("^↑/↓") + muted.Render(" search pick"),
+		accent.Render("^⇧↑/↓") + muted.Render(" search select"),
+		accent.Render("^→/^←") + muted.Render(" search toggle/clear"),
 	}
 	if m.discovery.enabled {
 		parts = append(parts, accent.Render(":discover")+styles.Playing.Render(" ● on"))

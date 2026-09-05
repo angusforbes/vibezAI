@@ -86,6 +86,9 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `d` | Remove the highlighted track |
 | `D` / `ctrl+shift+d` | Cut everything from the highlight down / everything above it |
 | `K` / `J` | Move the highlighted track up / down |
+| `ctrl+↑` / `ctrl+↓` | Move the highlight in Search without leaving Tracks |
+| `ctrl+shift+↑` / `ctrl+shift+↓` | Sweep-select in Search |
+| `ctrl+→` / `ctrl+←` | Toggle / clear the Search selection |
 | `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom |
 | `R` | Insert five related songs after the highlighted track, once |
 | `T` | Insert five random songs from your library after the highlighted track |
