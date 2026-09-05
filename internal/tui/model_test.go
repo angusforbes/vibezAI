@@ -1144,7 +1144,8 @@ func TestModel_Update_VibeResultMsg_Success(t *testing.T) {
 	m := newModel(mp)
 	m.mode = modeSearch
 	m.search.SetSize(80, 20)
-	m.searchVibe, m.vibeShown = true, "chill"
+	m.setSearchMode(true)
+	m.vibeShown = "chill"
 	tracks := []provider.Track{
 		{Title: "Song A", Artist: "Artist A", ID: "111", CatalogID: "cat111"},
 	}
@@ -1167,7 +1168,8 @@ func TestModel_Update_VibeResultMsg_Error(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.mode = modeSearch
 	m.search.SetSize(80, 20)
-	m.searchVibe, m.vibeShown = true, "chill"
+	m.setSearchMode(true)
+	m.vibeShown = "chill"
 	m.search.SetResults(nil, true, nil)
 	m.Update(vibeResultMsg{err: errors.New("search failed"), query: "chill"})
 	if m.search.Loading() || len(m.search.Results()) != 0 || m.errMsg != "" {
@@ -3956,7 +3958,7 @@ func TestHandleSearchKey_EnterInVibesModeFindsSongsThenActsOnRows(t *testing.T) 
 	m.provider = &mockProvider{}
 	m.mode = modeSearch
 	m.search.SetSize(80, 20)
-	m.searchVibe = true
+	m.setSearchMode(true)
 	m.searchQuery = "late night coding"
 	m.searchCursor = len(m.searchQuery)
 
@@ -4075,7 +4077,8 @@ func TestRunVibeSearch_UsesThePlannerTermsAndInterleaves(t *testing.T) {
 	// the panel says who planned what, above the songs, without making it selectable.
 	m.mode = modeSearch
 	m.search.SetSize(80, 40)
-	m.searchVibe, m.vibeShown = true, "dreamy soul"
+	m.setSearchMode(true)
+	m.vibeShown = "dreamy soul"
 	if _, cmd := m.Update(msg); cmd != nil {
 		t.Fatal("without a reranker the candidates are final: no second stage")
 	}
@@ -4122,7 +4125,7 @@ func TestSearchFindLines_BusyAnimatesTheModeText(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.mode = modeSearch
 	m.search.SetSize(60, 20)
-	m.searchVibe = true
+	m.setSearchMode(true)
 	m.vibePlanner = &fakePlanner{plan: vibe.Plan{Queries: []string{"x"}}}
 	idle := m.findHeader()
 	if cmd := m.startVibeSearch("anything"); cmd == nil {
@@ -4146,7 +4149,7 @@ func TestSearchFindLines_BusyAnimatesTheModeText(t *testing.T) {
 		t.Fatalf("after the lookup the header is back to normal: %q vs %q", got, idle)
 	}
 	// Plain Apple Music search animates its own label too.
-	m.searchVibe = false
+	m.setSearchMode(false)
 	m.search.SetResults(nil, true, nil)
 	if h := m.findHeader(); !strings.Contains(ansi.Strip(h), "Apple Music") || h == styles.Header.Bold(true).Render("Search")+styles.QueueItemMuted.Render("  Apple Music") {
 		t.Fatalf("a slow regular search animates Apple Music: %q", h)
@@ -4178,7 +4181,8 @@ func TestVibeLookup_RerankerOrdersThePool(t *testing.T) {
 	m.vibePlanner = rr
 	m.mode = modeSearch
 	m.search.SetSize(80, 40)
-	m.searchVibe, m.vibeShown = true, "dreamy soul"
+	m.setSearchMode(true)
+	m.vibeShown = "dreamy soul"
 	m.search.SetResults(nil, true, nil)
 
 	stage1 := m.runVibeSearch("dreamy soul")()
@@ -4273,4 +4277,78 @@ func TestSearchFooter_LongQueryKeepsCursorAndHints(t *testing.T) {
 	if !strings.Contains(plain, "long vibe █desc") || !strings.Contains(plain, "…   Enter") {
 		t.Fatalf("the window should show the text around the cursor and mark the cut on the right: %q", plain)
 	}
+}
+
+func TestCtrlSlash_KeepsEachModesResultsAndSkipsRepeatLookups(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &termProvider{n: 3}
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	// Apple Music results for "coltrane".
+	m.searchQuery, m.searchCursor = "coltrane", 8
+	m.Update(searchResultMsg{query: "coltrane", result: &provider.SearchResult{Tracks: catalogTracks(4)}})
+	if len(m.search.Results()) != 4 || m.searchShown != "coltrane" {
+		t.Fatalf("setup: AM results missing (%d, shown=%q)", len(m.search.Results()), m.searchShown)
+	}
+	// First switch to Claude Code: the text has never been looked up there → lookup.
+	cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl})
+	if cmd == nil || !m.searchVibe || !m.search.Loading() {
+		t.Fatalf("first Claude Code switch must look the text up (cmd=%v vibe=%v loading=%v)", cmd != nil, m.searchVibe, m.search.Loading())
+	}
+	m.Update(vibeResultMsg{query: "coltrane", via: "Test", plan: vibe.Plan{Model: "fable-5-1", Summary: "Late Coltrane"}, tracks: catalogTracks(2)})
+	if !m.search.VibeResults() || len(m.search.Results()) != 2 {
+		t.Fatalf("Claude Code results should show (vibe=%v n=%d)", m.search.VibeResults(), len(m.search.Results()))
+	}
+	// Back to Apple Music: same text, its results are still there → no search.
+	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil || m.searchVibe || m.search.Loading() {
+		t.Fatalf("same text back in Apple Music must not re-search (cmd=%v vibe=%v loading=%v)", cmd != nil, m.searchVibe, m.search.Loading())
+	}
+	if m.search.VibeResults() || len(m.search.Results()) != 4 {
+		t.Fatalf("the Apple Music list should be back untouched (vibe=%v n=%d)", m.search.VibeResults(), len(m.search.Results()))
+	}
+	// And forward again: the Claude Code songs are still there → no new lookup.
+	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil || !m.search.VibeResults() || len(m.search.Results()) != 2 {
+		t.Fatalf("same text back in Claude Code must reuse its songs (cmd=%v vibe=%v n=%d)", cmd != nil, m.search.VibeResults(), len(m.search.Results()))
+	}
+	if v := m.search.View(); !strings.Contains(v, "Fable 5.1") || !strings.Contains(v, "Late Coltrane") {
+		t.Fatalf("the kept Claude Code list keeps its header and summary: %q", v)
+	}
+	// A changed text is a new search in whichever mode it is switched to.
+	m.handleSearchKey("!", tea.KeyPressMsg{Code: '!', Text: "!"})
+	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd == nil || m.searchVibe || !m.search.Loading() {
+		t.Fatalf("new text switching to Apple Music must search it (cmd=%v vibe=%v loading=%v)", cmd != nil, m.searchVibe, m.search.Loading())
+	}
+	// An empty query never looks anything up.
+	m.searchQuery, m.searchCursor = "", 0
+	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil || !m.searchVibe {
+		t.Fatalf("empty text: just switch (cmd=%v vibe=%v)", cmd != nil, m.searchVibe)
+	}
+}
+
+func TestVibeResult_LandsInClaudeListWhileAppleMusicShows(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	m.setSearchMode(true)
+	m.searchQuery = "chill"
+	m.startVibeSearch("chill")
+	m.setSearchMode(false) // user switched back before the answer came
+	m.Update(vibeResultMsg{query: "chill", via: "Test", plan: vibe.Plan{Summary: "s"}, tracks: catalogTracks(1)})
+	if m.search.VibeResults() {
+		t.Fatal("the Apple Music list must not be replaced by the late Claude result")
+	}
+	m.setSearchMode(true)
+	if !m.search.VibeResults() || len(m.search.Results()) != 1 || m.search.Loading() {
+		t.Fatalf("the Claude Code list should hold the late result (vibe=%v n=%d loading=%v)", m.search.VibeResults(), len(m.search.Results()), m.search.Loading())
+	}
+}
+
+// catalogTracks builds n distinct catalog tracks.
+func catalogTracks(n int) []provider.Track {
+	var out []provider.Track
+	for i := range n {
+		id := fmt.Sprintf("k%d", i)
+		out = append(out, provider.Track{ID: id, CatalogID: id, Title: "Track " + id, Artist: "Band"})
+	}
+	return out
 }

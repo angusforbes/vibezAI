@@ -377,6 +377,10 @@ type Model struct {
 	searchShown  string // query whose results the search panel currently lists
 	searchVibe   bool   // Search input is in vibes mode ("CC " prompt): Enter finds songs for a description
 	vibeShown    string // vibe description whose songs the panel currently lists
+	// Each mode keeps its own result list, so Ctrl+/ switches between them
+	// without redoing a lookup; m.search points at the active one.
+	searchAM *views.SearchModel // Apple Music search results
+	searchCC *views.SearchModel // Claude Code (vibes) results
 
 	// Command accumulation (mode == modeCommand)
 	cmdBuf     string
@@ -452,7 +456,9 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	m.eqP = &eqPanel{m: views.NewEqualizer(eqBands)}
 	m.vibe = views.NewVibe()
 	m.vibePlanner = vibe.NewPlanner(cfg.VibeAgent, cfg.VibeModel, cfg.VibeEffort)
-	m.search = views.NewSearch(prov)
+	m.searchAM = views.NewSearch(prov)
+	m.searchCC = views.NewSearch(prov)
+	m.search = m.searchAM
 	m.favorites = make(map[string]bool)
 	m.aboutP = &aboutPanel{m: views.NewAbout()}
 	// The library browser panel is not offered (search covers the library);
@@ -953,7 +959,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case searchResultMsg:
 		if msg.err != nil {
 			m.appendLog(fmt.Sprintf("[search] error: %v", msg.err))
-			m.search.SetResults(nil, false, msg.err)
+			m.searchAM.SetResults(nil, false, msg.err)
 		} else {
 			if msg.result != nil {
 				if len(msg.result.Warnings) > 0 {
@@ -963,7 +969,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.appendLog(fmt.Sprintf("[search] %d track(s), %d album(s), %d playlist(s)",
 					len(msg.result.Tracks), len(msg.result.Albums), len(msg.result.Playlists)))
 			}
-			m.search.SetResults(msg.result, false, nil)
+			m.searchAM.SetResults(msg.result, false, nil)
 			m.searchShown = msg.query
 		}
 
@@ -972,13 +978,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
-			m.search.EndPaging()
+			m.searchAM.EndPaging()
 			m.appendLog(fmt.Sprintf("[search] more tracks: %v", msg.err))
 			m.errMsg = fmt.Sprintf("search: %v", msg.err)
 			m.errExpiry = time.Now().Add(4 * time.Second)
 			return m, nil
 		}
-		still := m.search.AppendCatalogTracks(msg.page)
+		still := m.searchAM.AppendCatalogTracks(msg.page)
 		m.appendLog(fmt.Sprintf("[search] +%d catalog track(s) (next offset %d, more=%v)",
 			len(msg.page.Tracks), msg.page.Next, msg.page.More))
 		if still > 0 && msg.hops < maxSearchPageHops {
@@ -1046,7 +1052,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			inner := max(0, m.width-2)
 			m.library.SetSize(max(0, inner-2), m.panelHeight())
 		}
-		m.search = views.NewSearch(msg.Provider)
+		m.searchAM = views.NewSearch(msg.Provider)
+		m.searchCC = views.NewSearch(msg.Provider)
+		m.search = m.searchAM
+		if m.searchVibe {
+			m.search = m.searchCC
+		}
 		m.helperPaths = msg.HelperPaths
 		m.appendLog("[engine] backend: " + msg.Backend)
 		cmds = append(cmds, waitForState(m.stateCh), m.library.Init())
@@ -1220,16 +1231,22 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		// vibes mode ("CC " prompt, Enter finds songs for a description). A plain
 		// "/" is text ("AC/DC"); terminals without the kitty protocol report
 		// Ctrl+/ as ctrl+_ (0x1F), so both spellings are accepted.
-		m.searchVibe = !m.searchVibe
-		if m.searchVibe {
-			// Look the text already typed up as a vibe right away, just as the
-			// other direction re-runs the regular search on it.
-			if m.searchQuery != "" {
-				return m.startVibeSearch(m.searchQuery)
-			}
+		m.setSearchMode(!m.searchVibe)
+		// Each mode keeps the songs it found last time. Only look the text up
+		// when this mode has nothing for it yet: an empty query has nothing
+		// to look up, the same text keeps its results.
+		if m.searchQuery == "" {
 			return nil
 		}
-		m.vibeShown = ""
+		if m.searchVibe {
+			if m.searchQuery == m.vibeShown {
+				return nil
+			}
+			return m.startVibeSearch(m.searchQuery)
+		}
+		if m.searchQuery == m.searchShown {
+			return nil
+		}
 		return m.scheduleSearch(m.searchQuery)
 	case "enter":
 		// Vibes mode: Enter on a description that has not been looked up yet
@@ -2257,7 +2274,7 @@ func (m *Model) fetchMoreTracksCmd(wanted, hops int) tea.Cmd {
 	if !ok {
 		return nil
 	}
-	offset, ok := m.search.BeginPaging(wanted)
+	offset, ok := m.searchAM.BeginPaging(wanted)
 	if !ok {
 		return nil
 	}
@@ -2275,12 +2292,13 @@ func (m *Model) scheduleSearch(query string) tea.Cmd {
 		return nil // vibes mode only searches on Enter
 	}
 	if query == "" {
-		m.search.SetResults(nil, false, nil)
+		m.searchAM.SetResults(nil, false, nil)
+		m.searchShown = ""
 		return nil
 	}
 	m.searchGen++
 	gen := m.searchGen
-	m.search.SetResults(nil, true, nil)
+	m.searchAM.SetResults(nil, true, nil)
 	return func() tea.Msg {
 		time.Sleep(400 * time.Millisecond)
 		return searchDebounceMsg{query: query, gen: gen}
@@ -2294,16 +2312,31 @@ func (m *Model) startVibeSearch(query string) tea.Cmd {
 		return nil
 	}
 	m.vibeShown = query
-	m.searchGen++ // drop any regular search still in flight
-	m.search.SetResults(nil, true, nil)
+	m.searchCC.SetResults(nil, true, nil)
 	return m.runVibeSearch(query)
 }
 
-// handleVibeSearchResult shows the songs found for a vibe description. Late
-// results for an older description, or arriving after the user switched back
-// to regular search, are dropped.
+// setSearchMode switches the Search column between Apple Music search and
+// Claude Code vibes, each with its own result list; the active list takes
+// over the column size.
+func (m *Model) setSearchMode(vibe bool) {
+	m.searchVibe = vibe
+	w, h := m.search.Size()
+	if vibe {
+		m.search = m.searchCC
+	} else {
+		m.search = m.searchAM
+	}
+	if w > 0 && h > 0 {
+		m.search.SetSize(w, h)
+	}
+}
+
+// handleVibeSearchResult shows the songs found for a vibe description in the
+// Claude Code list (even while Apple Music search is showing, so switching
+// back finds them). Late results for an older description are dropped.
 func (m *Model) handleVibeSearchResult(msg vibeResultMsg) {
-	if !m.searchVibe || msg.query != m.vibeShown {
+	if msg.query != m.vibeShown {
 		return
 	}
 	if len(msg.warnings) > 0 {
@@ -2328,11 +2361,11 @@ func (m *Model) handleVibeSearchResult(msg vibeResultMsg) {
 	}
 	if msg.err != nil {
 		m.appendLog(fmt.Sprintf("[vibe] search error: %v", msg.err))
-		m.search.SetVibeResults(nil, title, note...)
+		m.searchCC.SetVibeResults(nil, title, note...)
 		return
 	}
 	m.appendLog(fmt.Sprintf("[vibe] %d song(s) for %q", len(msg.tracks), msg.query))
-	m.search.SetVibeResults(msg.tracks, title, note...)
+	m.searchCC.SetVibeResults(msg.tracks, title, note...)
 }
 
 // vibeResultCap is how many songs a vibe lookup lists; vibePoolCap is how many
@@ -2436,7 +2469,7 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 // goes back to it with the description and the panel says so; otherwise the
 // first vibeResultCap candidates are shown in search order.
 func (m *Model) handleVibeCandidates(msg vibeCandidatesMsg) tea.Cmd {
-	if !m.searchVibe || msg.query != m.vibeShown {
+	if msg.query != m.vibeShown {
 		return nil
 	}
 	final := vibeResultMsg{query: msg.query, plan: msg.plan, via: msg.via, warnings: msg.warnings, err: msg.err}

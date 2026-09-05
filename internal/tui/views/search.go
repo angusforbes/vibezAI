@@ -127,6 +127,9 @@ func (m *SearchModel) SetSize(w, h int) {
 	m.height = h
 }
 
+// Size reports the last SetSize.
+func (m *SearchModel) Size() (w, h int) { return m.width, m.height }
+
 // SetResults updates the model with a full search result (tracks + albums + playlists).
 func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, err error) {
 	m.loading = loading
