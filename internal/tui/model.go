@@ -3757,8 +3757,8 @@ func (m *Model) statusNavLines(w int) []string {
 		parts = append(parts, toggle, accent.Render("Tab")+muted.Render(" tracks"))
 		return wrapFit(parts, dot, w)
 	case modeCommand:
-		// The one place commands are listed: every command, always, like the
-		// SEARCH row lists every key. The row is the commands and Esc only;
+		// The one place commands are listed: every command with what it takes,
+		// always, like the SEARCH row lists every key. The row is the commands and Esc only;
 		// Enter runs what is typed and Tab completes the first match, both
 		// unlisted. The buffer is windowed like the search query so a long
 		// `:save <name>` keeps its cursor on the row. The split stays on
@@ -3773,7 +3773,12 @@ func (m *Model) statusNavLines(w int) []string {
 		}
 		parts := []string{label + buf + accent.Render("█")}
 		for _, c := range allCommands {
-			parts = append(parts, accent.Render(":"+c.trigger))
+			// The command and what it takes, from its usage: ":vol <0-100|+n|-n>".
+			part := accent.Render(":" + c.trigger)
+			if args := strings.TrimPrefix(c.usage, c.trigger); args != "" {
+				part += muted.Render(args)
+			}
+			parts = append(parts, part)
 		}
 		parts = append(parts, accent.Render("Esc")+muted.Render(" cancel"))
 		return wrapFit(parts, dot, w)
