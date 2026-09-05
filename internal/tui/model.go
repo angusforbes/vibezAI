@@ -379,6 +379,7 @@ type Model struct {
 	searchGen    int          // incremented on every keystroke; used to discard stale results
 	searchShown  string       // query whose results the search panel currently lists
 	searchSrc    searchSource // what the Search column asks: Apple Music, Claude Code or the saved lists (Ctrl+/ cycles)
+	searchTyping bool         // the Search prompt takes keystrokes (Ctrl+' toggles; Enter and Esc end it)
 	vibeShown    string       // vibe description whose songs the panel currently lists
 	// Each mode keeps its own result list, so Ctrl+/ switches between them
 	// without redoing a lookup; m.search points at the active one.
@@ -1238,40 +1239,69 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
+	if !m.searchTyping {
+		// Browsing: the prompt takes nothing until Ctrl+' opens it, so keys
+		// cannot land in the query by accident. ":" opens command mode as it
+		// does from Tracks.
+		switch {
+		case k == ":":
+			m.mode = modeCommand
+			m.cmdBuf = ""
+			return nil
+		case isSearchEditKey(k):
+			return nil
+		}
+	}
 	switch k {
+	case "ctrl+'", "ctrl+;":
+		// Start or stop typing into the prompt (two spellings: the keys sit
+		// side by side). The saved lists take no text.
+		if m.searchSrc == searchSaved {
+			m.flashStatus("the saved lists take no text; ^/ for Apple Music or Claude Code", 3*time.Second)
+			return nil
+		}
+		m.searchTyping = !m.searchTyping
+		return nil
 	case "esc":
-		// Hand the keys back to the queue; the query and results stay visible.
+		// Typing: stop, keeping the text. Browsing: hand the keys back to the
+		// queue; the query and results stay visible.
+		if m.searchTyping {
+			m.searchTyping = false
+			return nil
+		}
 		m.mode = modeNormal
 		return nil
 	case "ctrl+/", "ctrl+_":
-		// Cycle the source: Apple Music ("AM", searches as you type) → Claude
+		// Cycle the source: Apple Music ("AM", searches on Enter) → Claude
 		// Code ("CC", Enter finds songs for a description) → the saved lists
 		// ("SV") → Apple Music. A plain "/" is text ("AC/DC"); terminals
 		// without the kitty protocol report Ctrl+/ as ctrl+_ (0x1F), so both
 		// spellings are accepted.
 		m.setSearchSource(m.searchSrc.next())
-		// Each source keeps what it showed last time. Only look the text up
-		// when this source has nothing for it yet: an empty query has nothing
-		// to look up, the same text keeps its results, and the saved lists
-		// never look anything up.
-		if m.searchQuery == "" || m.searchSrc == searchSaved {
-			return nil
-		}
-		if m.searchSrc == searchClaude {
-			if m.searchQuery == m.vibeShown {
-				return nil
-			}
-			return m.startVibeSearch(m.searchQuery)
-		}
-		if m.searchQuery == m.searchShown {
-			return nil
-		}
-		return m.scheduleSearch(m.searchQuery)
-	case "enter":
-		// Vibes mode: Enter on a description that has not been looked up yet
-		// finds songs for it; once its songs are listed, Enter acts on rows.
+		// Each source keeps what it showed last time. Claude Code looks new
+		// text up on the way in (the same text keeps its songs); Apple Music
+		// searches on Enter only and the saved lists never look anything up.
 		if m.searchSrc == searchClaude && m.searchQuery != "" && m.searchQuery != m.vibeShown {
 			return m.startVibeSearch(m.searchQuery)
+		}
+		return nil
+	case "enter":
+		// Typing: Enter ends it and runs the text, an Apple Music search or a
+		// Claude Code lookup (unchanged text is not run again). Browsing:
+		// Enter acts on rows.
+		if m.searchTyping {
+			m.searchTyping = false
+			switch m.searchSrc {
+			case searchApple:
+				if m.searchQuery != m.searchShown {
+					return m.scheduleSearch(m.searchQuery)
+				}
+			case searchClaude:
+				if m.searchQuery != "" && m.searchQuery != m.vibeShown {
+					return m.startVibeSearch(m.searchQuery)
+				}
+			}
+			return nil
 		}
 		// Enter on a section header folds it or opens it again.
 		if section, ok := m.search.SelectedHeader(); ok {
@@ -1368,7 +1398,7 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			runes = append(runes[:m.searchCursor-1], runes[m.searchCursor:]...)
 			m.searchQuery = string(runes)
 			m.searchCursor--
-			return m.scheduleSearch(m.searchQuery)
+			return nil
 		}
 		return nil
 	case "delete":
@@ -1376,7 +1406,7 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		if m.searchCursor < len(runes) {
 			runes = append(runes[:m.searchCursor], runes[m.searchCursor+1:]...)
 			m.searchQuery = string(runes)
-			return m.scheduleSearch(m.searchQuery)
+			return nil
 		}
 		return nil
 	case "ctrl+w":
@@ -1390,7 +1420,7 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			runes = append(runes[:i], runes[m.searchCursor:]...)
 			m.searchQuery = string(runes)
 			m.searchCursor = i
-			return m.scheduleSearch(m.searchQuery)
+			return nil
 		}
 		return nil
 	case "ctrl+u":
@@ -1398,23 +1428,33 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		runes := []rune(m.searchQuery)
 		m.searchQuery = string(runes[m.searchCursor:])
 		m.searchCursor = 0
-		return m.scheduleSearch(m.searchQuery)
+		return nil
 	case "space":
 		runes := []rune(m.searchQuery)
 		runes = append(runes[:m.searchCursor], append([]rune{' '}, runes[m.searchCursor:]...)...)
 		m.searchQuery = string(runes)
 		m.searchCursor++
-		return m.scheduleSearch(m.searchQuery)
+		return nil
 	default:
 		if len(k) == 1 && k[0] >= 32 {
 			runes := []rune(m.searchQuery)
 			runes = append(runes[:m.searchCursor], append([]rune{rune(k[0])}, runes[m.searchCursor:]...)...)
 			m.searchQuery = string(runes)
 			m.searchCursor++
-			return m.scheduleSearch(m.searchQuery)
+			return nil
 		}
 	}
 	return nil
+}
+
+// isSearchEditKey reports whether k edits the Search prompt: text, and the
+// cursor and deletion keys. While browsing these are ignored.
+func isSearchEditKey(k string) bool {
+	switch k {
+	case "left", "right", "home", "ctrl+a", "end", "ctrl+e", "backspace", "delete", "ctrl+w", "ctrl+u", "space":
+		return true
+	}
+	return len(k) == 1 && k[0] >= 32
 }
 
 // ── Command palette ───────────────────────────────────────────────────────
@@ -2160,8 +2200,10 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	// Keys that only work when no panel is covering the content area.
 	switch k {
 	case "tab", "shift+tab":
-		// Focus the Search column; Tab there brings the keys back to the queue.
+		// Focus the Search column, browsing (Ctrl+' starts typing); Tab there
+		// brings the keys back to the queue.
 		m.mode = modeSearch
+		m.searchTyping = false
 
 	case "j", "down":
 		m.lastKey = ""
@@ -2425,7 +2467,7 @@ func (m *Model) fetchMoreTracksCmd(wanted, hops int) tea.Cmd {
 
 func (m *Model) scheduleSearch(query string) tea.Cmd {
 	if m.searchSrc != searchApple {
-		return nil // only Apple Music searches as you type
+		return nil // only Apple Music has a plain search
 	}
 	if query == "" {
 		m.searchAM.SetResults(nil, false, nil)
@@ -2435,10 +2477,9 @@ func (m *Model) scheduleSearch(query string) tea.Cmd {
 	m.searchGen++
 	gen := m.searchGen
 	m.searchAM.SetResults(nil, true, nil)
-	return func() tea.Msg {
-		time.Sleep(400 * time.Millisecond)
-		return searchDebounceMsg{query: query, gen: gen}
-	}
+	// Searches run on Enter, so there is nothing to debounce; the gen still
+	// drops a result that a newer search has overtaken.
+	return func() tea.Msg { return searchDebounceMsg{query: query, gen: gen} }
 }
 
 // startVibeSearch looks up songs for a vibe description typed into the Search
@@ -3696,32 +3737,49 @@ func (m *Model) statusNavLines(w int) []string {
 		case searchSaved:
 			glyph, toggle = "SV ", accent.Render("^/")+muted.Render(" apple music")
 		}
-		// Every key that works here, always listed; only Enter's meaning
-		// changes, when a new description waits to be looked up by Claude.
-		enter := accent.Render("Enter") + muted.Render(" open/fold")
-		if m.searchSrc == searchClaude && m.searchQuery != m.vibeShown {
-			enter = accent.Render("Enter") + muted.Render(" find songs")
+		// Every key that works here, always listed. While typing, Enter runs
+		// the text (a search or a lookup) and ends typing; browsing, it acts
+		// on rows. The list keys are Ctrl+something or arrows, so they work
+		// and are listed either way.
+		var actions []string
+		if m.searchTyping {
+			run := " search"
+			if m.searchSrc == searchClaude {
+				run = " find songs"
+			}
+			actions = append(actions,
+				accent.Render("Enter")+muted.Render(run),
+				accent.Render("^'/Esc")+muted.Render(" stop typing"),
+			)
+		} else {
+			actions = append(actions, accent.Render("Enter")+muted.Render(" open/fold"))
+			if m.searchSrc != searchSaved {
+				actions = append(actions, accent.Render("^'")+muted.Render(" type"))
+			}
 		}
-		actions := []string{
-			accent.Render("^↑/↓") + muted.Render(" pick"),
-			enter,
-			accent.Render("^⇧↑/↓") + muted.Render(" select"),
-			accent.Render("^→") + muted.Render(" toggle select"),
-			accent.Render("^←") + muted.Render(" clear/restore"),
-			accent.Render("^,") + muted.Render(" add"),
-			accent.Render("^.") + muted.Render(" add & play"),
-		}
+		actions = append(actions,
+			accent.Render("^↑/↓")+muted.Render(" pick"),
+			accent.Render("^⇧↑/↓")+muted.Render(" select"),
+			accent.Render("^→")+muted.Render(" toggle select"),
+			accent.Render("^←")+muted.Render(" clear/restore"),
+			accent.Render("^,")+muted.Render(" add"),
+			accent.Render("^.")+muted.Render(" add & play"),
+		)
 		if m.searchSrc == searchSaved {
 			actions = append(actions, accent.Render("^Del")+muted.Render(" delete list"))
 		}
 		head := styles.ModeSearch.Render(label) + "  " + accent.Render(glyph)
 		// The prompt shows the part of the query around the cursor that fits
-		// the row, marking what is cut; the key hints follow as dot-separated
-		// parts and wrap to further rows only where the width forces it.
+		// the row, marking what is cut; the block cursor shows only while
+		// typing. The key hints follow as dot-separated parts and wrap to
+		// further rows only where the width forces it.
 		runes := []rune(m.searchQuery)
 		cur := min(m.searchCursor, len(runes))
 		shown, curIdx, cutLeft, cutRight := queryWindow(runes, cur, max(8, w-lipgloss.Width(head)-1))
-		query := styles.Header.Render(string(shown[:curIdx])) + accent.Render("█") + styles.Header.Render(string(shown[curIdx:]))
+		query := muted.Render(string(shown))
+		if m.searchTyping {
+			query = styles.Header.Render(string(shown[:curIdx])) + accent.Render("█") + styles.Header.Render(string(shown[curIdx:]))
+		}
 		if cutLeft {
 			query = muted.Render("…") + query
 		}

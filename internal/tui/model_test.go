@@ -935,6 +935,73 @@ func TestTracksCtrlArrows_DriveTheSearchList(t *testing.T) {
 	}
 }
 
+func TestSearchTyping_ToggleEnterAndEsc(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	m.provider = &mockProvider{}
+	m.handleNormalKey(tea.KeyPressMsg{Code: tea.KeyTab}, "tab")
+	if m.mode != modeSearch || m.searchTyping {
+		t.Fatalf("Tab lands in Search, browsing: mode=%v typing=%v", m.mode, m.searchTyping)
+	}
+	typeText := func(text string) tea.Cmd {
+		var cmd tea.Cmd
+		for _, r := range text {
+			cmd = m.handleSearchKey(string(r), tea.KeyPressMsg{Code: r, Text: string(r)})
+		}
+		return cmd
+	}
+	typeText("x")
+	if m.searchQuery != "" {
+		t.Fatalf("browsing: text goes nowhere, got %q", m.searchQuery)
+	}
+	footer := ansi.Strip(strings.Join(m.statusLines(400), " "))
+	if !strings.Contains(footer, "^' type") || !strings.Contains(footer, "Enter open/fold") {
+		t.Fatalf("browsing footer: %q", footer)
+	}
+	if s := (tea.KeyPressMsg{Code: 0x27, Mod: tea.ModCtrl}).String(); s != "ctrl+'" {
+		t.Fatalf("ctrl+' is named %q", s)
+	}
+	m.handleSearchKey("ctrl+'", tea.KeyPressMsg{Code: 0x27, Mod: tea.ModCtrl})
+	if !m.searchTyping {
+		t.Fatal("^' starts typing")
+	}
+	if cmd := typeText("jazz"); cmd != nil || m.searchQuery != "jazz" || m.search.Loading() {
+		t.Fatalf("typing edits the text and searches nothing yet: cmd=%v query=%q loading=%v", cmd != nil, m.searchQuery, m.search.Loading())
+	}
+	footer = ansi.Strip(strings.Join(m.statusLines(400), " "))
+	if !strings.Contains(footer, "Enter search") || !strings.Contains(footer, "stop typing") || strings.Contains(footer, "^' type") {
+		t.Fatalf("typing footer: %q", footer)
+	}
+	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil || m.searchTyping || !m.search.Loading() {
+		t.Fatalf("Enter runs the search and ends typing: cmd=%v typing=%v loading=%v", cmd != nil, m.searchTyping, m.search.Loading())
+	}
+	// Esc while typing only stops typing; browsing, it hands the keys back.
+	m.handleSearchKey("ctrl+;", tea.KeyPressMsg{Code: ';', Mod: tea.ModCtrl})
+	if !m.searchTyping {
+		t.Fatal("^; is the other spelling of the toggle")
+	}
+	m.handleSearchKey("esc", tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.searchTyping || m.mode != modeSearch {
+		t.Fatalf("Esc stops typing and stays in Search: typing=%v mode=%v", m.searchTyping, m.mode)
+	}
+	m.handleSearchKey("esc", tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.mode != modeNormal {
+		t.Fatalf("Esc while browsing hands the keys back: mode=%v", m.mode)
+	}
+	// ":" while browsing opens command mode; the saved lists take no text.
+	m.mode = modeSearch
+	m.handleSearchKey(":", tea.KeyPressMsg{Code: ':', Text: ":"})
+	if m.mode != modeCommand {
+		t.Fatalf(": while browsing opens command mode, got %v", m.mode)
+	}
+	m.mode = modeSearch
+	m.setSearchSource(searchSaved)
+	m.handleSearchKey("ctrl+'", tea.KeyPressMsg{Code: 0x27, Mod: tea.ModCtrl})
+	if m.searchTyping || !strings.Contains(m.errMsg, "no text") {
+		t.Fatalf("SV takes no text: typing=%v msg=%q", m.searchTyping, m.errMsg)
+	}
+}
+
 func TestHandleSearchKey_CtrlComma_DoesNotCallSetQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
@@ -1076,6 +1143,7 @@ func TestHandleSearchKey_Esc_ReturnsToQueueKeepingQuery(t *testing.T) {
 func TestHandleSearchKey_Backspace_DeletesLastChar(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "abc"
 	m.searchCursor = 3 // cursor at end
 
@@ -1089,6 +1157,7 @@ func TestHandleSearchKey_Backspace_DeletesLastChar(t *testing.T) {
 func TestHandleSearchKey_Typing_AppendsToQuery(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "hel"
 	m.searchCursor = 3 // cursor at end
 
@@ -1118,6 +1187,7 @@ func TestHandleSearchKey_Enter_StaysInSearch(t *testing.T) {
 func TestHandleSearchKey_Left_MovesCursorBack(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "hello"
 	m.searchCursor = 5
 
@@ -1131,6 +1201,7 @@ func TestHandleSearchKey_Left_MovesCursorBack(t *testing.T) {
 func TestHandleSearchKey_Left_ClampAtZero(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "hello"
 	m.searchCursor = 0
 
@@ -1144,6 +1215,7 @@ func TestHandleSearchKey_Left_ClampAtZero(t *testing.T) {
 func TestHandleSearchKey_Right_MovesCursorForward(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "hello"
 	m.searchCursor = 2
 
@@ -1157,6 +1229,7 @@ func TestHandleSearchKey_Right_MovesCursorForward(t *testing.T) {
 func TestHandleSearchKey_Right_ClampAtEnd(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "hello"
 	m.searchCursor = 5
 
@@ -1170,6 +1243,7 @@ func TestHandleSearchKey_Right_ClampAtEnd(t *testing.T) {
 func TestHandleSearchKey_Home_MovesCursorToStart(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "hello"
 	m.searchCursor = 3
 
@@ -1183,6 +1257,7 @@ func TestHandleSearchKey_Home_MovesCursorToStart(t *testing.T) {
 func TestHandleSearchKey_End_MovesCursorToEnd(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "hello"
 	m.searchCursor = 0
 
@@ -1196,6 +1271,7 @@ func TestHandleSearchKey_End_MovesCursorToEnd(t *testing.T) {
 func TestHandleSearchKey_Backspace_DeletesAtCursor(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "hello"
 	m.searchCursor = 3 // cursor after "hel", before "lo"
 
@@ -1212,6 +1288,7 @@ func TestHandleSearchKey_Backspace_DeletesAtCursor(t *testing.T) {
 func TestHandleSearchKey_Delete_DeletesAfterCursor(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "hello"
 	m.searchCursor = 2 // cursor after "he", before "llo"
 
@@ -1228,6 +1305,7 @@ func TestHandleSearchKey_Delete_DeletesAfterCursor(t *testing.T) {
 func TestHandleSearchKey_Typing_InsertsAtCursor(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "hllo"
 	m.searchCursor = 1 // cursor after "h", before "llo"
 
@@ -1244,6 +1322,7 @@ func TestHandleSearchKey_Typing_InsertsAtCursor(t *testing.T) {
 func TestHandleSearchKey_CtrlW_DeletesWordBefore(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "foo bar"
 	m.searchCursor = 7
 
@@ -1257,6 +1336,7 @@ func TestHandleSearchKey_CtrlW_DeletesWordBefore(t *testing.T) {
 func TestHandleSearchKey_CtrlU_ClearsBeforeCursor(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "hello world"
 	m.searchCursor = 5
 
@@ -3212,6 +3292,7 @@ func TestHandleNormalKey_ActivePanel_ForwardKey(t *testing.T) {
 func TestHandleSearchKey_Space_InsertsSpaceInQuery(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = "taylor"
 	m.searchCursor = 6
 
@@ -3987,6 +4068,7 @@ func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 		t.Fatal("regular search is the default")
 	}
 	// A plain slash is text: "AC/DC" must stay searchable.
+	m.searchTyping = true
 	for _, r := range "AC/DC" {
 		m.handleSearchKey(string(r), tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
@@ -4025,9 +4107,12 @@ func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 	if lines := m.searchFindLines(40, 6); !strings.Contains(lines[2], "SV") || !strings.Contains(ansi.Strip(lines[0]), "Saved lists") {
 		t.Fatalf("the saved-lists source shows the SV prompt and names itself: %q / %q", lines[2], ansi.Strip(lines[0]))
 	}
-	// Back to regular search: the text is looked up the regular way.
-	if cmd := m.handleSearchKey("ctrl+_", tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}); cmd == nil || m.searchSrc != searchApple {
-		t.Fatalf("ctrl+/ again (legacy ctrl+_ spelling) should return to regular search and look the text up (cmd=%v src=%v)", cmd != nil, m.searchSrc)
+	// Back to regular search: switching runs nothing; Enter then looks the text up.
+	if cmd := m.handleSearchKey("ctrl+_", tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}); cmd != nil || m.searchSrc != searchApple {
+		t.Fatalf("ctrl+/ again (legacy ctrl+_ spelling) should return to regular search without searching (cmd=%v src=%v)", cmd != nil, m.searchSrc)
+	}
+	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil || m.searchTyping {
+		t.Fatalf("Enter runs the Apple Music search and ends typing (cmd=%v typing=%v)", cmd != nil, m.searchTyping)
 	}
 	if lines := m.searchFindLines(40, 6); !strings.Contains(lines[2], "AM") || !strings.Contains(ansi.Strip(lines[0]), "Apple Music") {
 		t.Fatalf("regular mode shows the AM prompt and names Apple Music: %q / %q", lines[2], ansi.Strip(lines[0]))
@@ -4039,6 +4124,7 @@ func TestHandleSearchKey_EnterInVibesModeFindsSongsThenActsOnRows(t *testing.T) 
 	m := newModel(mp)
 	m.provider = &mockProvider{}
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.search.SetSize(80, 20)
 	m.setSearchSource(searchClaude)
 	m.searchQuery = "late night coding"
@@ -4082,7 +4168,8 @@ func TestHandleSearchKey_EnterInVibesModeFindsSongsThenActsOnRows(t *testing.T) 
 	if len(m.queueIDs) != 2 || m.queueIDs[1] != "v1" {
 		t.Fatalf("Ctrl+, should append the next song, got %v", m.queueIDs)
 	}
-	// Editing the description makes Enter a lookup again.
+	// Editing the description (Ctrl+' to type again) makes Enter a lookup again.
+	m.handleSearchKey("ctrl+'", tea.KeyPressMsg{Code: 0x27, Mod: tea.ModCtrl})
 	m.handleSearchKey("!", tea.KeyPressMsg{Code: '!', Text: "!"})
 	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil || m.vibeShown != "late night coding!" {
 		t.Fatalf("a changed description must be looked up on Enter (cmd=%v shown=%q)", cmd != nil, m.vibeShown)
@@ -4307,6 +4394,7 @@ func TestVibeLookup_RerankerOrdersThePool(t *testing.T) {
 func TestSearchFindLines_LongQueryWraps(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.search.SetSize(20, 20)
 	m.searchQuery = strings.Repeat("abcdefghij", 5) // 50 runes, 17 fit per row
 	m.searchCursor = len(m.searchQuery)
@@ -4340,6 +4428,7 @@ func TestSearchFindLines_LongQueryWraps(t *testing.T) {
 func TestSearchFooter_LongQueryKeepsCursorAndHints(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.mode = modeSearch
+	m.searchTyping = true
 	m.searchQuery = strings.Repeat("long vibe description ", 12)
 	m.searchCursor = len([]rune(m.searchQuery))
 	lines := m.statusNavLines(90)
@@ -4502,12 +4591,16 @@ func TestCtrlSlash_KeepsEachModesResultsAndSkipsRepeatLookups(t *testing.T) {
 	if v := m.search.View(); !strings.Contains(v, "Fable 5.1") || !strings.Contains(v, "Late Coltrane") {
 		t.Fatalf("the kept Claude Code list keeps its header and summary: %q", v)
 	}
-	// A changed text is a new search in whichever mode it is switched to
-	// (through the saved lists first, which ignore it).
+	// A changed text: Claude Code looks it up on the way in, Apple Music
+	// waits for Enter (through the saved lists first, which ignore it).
+	m.searchTyping = true
 	m.handleSearchKey("!", tea.KeyPressMsg{Code: '!', Text: "!"})
 	m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl})
-	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd == nil || m.searchSrc != searchApple || !m.search.Loading() {
-		t.Fatalf("new text switching to Apple Music must search it (cmd=%v vibe=%v loading=%v)", cmd != nil, m.searchSrc == searchClaude, m.search.Loading())
+	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil || m.searchSrc != searchApple || m.search.Loading() {
+		t.Fatalf("switching to Apple Music with new text does not search yet (cmd=%v src=%v loading=%v)", cmd != nil, m.searchSrc, m.search.Loading())
+	}
+	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd == nil || !m.search.Loading() || m.searchTyping {
+		t.Fatalf("Enter searches the new text and ends typing (cmd=%v loading=%v typing=%v)", cmd != nil, m.search.Loading(), m.searchTyping)
 	}
 	// An empty query never looks anything up.
 	m.searchQuery, m.searchCursor = "", 0

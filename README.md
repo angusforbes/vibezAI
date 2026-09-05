@@ -28,13 +28,13 @@ vibezAI is a keyboard-driven Apple Music player for the terminal. Full tracks st
 </p>
 
 - **Tracks** (left) is the one list of what plays. It survives restarts, you move through it in place, and nothing you do in the right column ever replaces it.
-- **Search** (right) has three sources, and `Ctrl+/` cycles them. `AM` searches Apple Music as you type: Playlists, Albums, Library (your own copies) and Tracks, five per section, with `+ 5 more` / `− 5 less` rows and headers that fold. `CC` sends a plain-English description to Claude Code, which plans the search and ranks the results. `SV` lists the track lists kept with `:save`, the previous session's Tracks first, each a header that opens to all of its songs; add the whole list from its header or pick songs from it.
+- **Search** (right) has three sources, and `Ctrl+/` cycles them. `AM` searches Apple Music when you press `Enter`: Playlists, Albums, Library (your own copies) and Tracks, five per section, with `+ 5 more` / `− 5 less` rows and headers that fold. `CC` sends a plain-English description to Claude Code, which plans the search and ranks the results. `SV` lists the track lists kept with `:save`, the previous session's Tracks first, each a header that opens to all of its songs; add the whole list from its header or pick songs from it.
 - **Tab** moves the keys between the two columns. The column that has them shows its title in bold; the mode text next to "Search" glows while a lookup is running.
 - Everything that works in a column is listed once, in the footer.
 
 ## Searching with Claude Code
 
-Press `Tab` to reach Search, then `Ctrl+/` to switch the prompt from `AM` to `CC`. Type what you want to hear the way you would say it to a friend and press `Enter`.
+Press `Tab` to reach Search, `Ctrl+/` to switch the prompt from `AM` to `CC`, and `Ctrl+'` to start typing. Type what you want to hear the way you would say it to a friend and press `Enter`.
 
 <p align="center">
   <img src="assets/vibezai-claude.png" alt="vibezAI: a Claude Code lookup, planned by Fable 5.1" width="920">
@@ -103,9 +103,9 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 
 | Key | Action |
 |-----|--------|
-| *(type)* | `AM`: search as you type. `CC`: edit the description. `SV`: nothing to type |
-| `ctrl+/` | Cycle the source: `AM` → `CC` → `SV` (saved lists) → `AM`; the text already typed is looked up in the new mode |
-| `enter` | Open or fold a section header (a saved list opens whole), grow or shrink a section by five; in `CC`, look up a new description |
+| `ctrl+'` | Start or stop typing into the prompt (`AM` and `CC`); nothing is looked up while you type |
+| `ctrl+/` | Cycle the source: `AM` → `CC` → `SV` (saved lists) → `AM`; text already typed is looked up when switching to `CC`, `AM` waits for `enter` |
+| `enter` | While typing: search (`AM`) or look up (`CC`) the text and stop typing. Otherwise: open or fold a section header (a saved list opens whole), grow or shrink a section by five |
 | `ctrl+↑` / `ctrl+↓` | Move the highlight |
 | `↑` / `↓` | Move the highlight in Tracks without leaving Search |
 | `ctrl+shift+↑` / `ctrl+shift+↓` | Sweep-select: mark the highlighted item and everything passed over |
@@ -114,7 +114,7 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `ctrl+delete` | `SV`: delete the highlighted list, from disk and from the panel |
 | `ctrl+,` | Add the selection, or the highlighted item, to Tracks; never starts playback (with nothing playing, `space` starts the list) |
 | `ctrl+.` | The same, and start the first song |
-| `Tab` / `esc` | Move the keys back to Tracks |
+| `Tab` / `esc` | Move the keys back to Tracks; while typing, `esc` only stops typing |
 
 Albums and playlists are expanded to their songs when added. An item already in Tracks is never added twice; it is highlighted there instead.
 

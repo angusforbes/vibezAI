@@ -70,7 +70,7 @@ func (m *Model) searchFindLines(w, h int) []string {
 	// that is not enough.
 	runes := []rune(m.searchQuery)
 	cur := min(m.searchCursor, len(runes))
-	inputRows := wrapQuery(runes, cur, m.mode == modeSearch, max(1, w-3), max(1, (h-2)/2), textStyle, accent)
+	inputRows := wrapQuery(runes, cur, m.mode == modeSearch && m.searchTyping, max(1, w-3), max(1, (h-2)/2), textStyle, accent)
 	for i, row := range inputRows {
 		if i == 0 {
 			inputRows[i] = accent.Render(glyph) + " " + row
