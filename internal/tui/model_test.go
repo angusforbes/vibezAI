@@ -929,7 +929,7 @@ func TestTracksCtrlArrows_DriveTheSearchList(t *testing.T) {
 	}
 	// The keys work from Tracks but the TRACKS row lists only its own keys.
 	footer := ansi.Strip(strings.Join(m.statusLines(600), " "))
-	if !strings.Contains(footer, "K/J move") {
+	if !strings.Contains(footer, "⇧←/⇧→ move") {
 		t.Fatalf("the TRACKS row lists its own keys: %q", footer)
 	}
 	for _, hidden := range []string{"search pick", "search select", "search toggle/clear", "add from search"} {
@@ -1286,6 +1286,53 @@ func TestFeedSource_CyclesLoadsAndSelectsLikeASearch(t *testing.T) {
 	m.handleNormalKey(tea.KeyPressMsg{Code: 'F', Text: "F"}, "F")
 	if m.activePanel >= 0 {
 		t.Fatalf("F opens nothing now, got panel %d", m.activePanel)
+	}
+}
+
+func TestShiftArrowsMoveTracks_AndShiftSShufflesAndPlays(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	m.queueTracks = []provider.Track{{ID: "1", Title: "One"}, {ID: "2", Title: "Two"}, {ID: "3", Title: "Three"}}
+	m.queueIDs = []string{"1", "2", "3"}
+	m.syncQueue()
+	m.setQueueCursor(0)
+	press := func(k string, code rune, mod tea.KeyMod) tea.Cmd {
+		return m.handleNormalKey(tea.KeyPressMsg{Code: code, Mod: mod}, k)
+	}
+	// Shift+← is J (down), Shift+→ is K (up).
+	press("shift+left", tea.KeyLeft, tea.ModShift)
+	if m.queueIDs[1] != "1" || m.queueCursor != 1 {
+		t.Fatalf("⇧← moves the highlighted track down: ids=%v cursor=%d", m.queueIDs, m.queueCursor)
+	}
+	press("shift+right", tea.KeyRight, tea.ModShift)
+	if m.queueIDs[0] != "1" || m.queueCursor != 0 {
+		t.Fatalf("⇧→ moves it back up: ids=%v cursor=%d", m.queueIDs, m.queueCursor)
+	}
+	// S shuffles the whole list and plays from the new top.
+	if cmd := press("S", 'S', 0); cmd != nil {
+		_ = cmd()
+	}
+	if len(m.queueIDs) != 3 || m.queueCursor != 0 {
+		t.Fatalf("S keeps every track and highlights the top: ids=%v cursor=%d", m.queueIDs, m.queueCursor)
+	}
+	seen := map[string]bool{}
+	for _, id := range m.queueIDs {
+		seen[id] = true
+	}
+	if !seen["1"] || !seen["2"] || !seen["3"] {
+		t.Fatalf("S is a permutation: %v", m.queueIDs)
+	}
+	if len(mp.setQueueAtIDs) != 3 || mp.setQueueAtStart != m.queueIDs[0] {
+		t.Fatalf("the engine gets the new order and starts its first track: ids=%v start=%q", mp.setQueueAtIDs, mp.setQueueAtStart)
+	}
+	// :shuffle is gone; the controls row has no shuffle icon.
+	_ = m.executeCommand("shuffle")
+	if !strings.Contains(m.errMsg, "unknown command") {
+		t.Fatalf(":shuffle is no more: %q", m.errMsg)
+	}
+	footer := ansi.Strip(strings.Join(m.statusLines(600), " "))
+	if !strings.Contains(footer, "S shuffle & play") || !strings.Contains(footer, "⇧←/⇧→ move") {
+		t.Fatalf("the TRACKS row lists S and the shift arrows: %q", footer)
 	}
 }
 
@@ -2146,17 +2193,6 @@ func TestHandleNormalKey_S_JumpsToRandomQueuedTrack(t *testing.T) {
 	}
 	if m.playerState.ShuffleMode || len(m.queueTracks) != 3 {
 		t.Error("s must not toggle shuffle mode or change the queue")
-	}
-}
-
-func TestCommand_Shuffle_TogglesShuffleMode(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	if cmd := m.executeCommand("shuffle"); cmd != nil {
-		cmd()
-	}
-	if !m.playerState.ShuffleMode {
-		t.Error(":shuffle should toggle shuffle mode on")
 	}
 }
 

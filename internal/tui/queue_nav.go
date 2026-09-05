@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/simone-vibes/vibez/internal/player"
+	"github.com/simone-vibes/vibez/internal/provider"
 	"github.com/simone-vibes/vibez/internal/tui/views"
 )
 
@@ -118,6 +119,38 @@ func (m *Model) jumpToRandomQueued() tea.Cmd {
 	}
 	m.appendLog(fmt.Sprintf("[queue] random jump to position %d", idx+1))
 	return m.jumpToQueueIndex(idx)
+}
+
+// shuffleQueueAndPlay (the S key) reorders Tracks at random, puts the
+// highlight on the new first track and starts it; the engine gets the new
+// order in one step (SetQueueAt while it holds nothing, SyncQueue otherwise).
+func (m *Model) shuffleQueueAndPlay() tea.Cmd {
+	n := len(m.queueTracks)
+	if n == 0 || len(m.queueIDs) != n {
+		return nil
+	}
+	perm := rand.Perm(n) //nolint:gosec // not security sensitive
+	tracks := make([]provider.Track, n)
+	ids := make([]string, n)
+	for i, from := range perm {
+		tracks[i] = m.queueTracks[from]
+		ids[i] = m.queueIDs[from]
+	}
+	m.queueTracks, m.queueIDs = tracks, ids
+	m.queueFollow = true
+	m.queueCursor = 0
+	m.syncQueue()
+	m.appendLog("[queue] shuffled; playing from the top")
+	m.playerState.Loading = true
+	m.playerState.Playing = false
+	m.playerState.Position = 0
+	m.ensureQueueCursorVisible()
+	if m.playerState.Track == nil {
+		m.queueResumeIdx = noQueueCursor
+		all := append([]string(nil), ids...)
+		return m.playerCmd(func(p player.Player) error { return p.SetQueueAt(all, all[0]) })
+	}
+	return m.syncEngineQueue(ids[0])
 }
 
 // syncEngineQueue makes the engine's queue match the model's after an edit.
@@ -240,9 +273,10 @@ func (m *Model) handleQueueCursorKey(k string) (tea.Cmd, bool) {
 		return nil, false
 	}
 	switch k {
-	case "K", "J":
+	case "K", "shift+right", "J", "shift+left":
+		// J / Shift+← move the highlighted track down, K / Shift+→ up.
 		delta := 1
-		if k == "K" {
+		if k == "K" || k == "shift+right" {
 			delta = -1
 		}
 		follow := m.queueFollow

@@ -1486,7 +1486,6 @@ var retiredCommands = []cmdEntry{
 	{"discover", "discover <n>|auto|stop|metric", "Queue n discovered songs now, auto-discover until stopped, or pick the similarity"},
 	{"art", "art", "Toggle album-art view (cover + track info instead of the bar)"},
 	{"radio", "radio", "Toggle continuous radio seeded by the playing track (R inserts 5 related songs once)"},
-	{"shuffle", "shuffle", "Toggle the engine's shuffled play order (s jumps to a random queued song)"},
 }
 
 // commandSuggestions returns commands whose trigger starts with the current
@@ -1642,12 +1641,6 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 			return nil
 		}
 		return m.startRadioFrom(m.playerState.Track)
-
-	case cmd == "shuffle":
-		on := !m.playerState.ShuffleMode
-		m.playerState.ShuffleMode = on
-		m.appendLog(fmt.Sprintf("[player] shuffle → %v", on))
-		return m.playerCmd(func(p player.Player) error { return p.SetShuffle(on) })
 
 	case strings.HasPrefix(cmd, "quality"):
 		name, arg, _ := strings.Cut(cmd, " ")
@@ -2087,6 +2080,11 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		m.playerState.RepeatMode = next
 		m.appendLog(fmt.Sprintf("[player] repeat → %d", next))
 		return m.playerCmd(func(p player.Player) error { return p.SetRepeat(next) })
+
+	case "S":
+		// Reorder Tracks at random and play from the new top.
+		m.lastKey = ""
+		return m.shuffleQueueAndPlay()
 
 	case "s":
 		m.lastKey = ""
@@ -3601,13 +3599,7 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 	case player.RepeatModeOne:
 		repeatIcon, repeatStyle = "↻", styles.ControlActive
 	}
-	shuffleStyle := muted
-	if m.playerState.ShuffleMode {
-		shuffleStyle = styles.ControlActive
-	}
-
 	controlsStr := repeatStyle.Render(repeatIcon) + "   " +
-		shuffleStyle.Render("⇄") + "   " +
 		playStyle.Render(playIcon)
 	controls := centerStr(controlsStr, contentW)
 
@@ -3874,10 +3866,11 @@ func (m *Model) statusPlayParts() []string {
 		accent.Render("←/→") + muted.Render(" seek ±10s"),
 		accent.Render("d") + muted.Render(" remove"),
 		accent.Render("D/^⇧D") + muted.Render(" cut below/above"),
-		accent.Render("K/J") + muted.Render(" move"),
+		accent.Render("J/K ⇧←/⇧→") + muted.Render(" move down/up"),
 		accent.Render("R") + muted.Render(" +5 related"),
 		accent.Render("⇧T") + muted.Render(" +5 library"),
 		accent.Render("s") + muted.Render(" random"),
+		accent.Render("S") + muted.Render(" shuffle & play"),
 		accent.Render("r") + muted.Render(" repeat"),
 		accent.Render("c") + muted.Render(" clear"),
 	}
