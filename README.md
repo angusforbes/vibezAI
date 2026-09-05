@@ -101,6 +101,7 @@ Results, songs as well as whole albums and playlists, can be marked with `Ctrl+�
 | `ctrl+↑` / `ctrl+↓` | Sweep-select: mark the highlighted item and everything passed over |
 | `ctrl+→` | Toggle the highlighted item in or out of the selection |
 | `ctrl+←` | Clear the selection; pressed again before anything changes, bring it back |
+| `ctrl+delete` | `SV`: delete the highlighted list, from disk and from the panel |
 | `ctrl+,` | Add the selection, or the highlighted item, to Tracks |
 | `ctrl+.` | The same, and start the first song |
 | `Tab` / `esc` | Move the keys back to Tracks |

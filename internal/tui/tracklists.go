@@ -138,6 +138,31 @@ func (m *Model) refreshSavedLists() {
 	m.searchSV.SetSavedLists(lists)
 }
 
+// deleteSavedList is Ctrl+Delete in the SV source: the highlighted list is
+// removed from disk and from the panel, and the highlight lands on the list
+// that takes its place. "last session" comes back at the next launch.
+func (m *Model) deleteSavedList() tea.Cmd {
+	if m.searchSrc != searchSaved {
+		return nil
+	}
+	l := m.search.SelectedSavedList()
+	if l == nil {
+		m.flashStatus("highlight a list's header to delete it", 3*time.Second)
+		return nil
+	}
+	idx := m.search.SavedListIndex()
+	if err := os.Remove(m.trackListPath(l.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		m.appendLog("[tracklist] delete failed: " + err.Error())
+		m.flashStatus("delete failed: "+err.Error(), 4*time.Second)
+		return nil
+	}
+	m.appendLog(fmt.Sprintf("[tracklist] deleted %q", l.Name))
+	m.flashStatus(fmt.Sprintf("✓ \"%s\" deleted", l.Name), 4*time.Second)
+	m.refreshSavedLists()
+	m.search.SelectSavedList(idx)
+	return nil
+}
+
 // snapshotLastSession keeps the queue restored at launch as the "last
 // session" list, or removes that list when there was nothing to restore.
 func (m *Model) snapshotLastSession(st queuestate.State) {

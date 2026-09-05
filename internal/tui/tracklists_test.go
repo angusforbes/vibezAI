@@ -197,6 +197,74 @@ func TestSavedSource_AddsASongOrTheWholeList(t *testing.T) {
 	}
 }
 
+func TestSavedSource_CtrlDeleteRemovesTheList(t *testing.T) {
+	dir := t.TempDir()
+	m, _ := newListModel(t, dir)
+	writeList(t, dir, "older", persistTracks())
+	time.Sleep(20 * time.Millisecond)
+	writeList(t, dir, "newer", persistTracks())
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.setSearchSource(searchSaved)
+	del := func() { m.handleSearchKey("ctrl+delete", tea.KeyPressMsg{Code: tea.KeyDelete, Mod: tea.ModCtrl}) }
+	// On a song row nothing is deleted; the status line says where to be.
+	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	del()
+	if got := m.savedTrackLists(); len(got) != 2 || !strings.Contains(m.errMsg, "header") {
+		t.Fatalf("a song row deletes nothing: lists=%v msg=%q", got, m.errMsg)
+	}
+	// On the header the list goes, from disk and from the panel, and the
+	// highlight lands on the list that took its place.
+	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})
+	if l := m.search.SelectedSavedList(); l == nil || l.Name != "newer" {
+		t.Fatalf("setup: the header of newer, got %+v", l)
+	}
+	del()
+	if _, err := os.Stat(filepath.Join(dir, "tracklists", "newer.json")); !os.IsNotExist(err) {
+		t.Fatalf("the file is gone: %v", err)
+	}
+	if got := m.savedTrackLists(); len(got) != 1 || got[0] != "older" {
+		t.Fatalf("one list left: %v", got)
+	}
+	if l := m.search.SelectedSavedList(); l == nil || l.Name != "older" {
+		t.Fatalf("the highlight moves to the next list, got %+v", l)
+	}
+	if !strings.Contains(m.errMsg, `"newer" deleted`) {
+		t.Fatalf("the status line says so: %q", m.errMsg)
+	}
+	if footer := ansi.Strip(strings.Join(m.statusLines(300), " ")); !strings.Contains(footer, "^Del delete list") {
+		t.Fatalf("the SEARCH row lists the key in SV: %q", footer)
+	}
+	m.setSearchSource(searchApple)
+	if footer := ansi.Strip(strings.Join(m.statusLines(300), " ")); strings.Contains(footer, "delete list") {
+		t.Fatalf("the key is only listed in SV: %q", footer)
+	}
+	if cmd := m.handleSearchKey("ctrl+delete", tea.KeyPressMsg{Code: tea.KeyDelete, Mod: tea.ModCtrl}); cmd != nil || len(m.savedTrackLists()) != 1 {
+		t.Fatal("outside SV the key deletes nothing")
+	}
+}
+
+func TestSavedSource_RefreshKeepsOpenListsAndTheHighlight(t *testing.T) {
+	dir := t.TempDir()
+	m, _ := newListModel(t, dir)
+	writeList(t, dir, "older", persistTracks())
+	time.Sleep(20 * time.Millisecond)
+	writeList(t, dir, "newer", persistTracks())
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.setSearchSource(searchSaved)
+	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown}) // header of older
+	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.refreshSavedLists()
+	if l := m.search.SelectedSavedList(); l == nil || l.Name != "older" {
+		t.Fatalf("a refresh keeps the highlighted list, got %+v", l)
+	}
+	if v := m.search.View(); !strings.Contains(v, "One") {
+		t.Fatalf("a refresh keeps the list open: %q", v)
+	}
+}
+
 func TestSavedSource_ShowsAFreshSaveAtOnce(t *testing.T) {
 	dir := t.TempDir()
 	m, _ := newListModel(t, dir)

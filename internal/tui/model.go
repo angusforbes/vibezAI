@@ -1316,6 +1316,9 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			m.search.ClearSelection()
 		}
 		return nil
+	case "ctrl+delete":
+		// SV: the highlighted list goes, from disk and from the panel.
+		return m.deleteSavedList()
 	case "ctrl+,":
 		// The selection (or the highlighted item) goes to Tracks; nothing starts.
 		return m.addSelection(false)
@@ -3681,6 +3684,9 @@ func (m *Model) statusNavLines(w int) []string {
 			accent.Render("^←") + muted.Render(" clear/restore"),
 			accent.Render("^,") + muted.Render(" add"),
 			accent.Render("^.") + muted.Render(" add & play"),
+		}
+		if m.searchSrc == searchSaved {
+			actions = append(actions, accent.Render("^Del")+muted.Render(" delete list"))
 		}
 		head := styles.ModeSearch.Render(label) + "  " + accent.Render(glyph)
 		// The prompt shows the part of the query around the cursor that fits

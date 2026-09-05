@@ -197,17 +197,66 @@ func (m *SearchModel) VibeResults() bool { return m.vibe }
 // each, all folded to their headers. Enter on a header opens the list whole;
 // the header stands for the whole list when adding or marking.
 func (m *SearchModel) SetSavedLists(lists []SavedList) {
+	// A refresh while the lists are already showing keeps what is open and
+	// the highlighted list; coming from elsewhere every list starts folded.
+	keep, shown := "", m.shown
+	if m.saved {
+		if l := m.SelectedSavedList(); l != nil {
+			keep = l.Name
+		}
+	} else {
+		shown = nil
+	}
 	m.loading, m.err = false, nil
 	m.results = nil
 	m.vibe, m.vibeTitle, m.vibeNote = false, "", nil
 	m.saved, m.lists = true, lists
 	m.selected, m.stash = nil, nil
-	m.shown = nil // every list starts folded
+	m.shown = shown
 	m.catalogNext, m.catalogMore = 0, false
 	m.paging, m.pendingReveal = false, 0
 	m.rebuildRows()
 	m.cursor = m.advance(-1, 1)
 	m.scroll = 0
+	if keep != "" {
+		for i, r := range m.rows {
+			if r.list != nil && r.list.Name == keep {
+				m.cursor = i
+				break
+			}
+		}
+		m.ensureCursorVisible()
+	}
+}
+
+// SavedListIndex is the position of the highlighted header's list, or -1.
+func (m *SearchModel) SavedListIndex() int {
+	l := m.SelectedSavedList()
+	if l == nil {
+		return -1
+	}
+	for i := range m.lists {
+		if &m.lists[i] == l {
+			return i
+		}
+	}
+	return -1
+}
+
+// SelectSavedList puts the highlight on the header of list i, clamped to the
+// lists there are.
+func (m *SearchModel) SelectSavedList(i int) {
+	if len(m.lists) == 0 {
+		return
+	}
+	name := m.lists[max(0, min(i, len(m.lists)-1))].Name
+	for r, row := range m.rows {
+		if row.list != nil && row.list.Name == name {
+			m.cursor = r
+			m.ensureCursorVisible()
+			return
+		}
+	}
 }
 
 // SavedLists reports whether the list shows the saved-lists source.
