@@ -16,6 +16,18 @@ import (
 type Plan struct {
 	Summary string   `json:"summary"`
 	Queries []string `json:"queries"`
+	Model   string   `json:"-"` // short name of the model that answered, when known
+}
+
+// Candidate is a song offered to a Reranker.
+type Candidate struct {
+	Artist, Title, Album string
+}
+
+// Reranker orders search hits against the listener's description. It returns
+// 0-based indices into candidates, best first, at most limit of them.
+type Reranker interface {
+	Rerank(ctx context.Context, description string, candidates []Candidate, limit int) ([]int, error)
 }
 
 // Planner turns a natural-language description into search terms.
@@ -28,15 +40,18 @@ type Planner interface {
 // NewPlanner picks the planner for a config value: "keywords" is the built-in
 // table, "claude" the Claude Code CLI, anything else ("auto", "") means Claude
 // when the CLI is installed and the keyword table otherwise.
-func NewPlanner(kind string) Planner {
+//
+// model and effort are passed to the CLI as --model / --effort when set.
+func NewPlanner(kind, model, effort string) Planner {
+	claude := &ClaudePlanner{Model: model, Effort: effort}
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "keywords", "keyword":
 		return KeywordPlanner{}
 	case "claude":
-		return &ClaudePlanner{}
+		return claude
 	}
-	if c := (&ClaudePlanner{}); c.Available() {
-		return c
+	if claude.Available() {
+		return claude
 	}
 	return KeywordPlanner{}
 }
@@ -68,8 +83,9 @@ func (KeywordPlanner) Plan(_ context.Context, description string) (Plan, error) 
 // ClaudePlanner asks Claude Code's command-line interface (`claude -p`) for
 // search terms, using the user's existing login; no API key is involved.
 type ClaudePlanner struct {
-	Bin   string // executable; "claude" on PATH when empty
-	Model string // optional --model override
+	Bin    string // executable; "claude" on PATH when empty
+	Model  string // optional --model (alias like "sonnet", "haiku" or a full id)
+	Effort string // optional --effort (low, medium, high, xhigh, max)
 }
 
 const claudeSystemPrompt = `You turn a listener's natural-language description of what they want to hear into search terms for Apple Music's plain text search, which matches song titles, artist names, album titles and playlist names, not meanings.
@@ -94,23 +110,56 @@ func (c *ClaudePlanner) Available() bool {
 
 // claudeEnvelope is the part of `claude -p --output-format json` we read.
 type claudeEnvelope struct {
-	IsError bool   `json:"is_error"`
-	Result  string `json:"result"`
+	IsError    bool   `json:"is_error"`
+	Result     string `json:"result"`
+	ModelUsage map[string]struct {
+		OutputTokens int `json:"outputTokens"`
+	} `json:"modelUsage"`
 }
 
-func (c *ClaudePlanner) Plan(ctx context.Context, description string) (Plan, error) {
-	args := []string{"-p", "--output-format", "json", "--tools", "", "--no-session-persistence", "--system-prompt", claudeSystemPrompt}
+// mainModel is the model that wrote the answer: the one with the most output
+// tokens (the CLI also makes small side calls to a lighter model).
+func (e claudeEnvelope) mainModel() string {
+	best, bestTokens := "", -1
+	for name, u := range e.ModelUsage {
+		if u.OutputTokens > bestTokens || (u.OutputTokens == bestTokens && name < best) {
+			best, bestTokens = name, u.OutputTokens
+		}
+	}
+	return best
+}
+
+// ShortModel turns "claude-sonnet-5[1m]" or "claude-haiku-4-5-20251001" into
+// "sonnet-5" / "haiku-4-5" for display.
+func ShortModel(id string) string {
+	id = strings.TrimPrefix(id, "claude-")
+	if i := strings.Index(id, "["); i >= 0 {
+		id = id[:i]
+	}
+	if i := strings.LastIndex(id, "-"); i > 0 && len(id)-i-1 == 8 && strings.Trim(id[i+1:], "0123456789") == "" {
+		id = id[:i]
+	}
+	return id
+}
+
+// run makes one tool-free `claude -p` call and returns the answer text and
+// the model that wrote it.
+func (c *ClaudePlanner) run(ctx context.Context, systemPrompt, input string) (answer, model string, err error) {
+	args := []string{"-p", "--output-format", "json", "--tools", "", "--no-session-persistence", "--system-prompt", systemPrompt}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
 	}
-	cmd := exec.CommandContext(ctx, c.bin(), args...) //nolint:gosec // fixed binary, fixed flags; the description goes over stdin
-	cmd.Stdin = strings.NewReader(description)
+	if c.Effort != "" {
+		args = append(args, "--effort", c.Effort)
+	}
+	cmd := exec.CommandContext(ctx, c.bin(), args...) //nolint:gosec // fixed binary, fixed flags; the input goes over stdin
+	cmd.Stdin = strings.NewReader(input)
 	cmd.Env = withoutNestedClaudeEnv(os.Environ())
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
-			return Plan{}, fmt.Errorf("claude: %w", ctx.Err())
+			return "", "", fmt.Errorf("claude: %w", ctx.Err())
 		}
 		detail := strings.TrimSpace(stderr.String())
 		if detail == "" {
@@ -119,16 +168,87 @@ func (c *ClaudePlanner) Plan(ctx context.Context, description string) (Plan, err
 		if len(detail) > 200 {
 			detail = detail[:200] + "…"
 		}
-		return Plan{}, fmt.Errorf("claude: %w: %s", err, detail)
+		return "", "", fmt.Errorf("claude: %w: %s", err, detail)
 	}
 	var env claudeEnvelope
 	if err := json.Unmarshal(stdout.Bytes(), &env); err != nil {
-		return Plan{}, fmt.Errorf("claude: unexpected output: %w", err)
+		return "", "", fmt.Errorf("claude: unexpected output: %w", err)
 	}
 	if env.IsError {
-		return Plan{}, fmt.Errorf("claude: %s", strings.TrimSpace(env.Result))
+		return "", "", fmt.Errorf("claude: %s", strings.TrimSpace(env.Result))
 	}
-	return parsePlan(env.Result, description)
+	return env.Result, env.mainModel(), nil
+}
+
+func (c *ClaudePlanner) Plan(ctx context.Context, description string) (Plan, error) {
+	answer, model, err := c.run(ctx, claudeSystemPrompt, description)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan, err := parsePlan(answer, description)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan.Model = ShortModel(model)
+	return plan, nil
+}
+
+// Rerank asks Claude to pick the candidates that fit the description best.
+func (c *ClaudePlanner) Rerank(ctx context.Context, description string, candidates []Candidate, limit int) ([]int, error) {
+	if len(candidates) == 0 {
+		return nil, errors.New("claude: no candidates to rank")
+	}
+	var sb strings.Builder
+	sb.WriteString("Description: " + description + "\n\nCandidates:\n")
+	for i, cand := range candidates {
+		fmt.Fprintf(&sb, "%d. %s — %s", i+1, cand.Artist, cand.Title)
+		if cand.Album != "" {
+			fmt.Fprintf(&sb, " (%s)", cand.Album)
+		}
+		sb.WriteString("\n")
+	}
+	answer, _, err := c.run(ctx, rerankSystemPrompt(limit), sb.String())
+	if err != nil {
+		return nil, err
+	}
+	return parsePicks(answer, len(candidates), limit)
+}
+
+func rerankSystemPrompt(limit int) string {
+	return fmt.Sprintf(`You pick songs for a listener. You get their description and a numbered list of candidate songs from Apple Music.
+Reply with JSON only, no prose and no code fences: {"picks": [n, n, ...]} — the numbers of the candidates that fit the description best, best first, at most %d of them, and at least 5 when the list allows.
+Use only numbers from the list. Favour the mood, era and style described; prefer a variety of artists unless one artist is asked for; leave out live versions, karaoke, tributes and remixes unless asked for.`, limit)
+}
+
+// parsePicks reads {"picks": [...]} (1-based) into unique 0-based indices.
+func parsePicks(answer string, n, limit int) ([]int, error) {
+	start, end := strings.Index(answer, "{"), strings.LastIndex(answer, "}")
+	if start < 0 || end <= start {
+		return nil, errors.New("claude: no JSON in the answer")
+	}
+	var out struct {
+		Picks []int `json:"picks"`
+	}
+	if err := json.Unmarshal([]byte(answer[start:end+1]), &out); err != nil {
+		return nil, fmt.Errorf("claude: bad JSON in the answer: %w", err)
+	}
+	seen := make(map[int]bool, len(out.Picks))
+	var idx []int
+	for _, pick := range out.Picks {
+		i := pick - 1
+		if i < 0 || i >= n || seen[i] {
+			continue
+		}
+		seen[i] = true
+		idx = append(idx, i)
+		if len(idx) == limit {
+			break
+		}
+	}
+	if len(idx) == 0 {
+		return nil, errors.New("claude: no valid picks in the answer")
+	}
+	return idx, nil
 }
 
 // parsePlan extracts the JSON object from the model's answer (tolerating

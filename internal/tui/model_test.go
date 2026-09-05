@@ -4048,29 +4048,35 @@ func TestRunVibeSearch_UsesThePlannerTermsAndInterleaves(t *testing.T) {
 	m.provider = &termProvider{n: 10}
 	fp := &fakePlanner{plan: vibe.Plan{Summary: "Dreamy soul", Queries: []string{"alpha", "beta"}}}
 	m.vibePlanner = fp
-	msg, ok := m.runVibeSearch("dreamy soul")().(vibeResultMsg)
+	msg, ok := m.runVibeSearch("dreamy soul")().(vibeCandidatesMsg)
 	if !ok || msg.err != nil {
 		t.Fatalf("vibe search failed: ok=%v err=%v", ok, msg.err)
 	}
 	if len(fp.calls) != 1 || fp.calls[0] != "dreamy soul" {
 		t.Fatalf("the planner should see the description once, got %v", fp.calls)
 	}
-	if len(msg.tracks) != vibeResultCap {
-		t.Fatalf("results are capped at %d, got %d", vibeResultCap, len(msg.tracks))
+	if len(msg.pool) != 20 {
+		t.Fatalf("all unique hits are pooled (2 terms × 10), got %d", len(msg.pool))
 	}
-	if msg.tracks[0].Title != "alpha 0" || msg.tracks[1].Title != "beta 0" || msg.tracks[2].Title != "alpha 1" {
-		t.Fatalf("terms should be interleaved in the planner's order, got %q %q %q", msg.tracks[0].Title, msg.tracks[1].Title, msg.tracks[2].Title)
+	if msg.pool[0].Title != "alpha 0" || msg.pool[1].Title != "beta 0" || msg.pool[2].Title != "alpha 1" {
+		t.Fatalf("terms should be interleaved in the planner's order, got %q %q %q", msg.pool[0].Title, msg.pool[1].Title, msg.pool[2].Title)
 	}
 	if msg.via != "Test" || msg.plan.Summary != "Dreamy soul" {
 		t.Fatalf("the plan must ride along: via=%q plan=%+v", msg.via, msg.plan)
 	}
-	// The panel shows who planned what, above the songs, without making it selectable.
+	// A planner that cannot rerank: the first 15 in search order are shown, and
+	// the panel says who planned what, above the songs, without making it selectable.
 	m.mode = modeSearch
 	m.search.SetSize(80, 40)
 	m.searchVibe, m.vibeShown = true, "dreamy soul"
-	m.Update(msg)
+	if _, cmd := m.Update(msg); cmd != nil {
+		t.Fatal("without a reranker the candidates are final: no second stage")
+	}
+	if n := len(m.search.Results()); n != vibeResultCap {
+		t.Fatalf("results are capped at %d, got %d", vibeResultCap, n)
+	}
 	view := m.search.View()
-	if !strings.Contains(view, "✨ Test: Dreamy soul") || !strings.Contains(view, "terms: alpha · beta") {
+	if !strings.Contains(view, "✨ Test: Dreamy soul · first 15 of 20, search order") || !strings.Contains(view, "terms: alpha · beta") {
 		t.Fatalf("the plan should be shown under the Vibes header: %q", view)
 	}
 	if t0 := m.search.SelectedTrack(); t0 == nil || t0.Title != "alpha 0" {
@@ -4083,13 +4089,13 @@ func TestRunVibeSearch_FallsBackToKeywordsWhenThePlannerFails(t *testing.T) {
 	m.provider = &termProvider{n: 3}
 	// Over-long plans are trimmed to the terms that actually run.
 	m.vibePlanner = &fakePlanner{plan: vibe.Plan{Summary: "s", Queries: []string{"a", "b", "c", "d", "e", "f", "g", "h"}}}
-	if msg := m.runVibeSearch("x")().(vibeResultMsg); len(msg.plan.Queries) != 6 || msg.plan.Queries[5] != "f" {
+	if msg := m.runVibeSearch("x")().(vibeCandidatesMsg); len(msg.plan.Queries) != 6 || msg.plan.Queries[5] != "f" {
 		t.Fatalf("the shown plan must list only the 6 searched terms, got %v", msg.plan.Queries)
 	}
 	m.vibePlanner = &fakePlanner{err: errors.New("not logged in")}
-	msg := m.runVibeSearch("late night coding")().(vibeResultMsg)
-	if msg.err != nil || len(msg.tracks) == 0 {
-		t.Fatalf("the keyword table must take over: err=%v tracks=%d", msg.err, len(msg.tracks))
+	msg := m.runVibeSearch("late night coding")().(vibeCandidatesMsg)
+	if msg.err != nil || len(msg.pool) == 0 {
+		t.Fatalf("the keyword table must take over: err=%v pool=%d", msg.err, len(msg.pool))
 	}
 	if !strings.HasPrefix(msg.via, "keywords") || !strings.Contains(msg.via, "Test unavailable") {
 		t.Fatalf("the fallback must be visible in via, got %q", msg.via)
@@ -4121,5 +4127,64 @@ func TestStartVibeSearch_SaysWhoIsAsked(t *testing.T) {
 	m.startVibeSearch("other")
 	if v := m.search.View(); !strings.Contains(v, "searching") || strings.Contains(v, "asking") {
 		t.Fatalf("the keyword table needs no announcement: %q", v)
+	}
+}
+
+// fakeReranker is a fakePlanner that also ranks: it returns fixed picks.
+type fakeReranker struct {
+	fakePlanner
+	picks    []int
+	rankErr  error
+	gotCands []vibe.Candidate
+	gotLimit int
+	gotDescr string
+}
+
+func (f *fakeReranker) Rerank(_ context.Context, d string, cands []vibe.Candidate, limit int) ([]int, error) {
+	f.gotDescr, f.gotCands, f.gotLimit = d, cands, limit
+	return f.picks, f.rankErr
+}
+
+func TestVibeLookup_RerankerOrdersThePool(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &termProvider{n: 10}
+	rr := &fakeReranker{fakePlanner: fakePlanner{plan: vibe.Plan{Summary: "Dreamy soul", Model: "sonnet-5", Queries: []string{"alpha", "beta"}}}, picks: []int{5, 0, 19}}
+	m.vibePlanner = rr
+	m.mode = modeSearch
+	m.search.SetSize(80, 40)
+	m.searchVibe, m.vibeShown = true, "dreamy soul"
+	m.search.SetResults(nil, true, nil)
+
+	stage1 := m.runVibeSearch("dreamy soul")()
+	_, stage2 := m.Update(stage1)
+	if stage2 == nil {
+		t.Fatal("a reranking planner gets a second stage")
+	}
+	if v := m.search.View(); !strings.Contains(v, "Test is picking the best of 20 candidates") {
+		t.Fatalf("while ranking, the panel should say so: %q", v)
+	}
+	final := stage2()
+	if rr.gotDescr != "dreamy soul" || len(rr.gotCands) != 20 || rr.gotLimit != vibeResultCap || rr.gotCands[0].Title != "alpha 0" {
+		t.Fatalf("the reranker should see the description, the whole pool and the cap: %q %d %d", rr.gotDescr, len(rr.gotCands), rr.gotLimit)
+	}
+	m.Update(final)
+	got := m.search.Results()
+	if len(got) != 3 || got[0].Title != "beta 2" || got[1].Title != "alpha 0" || got[2].Title != "beta 9" {
+		t.Fatalf("results must follow the picks (pool indices 5, 0, 19), got %+v", got)
+	}
+	if v := m.search.View(); !strings.Contains(v, "✨ Test (sonnet-5): Dreamy soul · picked 3 of 20") {
+		t.Fatalf("the note should name the model and the ranking: %q", v)
+	}
+
+	// A failed ranking keeps the search order and says so.
+	rr.rankErr = errors.New("timeout")
+	_, stage2 = m.Update(m.runVibeSearch("dreamy soul")())
+	m.Update(stage2())
+	got = m.search.Results()
+	if len(got) != vibeResultCap || got[0].Title != "alpha 0" {
+		t.Fatalf("on failure the first %d in search order are kept, got %d starting %q", vibeResultCap, len(got), got[0].Title)
+	}
+	if v := m.search.View(); !strings.Contains(v, "ranking failed, search order") {
+		t.Fatalf("a failed ranking must be visible: %q", v)
 	}
 }

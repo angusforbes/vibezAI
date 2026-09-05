@@ -23,7 +23,7 @@ func TestClaudePlanner_PlanParsesEnvelope(t *testing.T) {
 	dir := t.TempDir()
 	answer := `Here you go:\n{\"summary\": \"Dreamy 70s soul\", \"queries\": [\"Roberta Flack\", \" Marvin Gaye \", \"roberta flack\", \"\", \"70s soul playlist\"]}\nEnjoy!`
 	bin := fakeClaude(t, `printf '%s\n' "$@" > "`+dir+`/args"; cat > "`+dir+`/stdin"; env > "`+dir+`/env"
-printf '%s' '{"type":"result","is_error":false,"result":"`+answer+`"}'`)
+printf '%s' '{"type":"result","is_error":false,"result":"`+answer+`","modelUsage":{"claude-haiku-4-5-20251001":{"outputTokens":20},"claude-sonnet-5[1m]":{"outputTokens":135}}}'`)
 	t.Setenv("CLAUDECODE", "1")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "abc")
 	p := &ClaudePlanner{Bin: bin}
@@ -33,6 +33,9 @@ printf '%s' '{"type":"result","is_error":false,"result":"`+answer+`"}'`)
 	}
 	if plan.Summary != "Dreamy 70s soul" {
 		t.Fatalf("summary = %q", plan.Summary)
+	}
+	if plan.Model != "sonnet-5" {
+		t.Fatalf("the answering model (most output tokens) should be reported short, got %q", plan.Model)
 	}
 	want := []string{"Roberta Flack", "Marvin Gaye", "70s soul playlist"}
 	if strings.Join(plan.Queries, "|") != strings.Join(want, "|") {
@@ -92,13 +95,60 @@ func TestKeywordPlanner_Plan(t *testing.T) {
 }
 
 func TestNewPlanner(t *testing.T) {
-	if _, ok := NewPlanner("keywords").(KeywordPlanner); !ok {
+	if _, ok := NewPlanner("keywords", "", "").(KeywordPlanner); !ok {
 		t.Fatal("keywords → KeywordPlanner")
 	}
-	if _, ok := NewPlanner("claude").(*ClaudePlanner); !ok {
+	if _, ok := NewPlanner("claude", "", "").(*ClaudePlanner); !ok {
 		t.Fatal("claude → ClaudePlanner")
 	}
-	if NewPlanner("auto") == nil {
+	if NewPlanner("auto", "", "") == nil {
 		t.Fatal("auto must pick something")
+	}
+}
+
+func TestClaudePlanner_RerankParsesPicks(t *testing.T) {
+	dir := t.TempDir()
+	bin := fakeClaude(t, `printf '%s\n' "$@" > "`+dir+`/args"; cat > "`+dir+`/stdin"
+printf '%s' '{"is_error":false,"result":"{\"picks\": [3, 1, 3, 99, 0, 2]}"}'`)
+	p := &ClaudePlanner{Bin: bin, Model: "haiku", Effort: "low"}
+	cands := []Candidate{{"A", "one", "Alb"}, {"B", "two", ""}, {"C", "three", "Alb3"}}
+	idx, err := p.Rerank(context.Background(), "soft evening", cands, 2)
+	if err != nil {
+		t.Fatalf("Rerank: %v", err)
+	}
+	if len(idx) != 2 || idx[0] != 2 || idx[1] != 0 {
+		t.Fatalf("picks are 1-based, deduped, range-checked and capped: got %v want [2 0]", idx)
+	}
+	stdin, _ := os.ReadFile(filepath.Join(dir, "stdin"))
+	for _, want := range []string{"Description: soft evening", "1. A — one (Alb)", "2. B — two\n", "3. C — three (Alb3)"} {
+		if !strings.Contains(string(stdin), want) {
+			t.Fatalf("candidate list should contain %q:\n%s", want, stdin)
+		}
+	}
+	args, _ := os.ReadFile(filepath.Join(dir, "args"))
+	if !strings.Contains(string(args), "--model\nhaiku\n") || !strings.Contains(string(args), "--effort\nlow\n") {
+		t.Fatalf("model and effort must be passed through: %q", args)
+	}
+}
+
+func TestParsePicks(t *testing.T) {
+	if _, err := parsePicks(`{"picks": []}`, 5, 15); err == nil {
+		t.Fatal("no picks must fail so the caller keeps Apple's order")
+	}
+	if _, err := parsePicks("nope", 5, 15); err == nil {
+		t.Fatal("prose must fail")
+	}
+}
+
+func TestShortModel(t *testing.T) {
+	for in, want := range map[string]string{
+		"claude-sonnet-5[1m]":       "sonnet-5",
+		"claude-haiku-4-5-20251001": "haiku-4-5",
+		"claude-fable-5-1":          "fable-5-1",
+		"":                          "",
+	} {
+		if got := ShortModel(in); got != want {
+			t.Errorf("ShortModel(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

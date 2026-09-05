@@ -28,6 +28,10 @@ type Config struct {
 	// Code CLI, the user's own login), "keywords" (built-in table) or "auto"
 	// (Claude when installed, else keywords). Empty means auto.
 	VibeAgent string `json:"vibe_agent,omitempty"`
+	// VibeModel / VibeEffort are passed to the Claude CLI as --model / --effort
+	// (e.g. "haiku" + "low" for the fastest, cheapest plans). Empty = CLI defaults.
+	VibeModel  string `json:"vibe_model,omitempty"`
+	VibeEffort string `json:"vibe_effort,omitempty"`
 	// Volume is the last user-set playback volume (0.0–1.0). nil means
 	// "not yet saved" and the player default (1.0) is used on startup.
 	Volume *float64 `json:"volume,omitempty"`

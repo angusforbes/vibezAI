@@ -157,6 +157,17 @@ type searchMoreMsg struct {
 	err  error
 }
 
+// vibeCandidatesMsg is stage one of a vibe lookup: the plan and the pooled
+// search hits, before a Reranker orders them.
+type vibeCandidatesMsg struct {
+	query    string
+	plan     vibe.Plan
+	via      string
+	pool     []provider.Track
+	warnings []string
+	err      error
+}
+
 // maxSearchPageHops bounds how many pages one "+ 5 more" press may chain
 // through when Apple's pages are full of songs already listed (library copies).
 const maxSearchPageHops = 3
@@ -173,6 +184,7 @@ type vibeResultMsg struct {
 	err       error
 	plan      vibe.Plan // what the planner made of the description
 	via       string    // planner that produced plan ("Claude", "keywords", …)
+	ranking   string    // how the final order came about ("picked 15 of 38", "Apple order …")
 	warnings  []string  // non-fatal provider failures behind an incomplete result
 	discovery bool      // true when result is from a discovery auto-refill
 	radio     bool      // true when result is from a radio auto-refill
@@ -439,7 +451,7 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	eqBands := configEQBandsToPlayer(cfg.EQBands)
 	m.eqP = &eqPanel{m: views.NewEqualizer(eqBands)}
 	m.vibe = views.NewVibe()
-	m.vibePlanner = vibe.NewPlanner(cfg.VibeAgent)
+	m.vibePlanner = vibe.NewPlanner(cfg.VibeAgent, cfg.VibeModel, cfg.VibeEffort)
 	m.search = views.NewSearch(prov)
 	m.favorites = make(map[string]bool)
 	m.aboutP = &aboutPanel{m: views.NewAbout()}
@@ -801,6 +813,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.playerState.Track != nil {
 			cmds = append(cmds, m.startDiscovery(true, 1))
 		}
+
+	case vibeCandidatesMsg:
+		cmds = append(cmds, m.handleVibeCandidates(msg))
 
 	case vibeResultMsg:
 		if !msg.radio && !msg.discovery {
@@ -2300,11 +2315,19 @@ func (m *Model) handleVibeSearchResult(msg vibeResultMsg) {
 	// Show what was searched for: planner and summary, then the terms.
 	var note []string
 	if msg.via != "" {
-		note = append(note, "✨ "+msg.via+": "+msg.plan.Summary)
+		who := msg.via
+		if msg.plan.Model != "" {
+			who += " (" + msg.plan.Model + ")"
+		}
+		line := "✨ " + who + ": " + msg.plan.Summary
+		if msg.ranking != "" {
+			line += " · " + msg.ranking
+		}
+		note = append(note, line)
 		if len(msg.plan.Queries) > 0 {
 			note = append(note, "terms: "+strings.Join(msg.plan.Queries, " · "))
 		}
-		m.appendLog(fmt.Sprintf("[vibe] %s planned %q → %q: %v", msg.via, msg.query, msg.plan.Summary, msg.plan.Queries))
+		m.appendLog(fmt.Sprintf("[vibe] %s planned %q → %q: %v (%s)", who, msg.query, msg.plan.Summary, msg.plan.Queries, msg.ranking))
 	}
 	if msg.err != nil {
 		m.appendLog(fmt.Sprintf("[vibe] search error: %v", msg.err))
@@ -2315,15 +2338,19 @@ func (m *Model) handleVibeSearchResult(msg vibeResultMsg) {
 	m.search.SetVibeResults(msg.tracks, note...)
 }
 
-// vibeResultCap is how many songs a vibe lookup lists.
-const vibeResultCap = 15
+// vibeResultCap is how many songs a vibe lookup lists; vibePoolCap is how many
+// candidates are gathered for the reranker to choose from.
+const (
+	vibeResultCap = 15
+	vibePoolCap   = 40
+)
 
-// runVibeSearch turns a description into search terms through the configured
-// planner (Claude Code CLI or the keyword table; the table is the fallback
-// when the planner fails), runs them in parallel through the provider and
-// interleaves the results so every term contributes, deduplicated by artist
-// and title, up to vibeResultCap songs. The plan rides along so the panel can
-// show what was searched for.
+// runVibeSearch is stage one of a vibe lookup: the description goes through
+// the configured planner (Claude Code CLI or the keyword table; the table is
+// the fallback when the planner fails), the terms run in parallel through the
+// provider and the hits are interleaved so every term contributes,
+// deduplicated by artist and title, up to vibePoolCap candidates. The plan
+// rides along so the panel can show what was searched for.
 func (m *Model) runVibeSearch(query string) tea.Cmd {
 	planner := m.vibePlanner
 	if planner == nil {
@@ -2382,9 +2409,9 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 			reasons = append(reasons, r.warnings...)
 			perTerm[i] = r.tracks
 		}
-		merged := interleaveTracks(perTerm, vibeResultCap)
+		pool := interleaveTracks(perTerm, vibePoolCap)
 
-		if len(merged) == 0 {
+		if len(pool) == 0 {
 			// Fallback to the raw description.
 			res, err := prov.Search(ctx, query)
 			if err != nil {
@@ -2394,7 +2421,7 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 				reasons = append(reasons, res.Warnings...)
 			}
 			if err != nil || res == nil || len(res.Tracks) == 0 {
-				return vibeResultMsg{
+				return vibeCandidatesMsg{
 					query:    query,
 					err:      noResultsError(query, reasons),
 					warnings: dedupeStrings(reasons),
@@ -2402,9 +2429,59 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 					via:      via,
 				}
 			}
-			merged = interleaveTracks([][]provider.Track{res.Tracks}, vibeResultCap)
+			pool = interleaveTracks([][]provider.Track{res.Tracks}, vibePoolCap)
 		}
-		return vibeResultMsg{query: query, tracks: merged, warnings: dedupeStrings(reasons), plan: plan, via: via}
+		return vibeCandidatesMsg{query: query, pool: pool, warnings: dedupeStrings(reasons), plan: plan, via: via}
+	}
+}
+
+// handleVibeCandidates is stage two: when the planner can rerank, the pool
+// goes back to it with the description and the panel says so; otherwise the
+// first vibeResultCap candidates are shown in search order.
+func (m *Model) handleVibeCandidates(msg vibeCandidatesMsg) tea.Cmd {
+	if !m.searchVibe || msg.query != m.vibeShown {
+		return nil
+	}
+	final := vibeResultMsg{query: msg.query, plan: msg.plan, via: msg.via, warnings: msg.warnings, err: msg.err}
+	if msg.err != nil || len(msg.pool) == 0 {
+		m.handleVibeSearchResult(final)
+		return nil
+	}
+	if rr, ok := m.vibePlanner.(vibe.Reranker); ok && len(msg.pool) > 1 {
+		m.search.SetLoadingNote(fmt.Sprintf("✨ %s is picking the best of %d candidates…", m.vibePlanner.Name(), len(msg.pool)))
+		return m.rerankVibeCmd(msg, rr)
+	}
+	final.tracks = msg.pool[:min(len(msg.pool), vibeResultCap)]
+	if len(msg.pool) > len(final.tracks) {
+		final.ranking = fmt.Sprintf("first %d of %d, search order", len(final.tracks), len(msg.pool))
+	}
+	m.handleVibeSearchResult(final)
+	return nil
+}
+
+// rerankVibeCmd asks the reranker to order the pool against the description.
+// A failed ranking keeps the search order and says so.
+func (m *Model) rerankVibeCmd(msg vibeCandidatesMsg, rr vibe.Reranker) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		cands := make([]vibe.Candidate, len(msg.pool))
+		for i, t := range msg.pool {
+			cands[i] = vibe.Candidate{Artist: t.Artist, Title: t.Title, Album: t.Album}
+		}
+		final := vibeResultMsg{query: msg.query, plan: msg.plan, via: msg.via, warnings: msg.warnings}
+		idx, err := rr.Rerank(ctx, msg.query, cands, vibeResultCap)
+		if err != nil {
+			final.tracks = msg.pool[:min(len(msg.pool), vibeResultCap)]
+			final.ranking = "ranking failed, search order"
+			final.warnings = append(final.warnings, err.Error())
+			return final
+		}
+		for _, i := range idx {
+			final.tracks = append(final.tracks, msg.pool[i])
+		}
+		final.ranking = fmt.Sprintf("picked %d of %d", len(final.tracks), len(msg.pool))
+		return final
 	}
 }
 
