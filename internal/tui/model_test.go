@@ -4262,21 +4262,26 @@ func TestSearchFooter_LongQueryKeepsCursorAndHints(t *testing.T) {
 	m.searchQuery = strings.Repeat("long vibe description ", 12)
 	m.searchCursor = len([]rune(m.searchQuery))
 	lines := m.statusNavLines(90)
-	if len(lines) != 1 {
-		t.Fatalf("the search footer stays one row, got %d", len(lines))
+	for _, l := range lines {
+		if lipgloss.Width(l) > 90 {
+			t.Fatalf("every footer row must fit the width, got %d: %q", lipgloss.Width(l), ansi.Strip(l))
+		}
 	}
-	plain := ansi.Strip(lines[0])
-	if lipgloss.Width(lines[0]) > 90 {
-		t.Fatalf("footer must fit the width, got %d: %q", lipgloss.Width(lines[0]), plain)
-	}
+	plain := ansi.Strip(strings.Join(lines, " "))
 	if !strings.Contains(plain, "…") || !strings.Contains(plain, "█") || !strings.Contains(plain, "back to tracks") {
 		t.Fatalf("a long query is cut on the left, keeping the cursor and the hints: %q", plain)
+	}
+	if wide := m.statusNavLines(400); len(wide) != 1 {
+		t.Fatalf("on a wide terminal the search row is one line, got %d", len(wide))
 	}
 	// Cursor in the middle: the window follows it.
 	m.searchCursor = 10
 	plain = ansi.Strip(m.statusNavLines(90)[0])
-	if !strings.Contains(plain, "long vibe █") || !strings.Contains(plain, "…   Enter") {
+	if !strings.Contains(plain, "long vibe █") || !strings.HasSuffix(strings.TrimSpace(plain), "…") {
 		t.Fatalf("the window should show the text around the cursor and mark the cut on the right: %q", plain)
+	}
+	if all := ansi.Strip(strings.Join(m.statusNavLines(90), " ")); !strings.Contains(all, "Enter") {
+		t.Fatalf("the key hints follow on the next row: %q", all)
 	}
 }
 
@@ -4386,5 +4391,61 @@ func TestStatusLines_TracksKeysAreOneFlow(t *testing.T) {
 	}
 	if narrow := m.statusLines(60); len(narrow) < 2 {
 		t.Fatal("a narrow terminal still wraps the list onto more rows")
+	}
+}
+
+func TestHandleSearchKey_MultiSelectAddsAll(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	m.mode = modeSearch
+	m.search.SetSize(80, 40)
+	tracks := catalogTracks(6)
+	m.search.SetState(tracks, false, nil)
+	// Shift+↓ twice: k0, k1, k2; Shift+→ drops k2; ↓ ↓ and Shift+→ adds k4.
+	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
+	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
+	if got := m.search.SelectedTracks(); len(got) != 3 || got[0].ID != "k0" || got[1].ID != "k1" || got[2].ID != "k4" {
+		t.Fatalf("selection = %+v, want k0 k1 k4", got)
+	}
+	footer := ansi.Strip(strings.Join(m.statusLines(300), " "))
+	if !strings.Contains(footer, "add 3 & play") || !strings.Contains(footer, "add 3") || !strings.Contains(footer, "select") {
+		t.Fatalf("the footer counts the selection: %q", footer)
+	}
+	// Shift+Enter: all three go to Tracks, nothing plays, selection cleared.
+	if cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}); cmd != nil {
+		cmd()
+	}
+	if strings.Join(m.queueIDs, ",") != "k0,k1,k4" || len(mp.setQueueIDs) > 0 {
+		t.Fatalf("Shift+Enter appends the selection in order without playing: queue=%v setQueue=%v", m.queueIDs, mp.setQueueIDs)
+	}
+	if m.search.SelectionCount() != 0 {
+		t.Fatal("the selection is cleared once added")
+	}
+	// Enter with a selection: adds the rest and starts the first of them (k2).
+	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})
+	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})                              // on k2
+	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift}) // k2, k3
+	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter with a selection should add and play")
+	}
+	cmd()
+	if strings.Join(m.queueIDs, ",") != "k0,k1,k4,k2,k3" {
+		t.Fatalf("Enter appends the selection: %v", m.queueIDs)
+	}
+	// Nothing was playing, so the whole list is handed to the engine starting at k2.
+	started := mp.setQueueAtStart
+	if n := len(mp.syncCalls); n > 0 {
+		started = mp.syncCalls[n-1].Play
+	}
+	if started != "k2" {
+		t.Fatalf("the first selected song should start, got %q (setQueueAt=%v sync=%+v)", started, mp.setQueueAtIDs, mp.syncCalls)
+	}
+	if m.search.SelectionCount() != 0 {
+		t.Fatal("selection cleared after Enter")
 	}
 }

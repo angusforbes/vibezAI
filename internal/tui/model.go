@@ -1257,6 +1257,11 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		if m.searchVibe && m.searchQuery != "" && m.searchQuery != m.vibeShown {
 			return m.startVibeSearch(m.searchQuery)
 		}
+		// A multi-selection goes to Tracks as a whole and the first one plays.
+		if picked := m.search.SelectedTracks(); len(picked) > 0 {
+			m.search.ClearSelection()
+			return m.appendAndPlay(fmt.Sprintf("%d songs", len(picked)), picked, playbackIDs(picked), 0)
+		}
 		// Enter on a section header folds it or opens it again.
 		if section, ok := m.search.SelectedHeader(); ok {
 			m.search.ToggleSectionOpen(section)
@@ -1294,7 +1299,25 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		// Hand the keys back to the queue; the query and results stay visible.
 		m.mode = modeNormal
 		return nil
+	case "shift+up", "shift+down":
+		// Sweep: select the highlighted song, move, select the one landed on.
+		dir := 1
+		if k == "shift+up" {
+			dir = -1
+		}
+		m.search.SelectAndMove(dir)
+		return nil
+	case "shift+right":
+		// Toggle the highlighted song in or out of the selection, so a
+		// selection need not be contiguous.
+		m.search.ToggleSelected()
+		return nil
 	case "shift+enter":
+		// A multi-selection goes to Tracks as a whole, nothing starts playing.
+		if picked := m.search.SelectedTracks(); len(picked) > 0 {
+			m.search.ClearSelection()
+			return m.addToQueue(fmt.Sprintf("%d songs", len(picked)), picked, playbackIDs(picked))
+		}
 		// Track: add to the end of the queue without playing; an already
 		// queued track is highlighted instead of being added twice.
 		if t := m.search.SelectedTrack(); t != nil {
@@ -2267,6 +2290,15 @@ func (m *Model) panelTitle(label string, focused bool) string {
 // them and not while an overlay panel (lyrics, feed, …) is open.
 func (m *Model) queueFocused() bool {
 	return m.mode != modeSearch && m.activePanel < 0
+}
+
+// playbackIDs lists the playback id of each track, in order.
+func playbackIDs(tracks []provider.Track) []string {
+	ids := make([]string, len(tracks))
+	for i, t := range tracks {
+		ids[i] = views.PlaybackID(t)
+	}
+	return ids
 }
 
 // fetchMoreTracksCmd requests the next page of catalog songs for the Tracks
@@ -3556,17 +3588,25 @@ func (m *Model) statusNavLines(w int) []string {
 		if m.searchVibe {
 			glyph, toggle = "CC ", accent.Render("^/")+muted.Render(" apple music")
 		}
-		action := accent.Render("Enter") + muted.Render(" add & play") + "  " + accent.Render("⇧Enter") + muted.Render(" add")
+		actions := []string{
+			accent.Render("Enter") + muted.Render(" add & play"),
+			accent.Render("⇧Enter") + muted.Render(" add"),
+			accent.Render("⇧↑↓/⇧→") + muted.Render(" select"),
+		}
+		if n := m.search.SelectionCount(); n > 0 {
+			actions[0] = accent.Render("Enter") + muted.Render(fmt.Sprintf(" add %d & play", n))
+			actions[1] = accent.Render("⇧Enter") + muted.Render(fmt.Sprintf(" add %d", n))
+		}
 		if m.searchVibe && m.searchQuery != m.vibeShown {
-			action = accent.Render("Enter") + muted.Render(" find songs")
+			actions = []string{accent.Render("Enter") + muted.Render(" find songs")}
 		}
 		head := styles.ModeSearch.Render(label) + "  " + accent.Render(glyph)
-		tail := "   " + action + "  " + toggle + "  " + accent.Render("Tab") + muted.Render(" back to tracks")
-		// The footer is one row: show the part of the query around the cursor
-		// that fits between the label and the hints, marking what is cut.
+		// The prompt shows the part of the query around the cursor that fits
+		// the row, marking what is cut; the key hints follow as dot-separated
+		// parts and wrap to further rows only where the width forces it.
 		runes := []rune(m.searchQuery)
 		cur := min(m.searchCursor, len(runes))
-		shown, curIdx, cutLeft, cutRight := queryWindow(runes, cur, max(8, w-lipgloss.Width(head)-lipgloss.Width(tail)-1))
+		shown, curIdx, cutLeft, cutRight := queryWindow(runes, cur, max(8, w-lipgloss.Width(head)-1))
 		query := styles.Header.Render(string(shown[:curIdx])) + accent.Render("█") + styles.Header.Render(string(shown[curIdx:]))
 		if cutLeft {
 			query = muted.Render("…") + query
@@ -3574,7 +3614,9 @@ func (m *Model) statusNavLines(w int) []string {
 		if cutRight {
 			query += muted.Render("…")
 		}
-		return []string{head + query + tail}
+		parts := append([]string{head + query}, actions...)
+		parts = append(parts, toggle, accent.Render("Tab")+muted.Render(" back to tracks"))
+		return wrapFit(parts, dot, w)
 	case modeCommand:
 		return []string{styles.ModeCommand.Render("CMD") + "  " +
 			muted.Render(":") + m.cmdBuf + accent.Render("_") +

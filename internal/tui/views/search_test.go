@@ -1228,3 +1228,54 @@ func TestSearch_VibeNotesAreShownButNotSelectable(t *testing.T) {
 		t.Fatal("a regular result set drops the vibe title and notes")
 	}
 }
+
+func TestSearch_MultiSelect(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 60)
+	s.SetResults(&provider.SearchResult{Tracks: catalogPage(0, 6)}, false, nil)
+	if s.SelectionCount() != 0 {
+		t.Fatal("no selection to start with")
+	}
+	// Shift+↓ twice from the first song: c0, c1, c2 are selected, cursor on c2.
+	s.SelectAndMove(1)
+	s.SelectAndMove(1)
+	if got := s.SelectedTracks(); len(got) != 3 || got[0].ID != "c0" || got[2].ID != "c2" {
+		t.Fatalf("a sweep selects every song passed over: %+v", got)
+	}
+	if cur := s.SelectedTrack(); cur == nil || cur.ID != "c2" {
+		t.Fatalf("the highlight moved with the sweep, got %+v", cur)
+	}
+	// Shift+→ toggles: c2 out, then move down twice normally and toggle c4 in.
+	s.ToggleSelected()
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s.ToggleSelected()
+	got := s.SelectedTracks()
+	if len(got) != 3 || got[0].ID != "c0" || got[1].ID != "c1" || got[2].ID != "c4" {
+		t.Fatalf("toggling makes the selection non-contiguous, in result order: %+v", got)
+	}
+	v := s.View()
+	if strings.Count(v, "✓") != 2 { // c0 and c1; c4 carries the ▶ as the highlighted row
+		t.Fatalf("selected rows other than the highlighted one carry a check mark: %q", v)
+	}
+	// Headers and controls are never selected.
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown}) // + 1 more? no: only 5 shown of 6 → the more row
+	if sec, more, ok := s.SelectedToggle(); !ok || sec != "Tracks" || !more {
+		t.Fatalf("expected the more row under the highlight, got %q %v %v", sec, more, ok)
+	}
+	s.ToggleSelected()
+	s.SelectAndMove(1)
+	if s.SelectionCount() != 3 {
+		t.Fatalf("controls do not join the selection, still 3, got %d", s.SelectionCount())
+	}
+	s.ClearSelection()
+	if s.SelectionCount() != 0 || strings.Contains(s.View(), "✓") {
+		t.Fatal("ClearSelection empties it")
+	}
+	// New results reset the selection.
+	s.SelectAndMove(-1)
+	s.SetResults(&provider.SearchResult{Tracks: catalogPage(0, 2)}, false, nil)
+	if s.SelectionCount() != 0 {
+		t.Fatal("a new result set starts without a selection")
+	}
+}
