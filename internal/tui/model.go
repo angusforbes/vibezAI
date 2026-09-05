@@ -1407,19 +1407,25 @@ type cmdEntry struct {
 var allCommands = []cmdEntry{
 	{"save", "save <name>", "Save the tracks as a playlist in Apple Music"},
 	{"seek", "seek <seconds>", "Jump to a position in the current song"},
-	{"discover", "discover <n>|auto|stop|metric", "Queue n discovered songs now, auto-discover until stopped, or pick the similarity"},
 	{"vol", "vol <0-100|+n|-n>", "Set, raise, or lower volume (e.g. vol 80, vol +10, vol -5)"},
 	{"quality", "quality <high|standard|256|64>", "Set Apple Music AAC bitrate"},
 	{"model", "model <fable|sonnet|haiku|default|id>", "Model Claude Code uses for CC lookups; bare :model shows the current one"},
 	{"effort", "effort <low|medium|high|xhigh|max|default>", "Effort Claude Code spends on CC lookups"},
-	{"art", "art", "Toggle album-art view (cover + track info instead of the bar)"},
 	{"mute", "mute", "Toggle mute"},
-	{"radio", "radio", "Toggle continuous radio seeded by the playing track (R inserts 5 related songs once)"},
-	{"shuffle", "shuffle", "Toggle the engine's shuffled play order (s jumps to a random queued song)"},
 	{"about", "about", "Show information about vibez"},
 	{"donate", "donate", "Support vibez development by donating"},
 	{"debug-logs", "debug-logs", "Toggle debug log panel"},
 	{"q", "q", "Quit (:quit works too)"},
+}
+
+// retiredCommands still run when typed but are neither listed in the footer
+// nor completed: the fork does not use them. Move an entry back into
+// allCommands to bring it back.
+var retiredCommands = []cmdEntry{
+	{"discover", "discover <n>|auto|stop|metric", "Queue n discovered songs now, auto-discover until stopped, or pick the similarity"},
+	{"art", "art", "Toggle album-art view (cover + track info instead of the bar)"},
+	{"radio", "radio", "Toggle continuous radio seeded by the playing track (R inserts 5 related songs once)"},
+	{"shuffle", "shuffle", "Toggle the engine's shuffled play order (s jumps to a random queued song)"},
 }
 
 // commandSuggestions returns commands whose trigger starts with the current

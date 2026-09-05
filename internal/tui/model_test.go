@@ -4316,6 +4316,23 @@ func TestCommandMode_KeepsTheSplitOnScreen(t *testing.T) {
 	}
 }
 
+func TestRetiredCommands_StillRunButAreNotListed(t *testing.T) {
+	m := newModel(newMockPlayer())
+	for _, c := range retiredCommands {
+		m.cmdBuf = c.trigger
+		for _, s := range m.commandSuggestions() {
+			if s.trigger == c.trigger {
+				t.Fatalf("%q is retired and must not be listed or completed", c.trigger)
+			}
+		}
+		m.errMsg = ""
+		_ = m.executeCommand(c.trigger)
+		if strings.Contains(m.errMsg, "unknown command") {
+			t.Fatalf("%q still runs when typed, got %q", c.trigger, m.errMsg)
+		}
+	}
+}
+
 func TestCtrlSlash_KeepsEachModesResultsAndSkipsRepeatLookups(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.provider = &termProvider{n: 3}

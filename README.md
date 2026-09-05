@@ -116,13 +116,9 @@ Typing `:` keeps both columns on screen. The footer lists every command; type on
 | `:model <fable\|sonnet\|haiku\|default\|id>` | Model Claude Code uses for `CC` lookups; bare `:model` shows the current one |
 | `:effort <low\|medium\|high\|xhigh\|max\|default>` | Effort for those lookups |
 | `:save <name>` | Save Tracks as an Apple Music playlist |
-| `:radio` | Toggle continuous radio seeded by the playing track |
-| `:shuffle` | Toggle the engine's shuffled play order |
-| `:discover <n>\|auto\|stop\|metric` | Queue discovered songs now or continuously |
 | `:vol <0-100\|+n\|-n>` · `:mute` | Volume |
 | `:quality <high\|standard\|256\|64>` | AAC bitrate |
 | `:seek <seconds>` | Jump inside the current song |
-| `:art` | Toggle the album-art view |
 | `:debug-logs` | Toggle the debug log, where Claude's terms and rankings are recorded |
 | `:q` / `:quit` | Quit |
 
@@ -174,7 +170,7 @@ vibezAI started from vibez 0.7.0. The engines, themes, equalizer, discovery and 
 | Search | Single flat result list, `enter` plays and replaces the queue | Sections (Playlists, Albums, Library, Tracks) with `+ 5 more` / `− 5 less`, foldable headers, paging through Apple's results, duplicates never added |
 | Vibe mode | `v` opens a prompt; a keyword table maps words to genres and dumps 15 shuffled songs into the queue | `CC` prompt inside Search; Claude Code plans the terms and ranks a pool of 40 candidates; results shown as a section headed by the model, nothing added until you say so |
 | Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+↑/↓` and `ctrl+→`, albums and playlists included |
-| Related songs | Continuous radio | `R` inserts five related songs once; `:radio` for continuous |
+| Related songs | Continuous radio | `R` inserts five related songs once |
 | Library | Browser panel | `T` (shift+t) inserts five random library songs; the library is searched as part of every search |
 | Footer | Changes with the mode | One fixed list per column |
 | Model choice | — | `:model`, `:effort`, config keys |
