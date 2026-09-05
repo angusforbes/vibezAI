@@ -131,12 +131,16 @@ func TestSavedSource_CtrlSlashCyclesThroughIt(t *testing.T) {
 		t.Fatalf("the lists show as folded headers with their size:\n%s", joined)
 	}
 	footer := ansi.Strip(strings.Join(m.statusLines(200), " "))
-	if !strings.Contains(footer, "SV ") || !strings.Contains(footer, "^/ apple music") {
+	if !strings.Contains(footer, "SV ") || !strings.Contains(footer, "^/ feed") {
 		t.Fatalf("the footer shows the SV prompt and where ^/ goes next: %q", footer)
 	}
 	ctrlSlash(m)
+	if m.searchSrc != searchFeed || m.search != m.searchFE {
+		t.Fatalf("saved lists → feed, got %v", m.searchSrc)
+	}
+	ctrlSlash(m)
 	if m.searchSrc != searchApple || m.search != m.searchAM {
-		t.Fatalf("saved lists → AM, got %v", m.searchSrc)
+		t.Fatalf("feed → AM, got %v", m.searchSrc)
 	}
 	// With nothing saved the source says so.
 	m3, _ := newListModel(t, t.TempDir())

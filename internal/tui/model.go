@@ -94,16 +94,6 @@ func (p *lyricsPanel) Update(msg tea.KeyPressMsg) tea.Cmd { return p.m.Update(ms
 func (p *lyricsPanel) View() string                       { return p.m.View() }
 func (p *lyricsPanel) Back() bool                         { return false }
 
-// feedPanel wraps views.FeedModel to satisfy ContentView.
-type feedPanel struct{ m *views.FeedModel }
-
-func (p *feedPanel) NavKey() string                     { return "F" }
-func (p *feedPanel) NavLabel() string                   { return "feed" }
-func (p *feedPanel) SetSize(w, h int)                   { p.m.SetSize(w, h) }
-func (p *feedPanel) Update(msg tea.KeyPressMsg) tea.Cmd { return p.m.Update(msg) }
-func (p *feedPanel) View() string                       { return p.m.View() }
-func (p *feedPanel) Back() bool                         { return false }
-
 // eqPanel wraps views.EQModel to satisfy ContentView.
 type eqPanel struct{ m *views.EQModel }
 
@@ -231,13 +221,6 @@ type feedResultMsg struct {
 	groups []provider.RecommendationGroup
 	err    error
 }
-type feedTracksMsg struct {
-	item     provider.RecommendationItem
-	tracks   []provider.Track
-	play     bool // true = replace queue & play; false = append
-	playNext bool
-	err      error
-}
 type searchCollectionTracksMsg struct {
 	label    string // album/playlist name for log messages
 	tracks   []provider.Track
@@ -353,7 +336,6 @@ type Model struct {
 	library     *libraryPanel
 	queue       *queuePanel
 	lyricsP     *lyricsPanel
-	feedP       *feedPanel
 	eqP         *eqPanel
 	aboutP      *aboutPanel
 
@@ -386,6 +368,12 @@ type Model struct {
 	searchAM *views.SearchModel // Apple Music search results
 	searchCC *views.SearchModel // Claude Code (vibes) results
 	searchSV *views.SearchModel // the saved track lists, one foldable section each
+	searchFE *views.SearchModel // Apple's recommendations (the feed), one section per group
+
+	// The feed is fetched once per session, on the first visit to FE; an
+	// error shows in the column and the next visit tries again.
+	feedLoaded  bool
+	feedLoading bool
 
 	// Command accumulation (mode == modeCommand)
 	cmdBuf string
@@ -450,7 +438,6 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	m.queueFollow = true
 	m.lyricsP = &lyricsPanel{m: views.NewLyrics()}
 	m.lyricsClient = lyrics.NewClient()
-	m.feedP = &feedPanel{m: views.NewFeed()}
 	eqBands := configEQBandsToPlayer(cfg.EQBands)
 	m.eqP = &eqPanel{m: views.NewEqualizer(eqBands)}
 	m.vibe = views.NewVibe()
@@ -458,12 +445,13 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	m.searchAM = views.NewSearch(prov)
 	m.searchCC = views.NewSearch(prov)
 	m.searchSV = views.NewSearch(prov)
+	m.searchFE = views.NewSearch(prov)
 	m.search = m.searchAM
 	m.favorites = make(map[string]bool)
 	m.aboutP = &aboutPanel{m: views.NewAbout()}
 	// The library browser panel is not offered (search covers the library);
 	// m.library is kept for the engine-ready wiring and message forwarding.
-	m.panels = []ContentView{m.lyricsP, m.feedP, m.eqP, m.aboutP}
+	m.panels = []ContentView{m.lyricsP, m.eqP, m.aboutP}
 	m.restoreQueue()
 	if opts.Backend != "" {
 		m.appendLog("[engine] backend: " + opts.Backend)
@@ -541,7 +529,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.library.SetSize(contentW, panelH)
 		m.search.SetSize(contentW, panelH)
 		m.lyricsP.SetSize(contentW, panelH)
-		m.feedP.SetSize(contentW, panelH)
 		m.eqP.SetSize(contentW, panelH)
 		m.aboutP.SetSize(contentW, panelH)
 
@@ -768,13 +755,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case feedResultMsg:
+		// The FE source: an error shows in the column and the next visit
+		// tries again; groups become sections.
+		m.feedLoading = false
 		if msg.err != nil {
-			m.feedP.m.SetError(msg.err)
+			m.searchFE.SetResults(nil, false, msg.err)
 			m.appendLog(fmt.Sprintf("[feed] error: %v", msg.err))
-		} else {
-			m.feedP.m.SetRecommendations(msg.groups)
-			m.appendLog(fmt.Sprintf("[feed] loaded %d groups", len(msg.groups)))
+			break
 		}
+		m.feedLoaded = true
+		m.searchFE.SetFeed(msg.groups)
+		m.appendLog(fmt.Sprintf("[feed] loaded %d groups", len(msg.groups)))
 
 	case views.EQChangeMsg:
 		if m.player != nil {
@@ -786,30 +777,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err := m.cfg.Save(""); err != nil {
 			m.appendLog(fmt.Sprintf("[eq] config save error: %v", err))
 		}
-
-	case feedTracksMsg:
-		if msg.err != nil {
-			m.errMsg = fmt.Sprintf("feed: %v", msg.err)
-			m.errExpiry = time.Now().Add(4 * time.Second)
-			m.appendLog(fmt.Sprintf("[feed] track fetch error: %v", msg.err))
-			break
-		}
-		if len(msg.tracks) == 0 {
-			m.errMsg = "feed: no playable tracks"
-			m.errExpiry = time.Now().Add(3 * time.Second)
-			break
-		}
-		ids := make([]string, len(msg.tracks))
-		for i, t := range msg.tracks {
-			ids[i] = views.PlaybackID(t)
-		}
-		if msg.play {
-			return m, m.appendAndPlay(msg.item.Title, msg.tracks, ids, 0)
-		}
-		if msg.playNext {
-			return m, m.playNextCmd(msg.item.Title, msg.tracks, ids)
-		}
-		return m, m.addToQueue(msg.item.Title, msg.tracks, ids)
 
 	case views.DiscoveryMetricSelectedMsg:
 		// User confirmed a metric in the picker — store it and immediately start
@@ -1069,6 +1036,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.searchAM = views.NewSearch(msg.Provider)
 		m.searchCC = views.NewSearch(msg.Provider)
 		m.searchSV = views.NewSearch(msg.Provider)
+		m.searchFE = views.NewSearch(msg.Provider)
+		m.feedLoaded, m.feedLoading = false, false
 		m.search = m.searchFor(m.searchSrc)
 		if m.searchSrc == searchSaved {
 			m.refreshSavedLists()
@@ -1275,9 +1244,9 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 	switch k {
 	case "ctrl+'", "ctrl+;":
 		// Start or stop typing into the prompt (two spellings: the keys sit
-		// side by side). The saved lists take no text.
-		if m.searchSrc == searchSaved {
-			m.flashStatus("the saved lists take no text; ^/ for Apple Music or Claude Code", 3*time.Second)
+		// side by side). The saved lists and the feed take no text.
+		if !m.searchSrc.takesText() {
+			m.flashStatus("this source takes no text; ^/ for Apple Music or Claude Code", 3*time.Second)
 			return nil
 		}
 		m.searchTyping = !m.searchTyping
@@ -1294,15 +1263,19 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+/", "ctrl+_":
 		// Cycle the source: Apple Music ("AM", searches on Enter) → Claude
 		// Code ("CC", Enter finds songs for a description) → the saved lists
-		// ("SV") → Apple Music. A plain "/" is text ("AC/DC"); terminals
-		// without the kitty protocol report Ctrl+/ as ctrl+_ (0x1F), so both
-		// spellings are accepted.
+		// ("SV") → the feed ("FE", Apple's recommendations) → Apple Music. A
+		// plain "/" is text ("AC/DC"); terminals without the kitty protocol
+		// report Ctrl+/ as ctrl+_ (0x1F), so both spellings are accepted.
 		m.setSearchSource(m.searchSrc.next())
 		// Each source keeps what it showed last time. Claude Code looks new
 		// text up on the way in (the same text keeps its songs); Apple Music
-		// searches on Enter only and the saved lists never look anything up.
-		if m.searchSrc == searchClaude && m.searchQuery != "" && m.searchQuery != m.vibeShown {
+		// searches on Enter only; the saved lists never look anything up; the
+		// feed is fetched on its first visit.
+		switch {
+		case m.searchSrc == searchClaude && m.searchQuery != "" && m.searchQuery != m.vibeShown:
 			return m.startVibeSearch(m.searchQuery)
+		case m.searchSrc == searchFeed:
+			return m.loadFeed()
 		}
 		return nil
 	case "enter":
@@ -1766,6 +1739,18 @@ func (m *Model) fetchLyricsCmd(t *provider.Track) tea.Cmd {
 	}
 }
 
+// loadFeed asks the provider for the personalised recommendations the FE
+// source shows; the column shows them loading meanwhile. Once loaded they
+// stay for the session; an error is retried on the next visit.
+func (m *Model) loadFeed() tea.Cmd {
+	if m.provider == nil || m.feedLoading || m.feedLoaded {
+		return nil
+	}
+	m.feedLoading = true
+	m.searchFE.SetResults(nil, true, nil)
+	return m.fetchFeedCmd()
+}
+
 // fetchFeedCmd fetches personalised recommendations from the provider asynchronously.
 func (m *Model) fetchFeedCmd() tea.Cmd {
 	prov := m.provider
@@ -1816,29 +1801,6 @@ func (m *Model) fetchSearchCollectionCmd(album *provider.Album, playlist *provid
 		}
 	}
 	return nil
-}
-
-// fetchFeedItemTracksCmd loads the tracks for a recommendation item then either
-// plays them (play=true) or appends them to the queue.
-func (m *Model) fetchFeedItemTracksCmd(item *provider.RecommendationItem, play bool, playNext bool) tea.Cmd {
-	snap := *item
-	prov := m.provider
-	m.appendLog(fmt.Sprintf("[feed] loading %q (%s)…", snap.Title, snap.Kind))
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		var tracks []provider.Track
-		var err error
-		switch snap.Kind {
-		case "album":
-			tracks, err = prov.GetAlbumTracks(ctx, snap.ID)
-		case "playlist":
-			tracks, err = prov.GetCatalogPlaylistTracks(ctx, snap.ID)
-		default:
-			err = fmt.Errorf("unknown kind %q", snap.Kind)
-		}
-		return feedTracksMsg{item: snap, tracks: tracks, play: play, playNext: playNext, err: err}
-	}
 }
 
 // startDiscovery activates discovery mode with the configured similarity metric.
@@ -1985,30 +1947,6 @@ func (m *Model) forwardToActivePanel(msg tea.KeyPressMsg) tea.Cmd {
 	if m.activePanel < 0 {
 		return nil
 	}
-	k := msg.String()
-	if m.panels[m.activePanel] == m.feedP {
-		switch k {
-		case "r":
-			m.feedP.m.SetLoading()
-			return m.fetchFeedCmd()
-		case "enter":
-			if item := m.feedP.m.SelectedItem(); item != nil {
-				m.playerState.Loading = true
-				return m.fetchFeedItemTracksCmd(item, true, false)
-			}
-		case "tab":
-			if item := m.feedP.m.SelectedItem(); item != nil {
-				return m.fetchFeedItemTracksCmd(item, false, false)
-			}
-		case "shift+tab":
-			if item := m.feedP.m.SelectedItem(); item != nil {
-				return m.fetchFeedItemTracksCmd(item, false, true)
-			}
-		default:
-			return m.feedP.m.Update(msg)
-		}
-		return nil
-	}
 	return m.panels[m.activePanel].Update(msg)
 }
 
@@ -2045,12 +1983,6 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 				m.activePanel = -1 // toggle off
 			} else {
 				m.activePanel = i
-				// Trigger a feed load when opening the feed panel for the first time.
-				if p == m.feedP && m.feedP.m.NeedsLoad() {
-					m.feedP.m.SetLoading()
-					m.lastKey = ""
-					return m.fetchFeedCmd()
-				}
 				// Lazy-load lyrics when the panel is opened and the current
 				// track hasn't been fetched yet.
 				if p == m.lyricsP && m.lastLyricsTrackID == "" && m.playerState.Track != nil {
@@ -2247,9 +2179,9 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		// is just the column.
 		m.lastKey = ""
 		m.mode = modeSearch
-		if m.searchSrc == searchSaved {
+		if !m.searchSrc.takesText() {
 			m.searchTyping = false
-			m.flashStatus("the saved lists take no text; ^/ for Apple Music or Claude Code", 3*time.Second)
+			m.flashStatus("this source takes no text; ^/ for Apple Music or Claude Code", 3*time.Second)
 			return nil
 		}
 		m.searchTyping = true
@@ -2565,6 +2497,8 @@ func (m *Model) searchFor(src searchSource) *views.SearchModel {
 		return m.searchCC
 	case searchSaved:
 		return m.searchSV
+	case searchFeed:
+		return m.searchFE
 	}
 	return m.searchAM
 }
@@ -3354,10 +3288,9 @@ func (m *Model) renderBoxLayout() string {
 	rightW := inner - splitW - 1 // right column inner width (-1 for │ divider)
 
 	lyricsActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.lyricsP
-	feedActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.feedP
 	eqActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.eqP
 	aboutActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.aboutP
-	fullWidth := lyricsActive || feedActive || eqActive || aboutActive || m.debugView
+	fullWidth := lyricsActive || eqActive || aboutActive || m.debugView
 
 	var sb strings.Builder
 
@@ -3385,11 +3318,6 @@ func (m *Model) renderBoxLayout() string {
 	case lyricsActive:
 		m.lyricsP.SetSize(inner-2, panelH)
 		for _, line := range toLines(m.lyricsP.View(), panelH) {
-			sb.WriteString("│ " + padRight(line, inner-2) + " │\n")
-		}
-	case feedActive:
-		m.feedP.SetSize(inner-2, panelH)
-		for _, line := range toLines(m.feedP.View(), panelH) {
 			sb.WriteString("│ " + padRight(line, inner-2) + " │\n")
 		}
 	case eqActive:
@@ -3785,6 +3713,8 @@ func (m *Model) statusNavLines(w int) []string {
 			glyph = "CC "
 		case searchSaved:
 			glyph = "SV "
+		case searchFeed:
+			glyph = "FE "
 		}
 		toggle := accent.Render("^/") + muted.Render(" "+m.nextSourceLabel())
 		// Every key that works here, always listed. While typing, Enter runs
@@ -3808,7 +3738,7 @@ func (m *Model) statusNavLines(w int) []string {
 				accent.Render("spc")+muted.Render(" play/pause"),
 				accent.Render("→")+muted.Render(" open/fold"),
 			)
-			if m.searchSrc != searchSaved {
+			if m.searchSrc.takesText() {
 				actions = append(actions, accent.Render("^'")+muted.Render(" type"))
 			}
 		}
@@ -3886,16 +3816,6 @@ func (m *Model) statusNavLines(w int) []string {
 				accent.Render("g/G") + muted.Render(" top/bottom"),
 				accent.Render("esc") + muted.Render(" close"),
 			}
-		case m.activePanel >= 0 && m.panels[m.activePanel] == m.feedP:
-			parts = []string{
-				styles.ModeNormal.Render("FEED"),
-				accent.Render("Enter") + muted.Render(" play"),
-				accent.Render("Tab") + muted.Render(" queue"),
-				accent.Render("Shift+Tab") + muted.Render(" next"),
-				accent.Render("j/k") + muted.Render(" navigate"),
-				accent.Render("r") + muted.Render(" refresh"),
-				accent.Render("esc") + muted.Render(" close"),
-			}
 		case m.activePanel >= 0 && m.panels[m.activePanel] == m.eqP:
 			parts = []string{
 				styles.ModeNormal.Render("EQUALIZER"),
@@ -3928,7 +3848,6 @@ func (m *Model) tracksNavParts() []string {
 		accent.Render("Tab") + muted.Render(" search"),
 		accent.Render("^'") + muted.Render(" search & type"),
 		accent.Render("y") + muted.Render(" lyrics"),
-		accent.Render("F") + muted.Render(" feed"),
 		accent.Render("e") + muted.Render(" equalizer"),
 		accent.Render("?") + muted.Render(" about"),
 		accent.Render(":q") + muted.Render(" quit"),
@@ -4356,22 +4275,28 @@ func playerEQBandsToConfig(bands []player.EQBand) []config.EQBand {
 type searchSource int
 
 const (
-	searchApple  searchSource = iota // "AM": Apple Music, searches as you type
+	searchApple  searchSource = iota // "AM": Apple Music, searches on Enter
 	searchClaude                     // "CC": Claude Code finds songs for a description on Enter
 	searchSaved                      // "SV": the saved track lists, one foldable section each
+	searchFeed                       // "FE": Apple's recommendations, one section per group
 )
 
 // next is the source Ctrl+/ moves to.
-func (s searchSource) next() searchSource { return (s + 1) % 3 }
+func (s searchSource) next() searchSource { return (s + 1) % 4 }
+
+// takesText reports whether the source has a prompt to type into.
+func (s searchSource) takesText() bool { return s == searchApple || s == searchClaude }
 
 // nextSourceLabel names where Ctrl+/ goes from the current source, for the
-// footers: "claude", "saved lists" or "apple music".
+// footers: "claude", "saved lists", "feed" or "apple music".
 func (m *Model) nextSourceLabel() string {
 	switch m.searchSrc.next() {
 	case searchClaude:
 		return "claude"
 	case searchSaved:
 		return "saved lists"
+	case searchFeed:
+		return "feed"
 	}
 	return "apple music"
 }

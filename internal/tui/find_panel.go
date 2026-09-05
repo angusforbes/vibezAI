@@ -44,6 +44,8 @@ func (m *Model) findHeader() string {
 		mode = "Claude Code"
 	case searchSaved:
 		mode = "Saved lists"
+	case searchFeed:
+		mode = "Feed"
 	}
 	label := styles.QueueItemMuted.Render("  " + mode)
 	if m.search.Loading() {
@@ -63,6 +65,8 @@ func (m *Model) searchFindLines(w, h int) []string {
 		glyph = "CC" // Claude Code plans these lookups
 	case searchSaved:
 		glyph = "SV" // the saved track lists
+	case searchFeed:
+		glyph = "FE" // Apple's recommendations
 	}
 	// The query wraps onto further rows instead of running off the right
 	// edge; continuation rows are indented under the text. At most half the
@@ -88,6 +92,9 @@ func (m *Model) searchFindLines(w, h int) []string {
 	}
 	if listView == "" && m.searchSrc == searchSaved {
 		listView = "  " + muted.Render("no saved lists yet; :save makes one")
+	}
+	if listView == "" && m.searchSrc == searchFeed && !m.search.Loading() {
+		listView = "  " + muted.Render("no recommendations")
 	}
 	if listView == "" && !m.search.Loading() && m.searchQuery != "" {
 		listView = "  " + muted.Render("no results")

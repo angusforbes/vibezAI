@@ -1221,6 +1221,74 @@ func TestPanels_TabEscOrOwnKeyReturnToThePreviousColumn(t *testing.T) {
 	}
 }
 
+// feedProvider answers GetRecommendations with one group of an album and a playlist.
+type feedProvider struct{ mockProvider }
+
+func (feedProvider) GetRecommendations(_ context.Context) ([]provider.RecommendationGroup, error) {
+	return []provider.RecommendationGroup{{Title: "Made for You", Items: []provider.RecommendationItem{
+		{ID: "1234", Kind: "album", Title: "Blue Album", Subtitle: "Weezer"},
+		{ID: "pl.abc", Kind: "playlist", Title: "Chill Mix", Subtitle: "Apple Music"},
+	}}}, nil
+}
+
+func TestFeedSource_CyclesLoadsAndSelectsLikeASearch(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &feedProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	press := func(k string, code rune, mod tea.KeyMod) tea.Cmd {
+		return m.handleSearchKey(k, tea.KeyPressMsg{Code: code, Mod: mod})
+	}
+	press("ctrl+/", '/', tea.ModCtrl) // CC
+	press("ctrl+/", '/', tea.ModCtrl) // SV
+	cmd := press("ctrl+/", '/', tea.ModCtrl)
+	if m.searchSrc != searchFeed || m.search != m.searchFE || cmd == nil || !m.search.Loading() {
+		t.Fatalf("SV → FE fetches the recommendations once: src=%v cmd=%v loading=%v", m.searchSrc, cmd != nil, m.search.Loading())
+	}
+	m.Update(cmd())
+	view := ansi.Strip(strings.Join(m.searchFindLines(60, 14), "\n"))
+	for _, want := range []string{"Feed", "FE", "Made for You", "Blue Album", "[album]", "Chill Mix", "[playlist]"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("the feed shows as a section of albums and playlists; %q missing:\n%s", want, view)
+		}
+	}
+	footer := ansi.Strip(strings.Join(m.statusLines(400), " "))
+	if !strings.Contains(footer, "FE ") || !strings.Contains(footer, "^/ apple music") || strings.Contains(footer, "^' type") {
+		t.Fatalf("the FE footer: %q", footer)
+	}
+	press("ctrl+'", 0x27, tea.ModCtrl)
+	if m.searchTyping || !strings.Contains(m.errMsg, "no text") {
+		t.Fatalf("FE takes no text: typing=%v msg=%q", m.searchTyping, m.errMsg)
+	}
+	// Mark the album and the playlist; the selection carries both for the
+	// usual expansion when added.
+	press("ctrl+shift+down", tea.KeyDown, tea.ModCtrl|tea.ModShift)
+	items := m.search.SelectedItems()
+	if len(items) != 2 || items[0].Album == nil || items[0].Album.ID != "1234" || items[1].Playlist == nil || items[1].Playlist.ID != "pl.abc" {
+		t.Fatalf("selection = %+v", items)
+	}
+	if cmd := m.addSelection(false); cmd == nil {
+		t.Fatal("adding albums and playlists expands them through the provider")
+	}
+	// ^/ goes on to AM; a later visit keeps the loaded feed.
+	press("ctrl+/", '/', tea.ModCtrl)
+	if m.searchSrc != searchApple {
+		t.Fatalf("FE → AM, got %v", m.searchSrc)
+	}
+	for range 3 {
+		cmd = press("ctrl+/", '/', tea.ModCtrl)
+	}
+	if m.searchSrc != searchFeed || cmd != nil || !m.search.Feed() {
+		t.Fatalf("a second visit keeps the loaded feed: src=%v cmd=%v feed=%v", m.searchSrc, cmd != nil, m.search.Feed())
+	}
+	// F is no longer a panel key.
+	m.mode = modeNormal
+	m.handleNormalKey(tea.KeyPressMsg{Code: 'F', Text: "F"}, "F")
+	if m.activePanel >= 0 {
+		t.Fatalf("F opens nothing now, got panel %d", m.activePanel)
+	}
+}
+
 func TestHandleSearchKey_CtrlComma_DoesNotCallSetQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
@@ -4326,6 +4394,10 @@ func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 	if lines := m.searchFindLines(40, 6); !strings.Contains(lines[2], "SV") || !strings.Contains(ansi.Strip(lines[0]), "Saved lists") {
 		t.Fatalf("the saved-lists source shows the SV prompt and names itself: %q / %q", lines[2], ansi.Strip(lines[0]))
 	}
+	// Then the feed: fetched on this first visit, nothing to type.
+	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd == nil || m.searchSrc != searchFeed {
+		t.Fatalf("ctrl+/ from SV goes to the feed and fetches it (cmd=%v src=%v)", cmd != nil, m.searchSrc)
+	}
 	// Back to regular search: switching runs nothing; Enter then looks the text up.
 	if cmd := m.handleSearchKey("ctrl+_", tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}); cmd != nil || m.searchSrc != searchApple {
 		t.Fatalf("ctrl+/ again (legacy ctrl+_ spelling) should return to regular search without searching (cmd=%v src=%v)", cmd != nil, m.searchSrc)
@@ -4796,6 +4868,10 @@ func TestCtrlSlash_KeepsEachModesResultsAndSkipsRepeatLookups(t *testing.T) {
 	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil || m.searchSrc != searchSaved {
 		t.Fatalf("the saved lists never look anything up (cmd=%v src=%v)", cmd != nil, m.searchSrc)
 	}
+	// …the feed (fetched on this first visit)…
+	if m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); m.searchSrc != searchFeed {
+		t.Fatalf("SV → FE, got %v", m.searchSrc)
+	}
 	// …back to Apple Music: same text, its results are still there → no search.
 	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil || m.searchSrc != searchApple || m.search.Loading() {
 		t.Fatalf("same text back in Apple Music must not re-search (cmd=%v vibe=%v loading=%v)", cmd != nil, m.searchSrc == searchClaude, m.search.Loading())
@@ -4814,7 +4890,8 @@ func TestCtrlSlash_KeepsEachModesResultsAndSkipsRepeatLookups(t *testing.T) {
 	// waits for Enter (through the saved lists first, which ignore it).
 	m.searchTyping = true
 	m.handleSearchKey("!", tea.KeyPressMsg{Code: '!', Text: "!"})
-	m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl})
+	m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}) // SV
+	m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}) // FE
 	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil || m.searchSrc != searchApple || m.search.Loading() {
 		t.Fatalf("switching to Apple Music with new text does not search yet (cmd=%v src=%v loading=%v)", cmd != nil, m.searchSrc, m.search.Loading())
 	}

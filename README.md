@@ -28,7 +28,7 @@ vibezAI is a keyboard-driven Apple Music player for the terminal. Full tracks st
 </p>
 
 - **Tracks** (left) is the one list of what plays. It survives restarts, you move through it in place, and nothing you do in the right column ever replaces it.
-- **Search** (right) has three sources, and `Ctrl+/` cycles them. `AM` searches Apple Music when you press `Enter`: Playlists, Albums, Library (your own copies) and Tracks, five per section, with `+ 5 more` / `− 5 less` rows and headers that fold. `CC` sends a plain-English description to Claude Code, which plans the search and ranks the results. `SV` lists the track lists kept with `:save`, the previous session's Tracks first, each a header that opens to all of its songs; add the whole list from its header or pick songs from it.
+- **Search** (right) has three sources, and `Ctrl+/` cycles them. `AM` searches Apple Music when you press `Enter`: Playlists, Albums, Library (your own copies) and Tracks, five per section, with `+ 5 more` / `− 5 less` rows and headers that fold. `CC` sends a plain-English description to Claude Code, which plans the search and ranks the results. `SV` lists the track lists kept with `:save`, the previous session's Tracks first, each a header that opens to all of its songs; add the whole list from its header or pick songs from it. `FE` shows Apple Music's recommendations for you, one section per group, albums and playlists to mark and add like any search hit.
 - **Tab** moves the keys between the two columns. The column that has them shows its title in bold; the mode text next to "Search" glows while a lookup is running.
 - Everything that works in a column is listed once, in the footer.
 
@@ -95,14 +95,14 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `Tab` | Move the keys to Search |
 | `ctrl+'` | Move the keys to Search and start typing into the `AM` or `CC` prompt |
 | `:` | Command mode |
-| `y` / `F` / `e` / `?` | Lyrics / feed / equalizer / about; `Tab`, `esc` or the same key again closes the panel and returns to the column you came from |
+| `y` / `e` / `?` | Lyrics / equalizer / about; `Tab`, `esc` or the same key again closes the panel and returns to the column you came from |
 
 ### Search (right column)
 
 | Key | Action |
 |-----|--------|
 | `ctrl+'` | Start or stop typing into the prompt (`AM` and `CC`); nothing is looked up while you type |
-| `ctrl+/` | Cycle the source: `AM` → `CC` → `SV` (saved lists) → `AM`; text already typed is looked up when switching to `CC`, `AM` waits for `enter` |
+| `ctrl+/` | Cycle the source: `AM` → `CC` → `SV` (saved lists) → `FE` (recommendations) → `AM`; text already typed is looked up when switching to `CC`, `AM` waits for `enter` |
 | `enter` | While typing: search (`AM`) or look up (`CC`) the text and stop typing. Otherwise: play the track highlighted in Tracks |
 | `space` | Play / pause (not while typing) |
 | `→` | Open or fold a section header (a saved list opens whole), grow or shrink a section by five |
@@ -184,6 +184,7 @@ vibezAI started from vibez 0.7.0. The engines, themes, equalizer, discovery and 
 | Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+shift+↑/↓` and `ctrl+→`, albums and playlists included |
 | Related songs | Continuous radio | `R` inserts five related songs once |
 | Library | Browser panel | `T` (shift+t) inserts five random library songs; the library is searched as part of every search |
+| Feed | `F` opens a Feed panel | `FE` source in Search: the same sections, marks and adds as a search |
 | Saved lists | — | `:save [name]` keeps Tracks as a list, named by Claude Code when no name is given; Search offers the lists under `SV`, whole or song by song; `ctrl+delete` removes one |
 | Footer | Changes with the mode | One fixed list per column; `:` swaps it for the command list |
 | Model choice | — | `:model`, `:effort`, config keys |

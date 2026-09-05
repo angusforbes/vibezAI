@@ -71,6 +71,7 @@ type searchRow struct {
 	note     string     // muted, non-selectable line (what a vibe lookup searched for)
 	title    string     // header display text when it differs from label (the section key)
 	list     *SavedList // saved-lists source: the list this header stands for
+	group    bool       // feed source: a recommendation group's header
 }
 
 // isItem reports whether this row is selectable: an item, a more/less toggle
@@ -93,6 +94,56 @@ func rowLines(r searchRow) int {
 type SavedList struct {
 	Name   string
 	Tracks []provider.Track
+}
+
+// feedSection is one recommendation group of the FE source: its albums and
+// playlists as rows, in Apple's order, pointing into the backing slices.
+type feedSection struct {
+	label     string
+	albums    []provider.Album
+	playlists []provider.Playlist
+	entries   []searchRow
+}
+
+// buildFeedSections turns the provider's recommendation groups into sections;
+// duplicate group titles are numbered, empty groups are dropped.
+func buildFeedSections(groups []provider.RecommendationGroup) []feedSection {
+	seen := map[string]int{}
+	out := make([]feedSection, 0, len(groups))
+	for _, g := range groups {
+		label := g.Title
+		if label == "" {
+			label = "Recommendations"
+		}
+		seen[label]++
+		if seen[label] > 1 {
+			label = fmt.Sprintf("%s (%d)", label, seen[label])
+		}
+		sec := feedSection{label: label}
+		for _, it := range g.Items {
+			switch it.Kind {
+			case "album":
+				sec.albums = append(sec.albums, provider.Album{ID: it.ID, Title: it.Title, Artist: it.Subtitle})
+			case "playlist":
+				sec.playlists = append(sec.playlists, provider.Playlist{ID: it.ID, Name: it.Title})
+			}
+		}
+		ai, pi := 0, 0
+		for _, it := range g.Items {
+			switch it.Kind {
+			case "album":
+				sec.entries = append(sec.entries, searchRow{album: &sec.albums[ai]})
+				ai++
+			case "playlist":
+				sec.entries = append(sec.entries, searchRow{playlist: &sec.playlists[pi]})
+				pi++
+			}
+		}
+		if len(sec.entries) > 0 {
+			out = append(out, sec)
+		}
+	}
+	return out
 }
 
 // SearchModel holds search results rendered as a unified multi-section list
@@ -120,6 +171,10 @@ type SearchModel struct {
 	// folded to its header by default and opened whole.
 	saved bool
 	lists []SavedList
+
+	// feed is the FE source: Apple's personalised recommendations, one
+	// section per group, albums and playlists as rows (nil = not this source).
+	feed []feedSection
 
 	// selected holds the keys (see selKey) of the songs, albums and playlists
 	// picked for a multi-add (Shift+↑/↓ sweep, Shift+→ toggle); cleared when
@@ -157,6 +212,7 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.results = result
 	m.vibe, m.vibeTitle, m.vibeNote = false, "", nil
 	m.saved, m.lists = false, nil
+	m.feed = nil
 	m.selected, m.stash = nil, nil
 	m.shown = nil // a new result set starts at the default count per section
 	m.catalogNext, m.catalogMore = 0, false
@@ -181,6 +237,7 @@ func (m *SearchModel) SetVibeResults(tracks []provider.Track, title string, note
 	m.vibeTitle = title
 	m.vibeNote = note
 	m.saved, m.lists = false, nil
+	m.feed = nil
 	m.selected, m.stash = nil, nil
 	m.shown = nil
 	m.catalogNext, m.catalogMore = 0, false
@@ -211,6 +268,7 @@ func (m *SearchModel) SetSavedLists(lists []SavedList) {
 	m.results = nil
 	m.vibe, m.vibeTitle, m.vibeNote = false, "", nil
 	m.saved, m.lists = true, lists
+	m.feed = nil
 	m.selected, m.stash = nil, nil
 	m.shown = shown
 	m.catalogNext, m.catalogMore = 0, false
@@ -261,6 +319,27 @@ func (m *SearchModel) SelectSavedList(i int) {
 
 // SavedLists reports whether the list shows the saved-lists source.
 func (m *SearchModel) SavedLists() bool { return m.saved }
+
+// SetFeed shows the personalised recommendations: one section per group,
+// albums and playlists as rows, five at a time with the usual controls, so
+// they are browsed, marked and added exactly like search hits.
+func (m *SearchModel) SetFeed(groups []provider.RecommendationGroup) {
+	m.loading, m.err = false, nil
+	m.results = nil
+	m.vibe, m.vibeTitle, m.vibeNote = false, "", nil
+	m.saved, m.lists = false, nil
+	m.feed = buildFeedSections(groups)
+	m.selected, m.stash = nil, nil
+	m.shown = nil
+	m.catalogNext, m.catalogMore = 0, false
+	m.paging, m.pendingReveal = false, 0
+	m.rebuildRows()
+	m.cursor = m.firstEntryRow()
+	m.scroll = 0
+}
+
+// Feed reports whether the list shows the recommendations source.
+func (m *SearchModel) Feed() bool { return m.feed != nil }
 
 // SelectedSavedList returns the saved list whose header is highlighted, or nil.
 func (m *SearchModel) SelectedSavedList() *SavedList {
@@ -338,6 +417,14 @@ func (m *SearchModel) SelectedToggle() (section string, more bool, ok bool) {
 
 // sectionTotal returns how many results a section has.
 func (m *SearchModel) sectionTotal(section string) int {
+	if m.feed != nil {
+		for _, sec := range m.feed {
+			if sec.label == section {
+				return len(sec.entries)
+			}
+		}
+		return 0
+	}
 	if m.saved {
 		for _, l := range m.lists {
 			if l.Name == section {
@@ -620,6 +707,10 @@ func isLibraryTrack(t provider.Track) bool {
 // items and grows or shrinks in steps of five through its control rows.
 func (m *SearchModel) rebuildRows() {
 	m.rows = nil
+	if m.feed != nil {
+		m.rebuildFeedRows()
+		return
+	}
 	if m.saved {
 		m.rebuildSavedRows()
 		return
@@ -654,6 +745,19 @@ func (m *SearchModel) rebuildRows() {
 	}
 	m.sectionRows("Library", len(library), func(i int) searchRow { return searchRow{track: library[i]} })
 	m.sectionRows("Tracks", len(catalog), func(i int) searchRow { return searchRow{track: catalog[i]} })
+}
+
+// rebuildFeedRows lays the recommendations out as one section per group,
+// with the usual five-at-a-time controls.
+func (m *SearchModel) rebuildFeedRows() {
+	for i := range m.feed {
+		sec := &m.feed[i]
+		header := len(m.rows)
+		m.sectionRows(sec.label, len(sec.entries), func(j int) searchRow { return sec.entries[j] })
+		if header < len(m.rows) && m.rows[header].header {
+			m.rows[header].group = true
+		}
+	}
 }
 
 // rebuildSavedRows lays the saved lists out as one section each. The header
@@ -855,6 +959,9 @@ func (m *SearchModel) SelectedItems() []SelectedItem {
 	if m.saved {
 		return m.selectedSavedItems()
 	}
+	if m.feed != nil {
+		return m.selectedFeedItems()
+	}
 	if m.results == nil {
 		return nil
 	}
@@ -896,6 +1003,21 @@ func (m *SearchModel) selectedSavedItems() []SelectedItem {
 				seen[key] = true
 				out = append(out, SelectedItem{Track: t})
 			}
+		}
+	}
+	return out
+}
+
+// selectedFeedItems is the multi-selection of the FE source: the marked
+// albums and playlists in the groups' order.
+func (m *SearchModel) selectedFeedItems() []SelectedItem {
+	out := make([]SelectedItem, 0, len(m.selected))
+	for _, sec := range m.feed {
+		for _, r := range sec.entries {
+			if !m.selected[selKey(r)] {
+				continue
+			}
+			out = append(out, SelectedItem{Album: r.album, Playlist: r.playlist})
 		}
 	}
 	return out
@@ -993,8 +1115,11 @@ func sectionColor(label string) color.Color {
 // rowAccent is the accent of a header row: saved lists share one colour, the
 // search sections have theirs by label.
 func rowAccent(r searchRow) color.Color {
-	if r.list != nil {
+	switch {
+	case r.list != nil:
 		return styles.ColorSecondary
+	case r.group:
+		return styles.ColorPrimary
 	}
 	return sectionColor(r.label)
 }
