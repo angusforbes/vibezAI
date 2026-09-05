@@ -2296,9 +2296,6 @@ func (m *Model) startVibeSearch(query string) tea.Cmd {
 	m.vibeShown = query
 	m.searchGen++ // drop any regular search still in flight
 	m.search.SetResults(nil, true, nil)
-	if m.vibePlanner != nil && m.vibePlanner.Name() != "keywords" {
-		m.search.SetLoadingNote("✨ asking " + m.vibePlanner.Name() + " for search terms…")
-	}
 	return m.runVibeSearch(query)
 }
 
@@ -2312,30 +2309,30 @@ func (m *Model) handleVibeSearchResult(msg vibeResultMsg) {
 	if len(msg.warnings) > 0 {
 		m.appendLog(fmt.Sprintf("[vibe] partial results: %s", strings.Join(msg.warnings, "; ")))
 	}
-	// Show what was searched for: planner and summary, then the terms.
-	var note []string
+	// The header names the model that planned the lookup and the line under it
+	// carries its summary; terms and ranking details go to the debug log. When
+	// the keyword table did the work (no model), the header stays "Vibes" and
+	// the line says so, including a planner failure.
+	title, note := "", []string(nil)
 	if msg.via != "" {
-		who := msg.via
+		summary := strings.TrimSpace(msg.plan.Summary)
 		if msg.plan.Model != "" {
-			who += " (" + msg.plan.Model + ")"
+			title = vibe.PrettyModel(msg.plan.Model)
+			if summary != "" {
+				note = append(note, summary)
+			}
+		} else {
+			note = append(note, msg.via+": "+summary)
 		}
-		line := "✨ " + who + ": " + msg.plan.Summary
-		if msg.ranking != "" {
-			line += " · " + msg.ranking
-		}
-		note = append(note, line)
-		if len(msg.plan.Queries) > 0 {
-			note = append(note, "terms: "+strings.Join(msg.plan.Queries, " · "))
-		}
-		m.appendLog(fmt.Sprintf("[vibe] %s planned %q → %q: %v (%s)", who, msg.query, msg.plan.Summary, msg.plan.Queries, msg.ranking))
+		m.appendLog(fmt.Sprintf("[vibe] %s (%s) planned %q → %q: %v (%s)", msg.via, msg.plan.Model, msg.query, summary, msg.plan.Queries, msg.ranking))
 	}
 	if msg.err != nil {
 		m.appendLog(fmt.Sprintf("[vibe] search error: %v", msg.err))
-		m.search.SetVibeResults(nil, note...)
+		m.search.SetVibeResults(nil, title, note...)
 		return
 	}
 	m.appendLog(fmt.Sprintf("[vibe] %d song(s) for %q", len(msg.tracks), msg.query))
-	m.search.SetVibeResults(msg.tracks, note...)
+	m.search.SetVibeResults(msg.tracks, title, note...)
 }
 
 // vibeResultCap is how many songs a vibe lookup lists; vibePoolCap is how many
@@ -2448,8 +2445,7 @@ func (m *Model) handleVibeCandidates(msg vibeCandidatesMsg) tea.Cmd {
 		return nil
 	}
 	if rr, ok := m.vibePlanner.(vibe.Reranker); ok && len(msg.pool) > 1 {
-		m.search.SetLoadingNote(fmt.Sprintf("✨ %s is picking the best of %d candidates…", m.vibePlanner.Name(), len(msg.pool)))
-		return m.rerankVibeCmd(msg, rr)
+		return m.rerankVibeCmd(msg, rr) // the panel keeps animating meanwhile
 	}
 	final.tracks = msg.pool[:min(len(msg.pool), vibeResultCap)]
 	if len(msg.pool) > len(final.tracks) {

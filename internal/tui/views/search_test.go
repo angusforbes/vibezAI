@@ -1162,7 +1162,7 @@ func TestSearch_PageAfterNewQueryIsDropped(t *testing.T) {
 func TestSearch_VibeResultsAreOneSection(t *testing.T) {
 	s := NewSearch(nil)
 	s.SetSize(80, 60)
-	s.SetVibeResults(catalogPage(0, 12))
+	s.SetVibeResults(catalogPage(0, 12), "")
 	if !s.VibeResults() {
 		t.Fatal("SetVibeResults should mark the list as a vibe result set")
 	}
@@ -1200,7 +1200,7 @@ func TestSearch_VibeResultsAreOneSection(t *testing.T) {
 func TestSearch_VibeNotesAreShownButNotSelectable(t *testing.T) {
 	s := NewSearch(nil)
 	s.SetSize(80, 40)
-	s.SetVibeResults(catalogPage(0, 3), "✨ Claude: Dreamy soul", "terms: a · b")
+	s.SetVibeResults(catalogPage(0, 3), "Fable 5.1", "Dreamy soul", "second line")
 	if len(s.rows) < 4 || !s.rows[0].header || s.rows[1].note == "" || s.rows[2].note == "" || s.rows[3].track == nil {
 		t.Fatalf("want header, two notes, then songs; got %+v", s.rows[:4])
 	}
@@ -1215,16 +1215,16 @@ func TestSearch_VibeNotesAreShownButNotSelectable(t *testing.T) {
 	if s.cursor != 3 {
 		t.Fatalf("moving down skips the notes again, got %d", s.cursor)
 	}
-	if v := s.View(); !strings.Contains(v, "✨ Claude: Dreamy soul") || !strings.Contains(v, "terms: a · b") {
-		t.Fatalf("notes must be rendered: %q", v)
+	if v := s.View(); !strings.Contains(v, "Fable 5.1") || strings.Contains(v, "Vibes") || !strings.Contains(v, "Dreamy soul") || !strings.Contains(v, "second line") {
+		t.Fatalf("the header shows the title and the notes are rendered: %q", v)
 	}
-	// Nothing found: the header and the notes still say what was tried.
-	s.SetVibeResults(nil, "✨ Claude: Nothing")
-	if v := s.View(); !strings.Contains(v, "Vibes") || !strings.Contains(v, "✨ Claude: Nothing") {
-		t.Fatalf("an empty vibe result should still show the plan: %q", v)
+	// Nothing found: the header (default "Vibes") and the note still say what was tried.
+	s.SetVibeResults(nil, "", "Nothing")
+	if v := s.View(); !strings.Contains(v, "Vibes") || !strings.Contains(v, "Nothing") {
+		t.Fatalf("an empty vibe result should still show the note: %q", v)
 	}
 	s.SetResults(&provider.SearchResult{Tracks: catalogPage(0, 1)}, false, nil)
-	if strings.Contains(s.View(), "✨") {
-		t.Fatal("a regular result set drops the notes")
+	if v := s.View(); strings.Contains(v, "Nothing") || strings.Contains(v, "Vibes") {
+		t.Fatal("a regular result set drops the vibe title and notes")
 	}
 }

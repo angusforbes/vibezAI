@@ -4083,8 +4083,8 @@ func TestRunVibeSearch_UsesThePlannerTermsAndInterleaves(t *testing.T) {
 		t.Fatalf("results are capped at %d, got %d", vibeResultCap, n)
 	}
 	view := m.search.View()
-	if !strings.Contains(view, "✨ Test: Dreamy soul · first 15 of 20, search order") || !strings.Contains(view, "terms: alpha · beta") {
-		t.Fatalf("the plan should be shown under the Vibes header: %q", view)
+	if !strings.Contains(view, "Vibes") || !strings.Contains(view, "Test: Dreamy soul") || strings.Contains(view, "terms:") || strings.Contains(view, "first 15") {
+		t.Fatalf("a planner without a model keeps the Vibes header and shows just who/what, no terms: %q", view)
 	}
 	if t0 := m.search.SelectedTrack(); t0 == nil || t0.Title != "alpha 0" {
 		t.Fatalf("the highlight should start on the first song, not a note line, got %+v", t0)
@@ -4118,22 +4118,30 @@ func TestRunVibeSearch_FallsBackToKeywordsWhenThePlannerFails(t *testing.T) {
 	}
 }
 
-func TestStartVibeSearch_SaysWhoIsAsked(t *testing.T) {
+func TestSearchFindLines_VibeLookupShowsDots(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.mode = modeSearch
-	m.search.SetSize(80, 20)
+	m.search.SetSize(60, 20)
 	m.searchVibe = true
 	m.vibePlanner = &fakePlanner{plan: vibe.Plan{Queries: []string{"x"}}}
 	if cmd := m.startVibeSearch("anything"); cmd == nil {
 		t.Fatal("expected a lookup command")
 	}
-	if v := m.search.View(); !strings.Contains(v, "asking Test") {
-		t.Fatalf("while loading, the panel should say who is being asked: %q", v)
+	v := strings.Join(m.searchFindLines(60, 12), "\n")
+	if strings.Count(v, "●") != 3 || strings.Contains(v, "asking") || strings.Contains(v, "searching") {
+		t.Fatalf("a vibes lookup in flight shows three dots and nothing else: %q", v)
 	}
-	m.vibePlanner = vibe.KeywordPlanner{}
-	m.startVibeSearch("other")
-	if v := m.search.View(); !strings.Contains(v, "searching") || strings.Contains(v, "asking") {
-		t.Fatalf("the keyword table needs no announcement: %q", v)
+	// The dots change colour as the glow ticks.
+	before := thinkingDots(m.glowStep)
+	m.glowStep += 2
+	if thinkingDots(m.glowStep) == before {
+		t.Fatal("the dots should change colour over time")
+	}
+	// Plain Apple Music search keeps its text.
+	m.searchVibe = false
+	m.search.SetResults(nil, true, nil)
+	if v := strings.Join(m.searchFindLines(60, 12), "\n"); !strings.Contains(v, "searching") {
+		t.Fatalf("regular search still says searching…: %q", v)
 	}
 }
 
@@ -4167,8 +4175,8 @@ func TestVibeLookup_RerankerOrdersThePool(t *testing.T) {
 	if stage2 == nil {
 		t.Fatal("a reranking planner gets a second stage")
 	}
-	if v := m.search.View(); !strings.Contains(v, "Test is picking the best of 20 candidates") {
-		t.Fatalf("while ranking, the panel should say so: %q", v)
+	if v := strings.Join(m.searchFindLines(60, 20), "\n"); strings.Count(v, "●") != 3 || strings.Contains(v, "picking") {
+		t.Fatalf("while ranking, the panel shows the three-dot animation and no message: %q", v)
 	}
 	final := stage2()
 	if rr.gotDescr != "dreamy soul" || len(rr.gotCands) != 20 || rr.gotLimit != vibeResultCap || rr.gotCands[0].Title != "alpha 0" {
@@ -4179,8 +4187,11 @@ func TestVibeLookup_RerankerOrdersThePool(t *testing.T) {
 	if len(got) != 3 || got[0].Title != "beta 2" || got[1].Title != "alpha 0" || got[2].Title != "beta 9" {
 		t.Fatalf("results must follow the picks (pool indices 5, 0, 19), got %+v", got)
 	}
-	if v := m.search.View(); !strings.Contains(v, "✨ Test (sonnet-5): Dreamy soul · picked 3 of 20") {
-		t.Fatalf("the note should name the model and the ranking: %q", v)
+	if v := m.search.View(); !strings.Contains(v, "Sonnet 5") || strings.Contains(v, "Vibes") || !strings.Contains(v, "Dreamy soul") || strings.Contains(v, "picked") {
+		t.Fatalf("the header should be the model and the line under it the summary only: %q", v)
+	}
+	if log := strings.Join(m.debugLog, "\n"); !strings.Contains(log, "picked 3 of 20") || !strings.Contains(log, "alpha") {
+		t.Fatalf("ranking and terms belong in the debug log: %q", log)
 	}
 
 	// A failed ranking keeps the search order and says so.
@@ -4191,8 +4202,8 @@ func TestVibeLookup_RerankerOrdersThePool(t *testing.T) {
 	if len(got) != vibeResultCap || got[0].Title != "alpha 0" {
 		t.Fatalf("on failure the first %d in search order are kept, got %d starting %q", vibeResultCap, len(got), got[0].Title)
 	}
-	if v := m.search.View(); !strings.Contains(v, "ranking failed, search order") {
-		t.Fatalf("a failed ranking must be visible: %q", v)
+	if log := strings.Join(m.debugLog, "\n"); !strings.Contains(log, "ranking failed, search order") {
+		t.Fatalf("a failed ranking is recorded in the debug log: %q", log)
 	}
 }
 

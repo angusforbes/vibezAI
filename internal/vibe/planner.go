@@ -154,6 +154,28 @@ func ShortModel(id string) string {
 	return id
 }
 
+// PrettyModel turns a ShortModel name into a display name: "fable-5-1" →
+// "Fable 5.1", "haiku-4-5" → "Haiku 4.5", "sonnet-5" → "Sonnet 5".
+func PrettyModel(short string) string {
+	if short == "" {
+		return ""
+	}
+	parts := strings.Split(short, "-")
+	name := strings.ToUpper(parts[0][:1]) + parts[0][1:]
+	var version []string
+	for _, part := range parts[1:] {
+		if part != "" && strings.Trim(part, "0123456789") == "" {
+			version = append(version, part)
+		} else if part != "" {
+			name += " " + strings.ToUpper(part[:1]) + part[1:]
+		}
+	}
+	if len(version) > 0 {
+		name += " " + strings.Join(version, ".")
+	}
+	return name
+}
+
 // run makes one tool-free `claude -p` call and returns the answer text and
 // the model that wrote it.
 func (c *ClaudePlanner) run(ctx context.Context, systemPrompt, input string) (answer, model string, err error) {

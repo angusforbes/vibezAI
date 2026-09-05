@@ -69,6 +69,7 @@ type searchRow struct {
 	more     bool   // toggle rows: true = the "more" control, false = "less"
 	step     int    // toggle rows: how many items the control would add or remove (0 = nothing to do)
 	note     string // muted, non-selectable line (what a vibe lookup searched for)
+	title    string // header display text when it differs from label (the section key)
 }
 
 // isItem reports whether this row is selectable: an item, a more/less toggle
@@ -103,9 +104,9 @@ type SearchModel struct {
 	// vibe marks a result set produced by a vibe description: one "Vibes"
 	// section instead of the Playlists/Albums/Library/Tracks split, with
 	// vibeNote lines (planner, summary, terms) under the header.
-	vibe        bool
-	vibeNote    []string
-	loadingNote string // shown instead of "searching…" while loading
+	vibe      bool
+	vibeTitle string // header text for the vibe section ("Fable 5.1"); "" = "Vibes"
+	vibeNote  []string
 
 	// Catalog Tracks paging: Apple answers at most 25 songs per request, so
 	// "+ 5 more" fetches the next page once the loaded ones run out.
@@ -131,7 +132,7 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.loading = loading
 	m.err = err
 	m.results = result
-	m.vibe, m.vibeNote, m.loadingNote = false, nil, ""
+	m.vibe, m.vibeTitle, m.vibeNote = false, "", nil
 	m.shown = nil // a new result set starts at the default count per section
 	m.catalogNext, m.catalogMore = 0, false
 	m.paging, m.pendingReveal = false, 0
@@ -143,18 +144,16 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.scroll = 0
 }
 
-// SetLoadingNote replaces the "searching…" text while results are loading.
-func (m *SearchModel) SetLoadingNote(note string) { m.loadingNote = note }
-
 // SetVibeResults shows the songs found for a vibe description as a single
-// "Vibes" section with the usual "+ 5 more" / "− 5 less" controls. The note
-// lines (what was searched for) sit under the header and cannot be selected.
-func (m *SearchModel) SetVibeResults(tracks []provider.Track, note ...string) {
+// section with the usual "+ 5 more" / "− 5 less" controls. The header reads
+// title (the model that planned the lookup; "" means "Vibes") and the note
+// lines (the summary) sit under it and cannot be selected.
+func (m *SearchModel) SetVibeResults(tracks []provider.Track, title string, note ...string) {
 	m.loading = false
-	m.loadingNote = ""
 	m.err = nil
 	m.results = &provider.SearchResult{Tracks: tracks}
 	m.vibe = true
+	m.vibeTitle = title
 	m.vibeNote = note
 	m.shown = nil
 	m.catalogNext, m.catalogMore = 0, false
@@ -512,6 +511,7 @@ func (m *SearchModel) rebuildRows() {
 		if len(m.rows) == 0 { // nothing found: still say what was tried
 			m.rows = append(m.rows, searchRow{header: true, label: "Vibes"})
 		}
+		m.rows[0].title = m.vibeTitle
 		notes := make([]searchRow, 0, len(m.vibeNote)+len(m.rows))
 		for _, n := range m.vibeNote {
 			notes = append(notes, searchRow{note: n})
@@ -683,9 +683,6 @@ func sectionColor(label string) color.Color {
 // View renders the multi-section result list within the allocated height.
 func (m *SearchModel) View() string {
 	if m.loading {
-		if m.loadingNote != "" {
-			return styles.QueueItemMuted.Render("  " + cutRunes(m.loadingNote, max(1, m.width-2)))
-		}
 		return styles.QueueItemMuted.Render("  searching…")
 	}
 	if m.err != nil {
@@ -728,7 +725,11 @@ func (m *SearchModel) View() string {
 			if i == m.cursor {
 				prefix = lipgloss.NewStyle().Foreground(currentAccent).Render("▶ ")
 			}
-			sb.WriteString(prefix + hs.Render(row.label) + "\n")
+			name := row.label
+			if row.title != "" {
+				name = row.title
+			}
+			sb.WriteString(prefix + hs.Render(name) + "\n")
 			linesLeft--
 			continue
 		}

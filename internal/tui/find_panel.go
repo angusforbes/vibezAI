@@ -68,6 +68,9 @@ func (m *Model) searchFindLines(w, h int) []string {
 	listH := max(1, h-2-len(inputRows)) // header + underline + input rows
 	m.search.SetSize(w, listH)
 	listView := m.search.View()
+	if m.search.Loading() && m.searchVibe {
+		listView = "  " + thinkingDots(m.glowStep) // planning, searching, ranking
+	}
 	if listView == "" && !m.search.Loading() && m.searchQuery != "" {
 		listView = "  " + muted.Render("no results")
 	}
@@ -246,4 +249,23 @@ func wrapQuery(runes []rune, cur int, focused bool, width, maxRows int, text, ac
 		out = append(out, sb.String())
 	}
 	return out
+}
+
+// thinkingDots is the vibes-mode busy indicator: three dots whose colours run
+// through the glow palette, shifted a step every other glow tick.
+func thinkingDots(step int) string {
+	pal := styles.GlowPalette
+	n := len(pal)
+	if n == 0 {
+		return "● ● ●"
+	}
+	var sb strings.Builder
+	for i := range 3 {
+		c := pal[((step/2)+i*max(1, n/3))%n]
+		sb.WriteString(lipgloss.NewStyle().Foreground(c).Render("●"))
+		if i < 2 {
+			sb.WriteString(" ")
+		}
+	}
+	return sb.String()
 }

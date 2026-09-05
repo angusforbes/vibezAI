@@ -164,3 +164,17 @@ func TestNewPlanner_ModelDefaults(t *testing.T) {
 		t.Fatalf("an explicit model is kept, got %q", c.Model)
 	}
 }
+
+func TestPrettyModel(t *testing.T) {
+	for in, want := range map[string]string{
+		"fable-5-1": "Fable 5.1",
+		"sonnet-5":  "Sonnet 5",
+		"haiku-4-5": "Haiku 4.5",
+		"opus":      "Opus",
+		"":          "",
+	} {
+		if got := PrettyModel(in); got != want {
+			t.Errorf("PrettyModel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
