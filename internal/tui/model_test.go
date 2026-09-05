@@ -1029,16 +1029,18 @@ func TestCtrlQuoteFromTracks_JumpsToSearchAndTypes(t *testing.T) {
 func TestCtrlSlashFromTracks_CyclesTheSearchSource(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.provider = &mockProvider{}
-	if f := ansi.Strip(strings.Join(m.statusLines(600), " ")); !strings.Contains(f, "^/ claude") {
-		t.Fatalf("the TRACKS row says where ^/ goes: %q", f)
+	if f := ansi.Strip(strings.Join(m.statusLines(600), " ")); strings.Contains(f, "^/ ") {
+		t.Fatalf("the TRACKS row leaves ^/ unlisted (it still works): %q", f)
 	}
 	m.handleNormalKey(tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}, "ctrl+/")
 	if m.searchSrc != searchClaude || m.mode != modeNormal || m.search != m.searchCC {
 		t.Fatalf("^/ from Tracks switches the Search source in place: src=%v mode=%v", m.searchSrc, m.mode)
 	}
+	m.mode = modeSearch
 	if f := ansi.Strip(strings.Join(m.statusLines(600), " ")); !strings.Contains(f, "^/ saved lists") {
-		t.Fatalf("the label follows the source: %q", f)
+		t.Fatalf("the SEARCH row says where ^/ goes next: %q", f)
 	}
+	m.mode = modeNormal
 	m.handleNormalKey(tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}, "ctrl+_")
 	if m.searchSrc != searchSaved || m.mode != modeNormal {
 		t.Fatalf("the legacy spelling cycles on: src=%v mode=%v", m.searchSrc, m.mode)

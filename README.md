@@ -86,7 +86,6 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `d` | Remove the highlighted track |
 | `D` / `ctrl+shift+d` | Cut everything from the highlight down / everything above it |
 | `K` / `J` | Move the highlighted track up / down |
-| `ctrl+/` | Cycle the Search source (`AM` → `CC` → `SV`) without leaving Tracks |
 | `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom |
 | `R` | Insert five related songs after the highlighted track, once |
 | `T` | Insert five random songs from your library after the highlighted track |
@@ -119,7 +118,7 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 
 Albums and playlists are expanded to their songs when added. An item already in Tracks is never added twice; it is highlighted there instead.
 
-The two columns share their keys: while nothing is being typed, every Tracks key works from Search (`s`, `n`/`p`, `d`, `c`, `R`, `T`, …) and every Search key works from Tracks (`ctrl+↑/↓`, `ctrl+shift+↑/↓`, `ctrl+→/←`, `ctrl+,`, `ctrl+.`, `ctrl+/`). Each footer lists only its own column's keys.
+The two columns share their keys: while nothing is being typed, every Tracks key works from Search (`s`, `n`/`p`, `d`, `c`, `R`, `T`, …) and every Search key works from Tracks (`ctrl+↑/↓`, `ctrl+shift+↑/↓`, `ctrl+→/←`, `ctrl+,`, `ctrl+.`, `ctrl+/`). Each footer lists only its own column's keys; `ctrl+'` is the one Search key the Tracks footer shows, as the way in.
 
 ### Command mode (`:`)
 

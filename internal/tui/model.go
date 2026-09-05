@@ -3953,7 +3953,6 @@ func (m *Model) statusPlayParts() []string {
 		accent.Render("s") + muted.Render(" random"),
 		accent.Render("r") + muted.Render(" repeat"),
 		accent.Render("c") + muted.Render(" clear"),
-		accent.Render("^/") + muted.Render(" "+m.nextSourceLabel()),
 	}
 	if m.discovery.enabled {
 		parts = append(parts, accent.Render(":discover")+styles.Playing.Render(" ● on"))
