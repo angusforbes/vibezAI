@@ -817,6 +817,7 @@ func TestHandleSearchKey_CtrlDot_NoResults_NoCall(t *testing.T) {
 func TestHandleSearchKey_CtrlComma_CallsAppendQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
+	m.playerState.Track = &provider.Track{Title: "Playing", CatalogID: "playing"} // the engine holds a track: adds go to it
 	track := provider.Track{Title: "Queued", Artist: "Band", CatalogID: "12345"}
 	seedSearchResults(m, track)
 
@@ -831,6 +832,27 @@ func TestHandleSearchKey_CtrlComma_CallsAppendQueue(t *testing.T) {
 	}
 	if mp.appendQueueIDs[0][0] != "12345" {
 		t.Errorf("AppendQueue ID = %q, want %q", mp.appendQueueIDs[0][0], "12345")
+	}
+}
+
+func TestHandleSearchKey_CtrlComma_IdleEngineAddsWithoutPlaying(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	seedSearchResults(m, provider.Track{Title: "Queued", Artist: "Band", CatalogID: "12345"})
+	// Nothing has played yet: the engine's append would start the song on its
+	// own, so the add stays in the model.
+	if cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}); cmd != nil {
+		t.Fatal("with an idle engine ctrl+, must not talk to the player")
+	}
+	if len(m.queueIDs) != 1 || len(mp.appendQueueIDs) != 0 || mp.playCalled || mp.setQueueIDs != nil {
+		t.Fatalf("Tracks gets the song, the engine nothing: queue=%v appends=%v play=%v set=%v", m.queueIDs, mp.appendQueueIDs, mp.playCalled, mp.setQueueIDs)
+	}
+	// The first play hands the whole of Tracks to the engine.
+	if cmd := m.togglePlayPause(); cmd != nil {
+		_ = cmd()
+	}
+	if len(mp.setQueueAtIDs) != 1 || mp.setQueueAtIDs[0] != "12345" {
+		t.Fatalf("space starts the queue that was built up: %v", mp.setQueueAtIDs)
 	}
 }
 
@@ -851,6 +873,7 @@ func TestHandleSearchKey_CtrlComma_DoesNotCallSetQueue(t *testing.T) {
 func TestHandleSearchKey_CtrlComma_NeverQueuesTheSameTrackTwice(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
+	m.playerState.Track = &provider.Track{Title: "Playing", CatalogID: "playing"} // the engine holds a track: adds go to it
 	tracks := []provider.Track{
 		{Title: "A", CatalogID: "111"},
 		{Title: "B", CatalogID: "222"},
@@ -926,6 +949,7 @@ func TestHandleSearchKey_Enter_OnHeaderFoldsSection(t *testing.T) {
 func TestModel_QueueTracksMsg_AppendsWithoutLeavingLibrary(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
+	m.playerState.Track = &provider.Track{Title: "Playing", CatalogID: "playing"} // the engine holds a track: adds go to it
 	m.activePanel = 0
 	tracks := []provider.Track{{ID: "i.1", Title: "One"}, {ID: "i.2", Title: "Two"}}
 

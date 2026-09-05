@@ -132,7 +132,7 @@ func (m *Model) withoutQueued(tracks []provider.Track, ids []string) ([]provider
 	return nt, ni
 }
 
-// addToQueue (Tab) appends the tracks that are not queued yet without
+// addToQueue (Ctrl+,) appends the tracks that are not queued yet without
 // touching playback. When nothing is new, the highlight moves to the first
 // of them instead, so "adding" a track twice takes you to it.
 func (m *Model) addToQueue(label string, tracks []provider.Track, ids []string) tea.Cmd {
@@ -156,6 +156,14 @@ func (m *Model) addToQueue(label string, tracks []provider.Track, ids []string) 
 		m.appendLog(fmt.Sprintf("[queue] added %d track(s) (%s); %d already queued", len(ni), label, skipped))
 	} else {
 		m.appendLog(fmt.Sprintf("[queue] added %d track(s) (%s)", len(ni), label))
+	}
+	if m.playerState.Track == nil {
+		// The engine holds nothing yet (a fresh launch, or a restored queue
+		// that has not started). Appending there would make it start playing
+		// the new songs on its own, with a queue that lacks the rest of
+		// Tracks. The add stays in the model; the first play hands the whole
+		// of Tracks over, the way a restored queue starts.
+		return nil
 	}
 	appended := append([]string(nil), ni...)
 	return m.playerCmd(func(p player.Player) error { return p.AppendQueue(appended) })

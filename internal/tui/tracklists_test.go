@@ -150,7 +150,7 @@ func TestSavedSource_CtrlSlashCyclesThroughIt(t *testing.T) {
 
 func TestSavedSource_AddsASongOrTheWholeList(t *testing.T) {
 	dir := t.TempDir()
-	m, _ := newListModel(t, dir)
+	m, mock := newListModel(t, dir)
 	writeList(t, dir, "mix", persistTracks())
 	m.mode = modeSearch
 	m.search.SetSize(80, 20)
@@ -180,6 +180,17 @@ func TestSavedSource_AddsASongOrTheWholeList(t *testing.T) {
 	}
 	if len(m.queueTracks) != 3 {
 		t.Fatalf("the whole list is in Tracks, once: %+v", m.queueTracks)
+	}
+	// Nothing was playing, so nothing started: the engine has not been touched
+	// and the first play hands the whole of Tracks over.
+	if len(mock.appendQueueIDs) != 0 || mock.playCalled || mock.setQueueIDs != nil {
+		t.Fatalf("adding with an idle engine must not start playback: appends=%v play=%v set=%v", mock.appendQueueIDs, mock.playCalled, mock.setQueueIDs)
+	}
+	if cmd := m.togglePlayPause(); cmd != nil {
+		_ = cmd()
+	}
+	if len(mock.setQueueAtIDs) != 3 {
+		t.Fatalf("space starts the three songs that were added: %v", mock.setQueueAtIDs)
 	}
 	// ctrl+→ marks the header: the whole list goes with the selection.
 	m.search.ToggleSelected()
@@ -262,6 +273,27 @@ func TestSavedSource_RefreshKeepsOpenListsAndTheHighlight(t *testing.T) {
 	}
 	if v := m.search.View(); !strings.Contains(v, "One") {
 		t.Fatalf("a refresh keeps the list open: %q", v)
+	}
+}
+
+func TestAddToRestoredQueue_KeepsItWholeForTheFirstPlay(t *testing.T) {
+	dir := t.TempDir()
+	if err := queuestate.Save(filepath.Join(dir, "queue.json"), queuestate.FromTracks(persistTracks(), 1)); err != nil {
+		t.Fatal(err)
+	}
+	m, mock := newListModel(t, dir) // three restored tracks, none in the engine yet
+	extra := provider.Track{ID: "400", Title: "Four", Artist: "D"}
+	if cmd := m.addToQueue("Four", []provider.Track{extra}, []string{views.PlaybackID(extra)}); cmd != nil {
+		t.Fatal("adding to a restored, unstarted queue must not touch the engine")
+	}
+	if len(m.queueIDs) != 4 || len(mock.appendQueueIDs) != 0 {
+		t.Fatalf("Tracks grows to four, the engine waits: queue=%v appends=%v", m.queueIDs, mock.appendQueueIDs)
+	}
+	if cmd := m.togglePlayPause(); cmd != nil {
+		_ = cmd()
+	}
+	if len(mock.setQueueAtIDs) != 4 || mock.setQueueAtStart != "i.lib" {
+		t.Fatalf("the first play hands all four over, starting where the session left off: %v from %q", mock.setQueueAtIDs, mock.setQueueAtStart)
 	}
 }
 
