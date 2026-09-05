@@ -1294,3 +1294,33 @@ func TestSearch_MultiSelect(t *testing.T) {
 		t.Fatalf("SelectedTracks lists only the songs: %+v", got)
 	}
 }
+
+func TestView_HighlightIsPointerOnlyUnlessPicked(t *testing.T) {
+	m := NewSearch(nil)
+	m.SetSize(60, 20)
+	m.SetState([]provider.Track{{ID: "1", Title: "Alpha", Artist: "A"}, {ID: "2", Title: "Beta", Artist: "B"}}, false, nil)
+	cursorLine := func() string {
+		for _, l := range strings.Split(m.View(), "\n") {
+			if strings.Contains(l, "▶ ") {
+				return l
+			}
+		}
+		t.Fatal("no highlighted row rendered")
+		return ""
+	}
+	bold := func(l string) bool { return strings.Contains(l, "\x1b[1") }
+	// Nothing selected: the pointer marks the highlight, the text stays plain.
+	if l := cursorLine(); bold(l) {
+		t.Fatalf("with nothing selected the highlighted row has plain text: %q", l)
+	}
+	// Picked (ctrl+→): the row takes the accent.
+	m.ToggleSelected()
+	if l := cursorLine(); !bold(l) {
+		t.Fatalf("a picked row is accented: %q", l)
+	}
+	// Cleared (ctrl+←): plain again, nothing reads as selected.
+	m.ClearSelection()
+	if l := cursorLine(); bold(l) || strings.Contains(m.View(), "✓") {
+		t.Fatalf("after clearing, nothing is accented: %q", l)
+	}
+}

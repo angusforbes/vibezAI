@@ -1079,14 +1079,18 @@ func (m *SearchModel) View() string {
 		tStyle := itemTitle
 		dStyle := itemDesc
 		switch {
-		case sel && len(m.selected) > 0 && !picked:
-			// While a selection exists, a highlighted row that is not part of
-			// it goes grey (the pointer keeps its colour) so its state is plain.
-			tStyle = styles.QueueItemMuted
-			dStyle = styles.QueueItemMuted
-		case sel || picked:
+		case picked:
+			// The accent marks membership of the selection and nothing else:
+			// the highlighted row keeps plain text unless it is picked, so
+			// after Ctrl+← (clear) nothing reads as selected; the pointer
+			// alone says where the highlight is.
 			tStyle = lipgloss.NewStyle().Foreground(currentAccent).Bold(true)
 			dStyle = lipgloss.NewStyle().Foreground(currentAccent).Faint(true)
+		case sel && len(m.selected) > 0:
+			// While a selection exists, the highlighted row outside it goes
+			// grey (the pointer keeps its colour) so its state is plain.
+			tStyle = styles.QueueItemMuted
+			dStyle = styles.QueueItemMuted
 		}
 
 		switch {
