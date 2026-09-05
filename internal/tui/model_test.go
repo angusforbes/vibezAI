@@ -4352,3 +4352,22 @@ func catalogTracks(n int) []provider.Track {
 	}
 	return out
 }
+
+func TestStatusLines_SearchModeDropsTheTracksKeys(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	lines := m.statusLines(200)
+	if len(lines) != 1 {
+		t.Fatalf("search mode shows only the SEARCH row, got %d rows: %q", len(lines), lines)
+	}
+	joined := strings.Join(lines, " ")
+	for _, stale := range []string{"cut below", "remove", "+5 related", "+5 library", "play/pause", "repeat", "random", "clear"} {
+		if strings.Contains(joined, stale) {
+			t.Fatalf("Tracks key %q must not be listed while searching: %q", stale, joined)
+		}
+	}
+	m.mode = modeNormal
+	if len(m.statusLines(200)) < 2 {
+		t.Fatal("the Tracks keys come back with the Tracks panel")
+	}
+}

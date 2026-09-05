@@ -3707,7 +3707,13 @@ func (m *Model) commandLines(_ int, h int) []string {
 // each already wrapped to fit width w. The count varies with terminal width,
 // so panelHeight consults it rather than assuming a fixed two rows.
 func (m *Model) statusLines(w int) []string {
-	return append(m.statusNavLines(w), m.statusPlayLines(w)...)
+	nav := m.statusNavLines(w)
+	if m.mode == modeSearch {
+		// Keys go to the search input here, so the Tracks key list would be
+		// noise; the SEARCH row already lists what works.
+		return nav
+	}
+	return append(nav, m.statusPlayLines(w)...)
 }
 
 // panelHeight returns the number of rows available for the split panel section.
