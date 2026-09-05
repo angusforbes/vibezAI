@@ -108,8 +108,9 @@ type SearchModel struct {
 	vibeTitle string // header text for the vibe section ("Fable 5.1"); "" = "Vibes"
 	vibeNote  []string
 
-	// selected holds the playback ids of tracks picked for a multi-add
-	// (Shift+↑/↓ sweep, Shift+→ toggle); cleared when the results change.
+	// selected holds the keys (see selKey) of the songs, albums and playlists
+	// picked for a multi-add (Shift+↑/↓ sweep, Shift+→ toggle); cleared when
+	// the results change.
 	selected map[string]bool
 
 	// Catalog Tracks paging: Apple answers at most 25 songs per request, so
@@ -611,65 +612,117 @@ func (m *SearchModel) SelectedTrack() *provider.Track {
 	return m.rows[m.cursor].track
 }
 
+// SelectedItem is one entry of the multi-selection: exactly one field is set.
+type SelectedItem struct {
+	Track    *provider.Track
+	Album    *provider.Album
+	Playlist *provider.Playlist
+}
+
+// selKey identifies a selectable row across rebuilds.
+func selKey(r searchRow) string {
+	switch {
+	case r.track != nil:
+		return PlaybackID(*r.track)
+	case r.album != nil:
+		return "album:" + r.album.ID
+	case r.playlist != nil:
+		return "playlist:" + r.playlist.ID
+	}
+	return ""
+}
+
 // IsSelected reports whether a track is part of the multi-selection.
 func (m *SearchModel) IsSelected(t provider.Track) bool { return m.selected[PlaybackID(t)] }
 
-// SelectionCount is how many tracks are multi-selected.
+// SelectionCount is how many songs, albums and playlists are multi-selected.
 func (m *SearchModel) SelectionCount() int { return len(m.selected) }
 
 // ClearSelection drops the multi-selection.
 func (m *SearchModel) ClearSelection() { m.selected = nil }
 
-// ToggleSelected adds the highlighted track to the multi-selection or takes it
-// out again; it does nothing on headers, controls, albums and playlists.
+// ToggleSelected adds the highlighted song, album or playlist to the
+// multi-selection or takes it out again; headers and controls are ignored.
 func (m *SearchModel) ToggleSelected() {
-	t := m.SelectedTrack()
-	if t == nil {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return
 	}
-	id := PlaybackID(*t)
-	if m.selected[id] {
-		delete(m.selected, id)
+	key := selKey(m.rows[m.cursor])
+	if key == "" {
+		return
+	}
+	if m.selected[key] {
+		delete(m.selected, key)
 		return
 	}
 	if m.selected == nil {
 		m.selected = map[string]bool{}
 	}
-	m.selected[id] = true
+	m.selected[key] = true
 }
 
-// SelectAndMove selects the highlighted track, moves the highlight one row
-// in dir (+1 down, −1 up) and selects the track it lands on, so a sweep
-// with Shift+↑/↓ covers every song passed over.
+// SelectAndMove selects the highlighted item, moves the highlight to the next
+// song, album or playlist in dir (+1 down, −1 up), skipping headers and
+// controls, and selects that too, so a sweep with Shift+↑/↓ covers everything
+// passed over.
 func (m *SearchModel) SelectAndMove(dir int) {
-	m.pick(m.SelectedTrack())
-	if next := m.advance(m.cursor, dir); next != m.cursor {
+	m.pick(m.cursor)
+	for next := m.advance(m.cursor, dir); next != m.cursor; next = m.advance(m.cursor, dir) {
 		m.cursor = next
-		m.ensureCursorVisible()
+		if selKey(m.rows[next]) != "" {
+			break
+		}
 	}
-	m.pick(m.SelectedTrack())
+	m.ensureCursorVisible()
+	m.pick(m.cursor)
 }
 
-func (m *SearchModel) pick(t *provider.Track) {
-	if t == nil {
+func (m *SearchModel) pick(row int) {
+	if row < 0 || row >= len(m.rows) {
+		return
+	}
+	key := selKey(m.rows[row])
+	if key == "" {
 		return
 	}
 	if m.selected == nil {
 		m.selected = map[string]bool{}
 	}
-	m.selected[PlaybackID(*t)] = true
+	m.selected[key] = true
 }
 
-// SelectedTracks returns the multi-selected tracks in result order (folded
-// or not yet revealed ones included).
-func (m *SearchModel) SelectedTracks() []provider.Track {
+// SelectedItems returns the multi-selection in result order — playlists,
+// then albums, then songs — folded or not yet revealed entries included.
+func (m *SearchModel) SelectedItems() []SelectedItem {
 	if len(m.selected) == 0 || m.results == nil {
 		return nil
 	}
-	out := make([]provider.Track, 0, len(m.selected))
-	for _, t := range m.results.Tracks {
-		if m.selected[PlaybackID(t)] {
-			out = append(out, t)
+	res := m.results
+	out := make([]SelectedItem, 0, len(m.selected))
+	for i := range res.Playlists {
+		if m.selected["playlist:"+res.Playlists[i].ID] {
+			out = append(out, SelectedItem{Playlist: &res.Playlists[i]})
+		}
+	}
+	for i := range res.Albums {
+		if m.selected["album:"+res.Albums[i].ID] {
+			out = append(out, SelectedItem{Album: &res.Albums[i]})
+		}
+	}
+	for i := range res.Tracks {
+		if m.selected[PlaybackID(res.Tracks[i])] {
+			out = append(out, SelectedItem{Track: &res.Tracks[i]})
+		}
+	}
+	return out
+}
+
+// SelectedTracks returns just the songs of the multi-selection, in result order.
+func (m *SearchModel) SelectedTracks() []provider.Track {
+	var out []provider.Track
+	for _, it := range m.SelectedItems() {
+		if it.Track != nil {
+			out = append(out, *it.Track)
 		}
 	}
 	return out
@@ -819,7 +872,7 @@ func (m *SearchModel) View() string {
 		}
 
 		sel := i == m.cursor
-		picked := row.track != nil && m.selected[PlaybackID(*row.track)]
+		picked := m.selected[selKey(row)]
 		cur := "  "
 		switch {
 		case sel:
@@ -829,7 +882,13 @@ func (m *SearchModel) View() string {
 		}
 		tStyle := itemTitle
 		dStyle := itemDesc
-		if sel || picked {
+		switch {
+		case sel && len(m.selected) > 0 && !picked:
+			// While a selection exists, a highlighted row that is not part of
+			// it goes grey (the pointer keeps its colour) so its state is plain.
+			tStyle = styles.QueueItemMuted
+			dStyle = styles.QueueItemMuted
+		case sel || picked:
 			tStyle = lipgloss.NewStyle().Foreground(currentAccent).Bold(true)
 			dStyle = lipgloss.NewStyle().Foreground(currentAccent).Faint(true)
 		}

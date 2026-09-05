@@ -1278,4 +1278,19 @@ func TestSearch_MultiSelect(t *testing.T) {
 	if s.SelectionCount() != 0 {
 		t.Fatal("a new result set starts without a selection")
 	}
+	// Albums and playlists are selectable too and come back in result order.
+	s.SetResults(&provider.SearchResult{
+		Playlists: []provider.Playlist{{ID: "p1", Name: "Mix"}},
+		Albums:    []provider.Album{{ID: "a1", Title: "LP"}},
+		Tracks:    catalogPage(0, 1),
+	}, false, nil)
+	s.SelectAndMove(1) // playlist + album
+	s.SelectAndMove(1) // album (again) + song
+	items := s.SelectedItems()
+	if len(items) != 3 || items[0].Playlist == nil || items[1].Album == nil || items[2].Track == nil {
+		t.Fatalf("want playlist, album, song; got %+v", items)
+	}
+	if got := s.SelectedTracks(); len(got) != 1 || got[0].ID != "c0" {
+		t.Fatalf("SelectedTracks lists only the songs: %+v", got)
+	}
 }

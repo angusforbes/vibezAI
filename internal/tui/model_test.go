@@ -4411,41 +4411,152 @@ func TestHandleSearchKey_MultiSelectAddsAll(t *testing.T) {
 	if got := m.search.SelectedTracks(); len(got) != 3 || got[0].ID != "k0" || got[1].ID != "k1" || got[2].ID != "k4" {
 		t.Fatalf("selection = %+v, want k0 k1 k4", got)
 	}
-	footer := ansi.Strip(strings.Join(m.statusLines(300), " "))
-	if !strings.Contains(footer, "add 3 & play") || !strings.Contains(footer, "add 3") || !strings.Contains(footer, "select") {
-		t.Fatalf("the footer counts the selection: %q", footer)
+	footer := ansi.Strip(strings.Join(m.statusLines(400), " "))
+	if !strings.Contains(footer, "^, add 3") || !strings.Contains(footer, "^. add 3 & play") {
+		t.Fatalf("the footer offers the selection keys with the count: %q", footer)
 	}
-	// Shift+Enter: all three go to Tracks, nothing plays, selection cleared.
-	if cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}); cmd != nil {
+	// Enter keeps its row meaning: on the "+ 1 more" row it reveals, adds nothing.
+	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	if sec, more, ok := m.search.SelectedToggle(); !ok || sec != "Tracks" || !more {
+		t.Fatalf("expected the more row, got %q %v %v", sec, more, ok)
+	}
+	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || len(m.queueIDs) != 0 || m.search.SelectionCount() != 3 {
+		t.Fatalf("Enter on a control row operates the control even with a selection (cmd=%v queue=%v sel=%d)", cmd != nil, m.queueIDs, m.search.SelectionCount())
+	}
+	// Ctrl+,: all three go to Tracks, nothing plays, selection cleared.
+	if cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}); cmd != nil {
 		cmd()
 	}
-	if strings.Join(m.queueIDs, ",") != "k0,k1,k4" || len(mp.setQueueIDs) > 0 {
-		t.Fatalf("Shift+Enter appends the selection in order without playing: queue=%v setQueue=%v", m.queueIDs, mp.setQueueIDs)
+	if strings.Join(m.queueIDs, ",") != "k0,k1,k4" || len(mp.setQueueIDs) > 0 || mp.setQueueAtStart != "" {
+		t.Fatalf("Ctrl+, appends the selection in order without playing: queue=%v", m.queueIDs)
 	}
 	if m.search.SelectionCount() != 0 {
 		t.Fatal("the selection is cleared once added")
 	}
-	// Enter with a selection: adds the rest and starts the first of them (k2).
-	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})
-	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})                              // on k2
+	// Ctrl+. with a selection: adds and starts the first of them (k2).
+	for range 4 {
+		m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})
+	}
+	if cur := m.search.SelectedTrack(); cur == nil || cur.ID != "k2" {
+		t.Fatalf("setup: expected the highlight on k2, got %+v", cur)
+	}
 	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift}) // k2, k3
-	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	cmd := m.handleSearchKey("ctrl+.", tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
 	if cmd == nil {
-		t.Fatal("Enter with a selection should add and play")
+		t.Fatal("Ctrl+. with a selection should add and play")
 	}
 	cmd()
 	if strings.Join(m.queueIDs, ",") != "k0,k1,k4,k2,k3" {
-		t.Fatalf("Enter appends the selection: %v", m.queueIDs)
+		t.Fatalf("Ctrl+. appends the selection: %v", m.queueIDs)
 	}
-	// Nothing was playing, so the whole list is handed to the engine starting at k2.
 	started := mp.setQueueAtStart
 	if n := len(mp.syncCalls); n > 0 {
 		started = mp.syncCalls[n-1].Play
 	}
 	if started != "k2" {
-		t.Fatalf("the first selected song should start, got %q (setQueueAt=%v sync=%+v)", started, mp.setQueueAtIDs, mp.syncCalls)
+		t.Fatalf("the first selected song should start, got %q", started)
 	}
 	if m.search.SelectionCount() != 0 {
-		t.Fatal("selection cleared after Enter")
+		t.Fatal("selection cleared after Ctrl+.")
+	}
+	// Without a selection the keys do nothing.
+	if cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}); cmd != nil {
+		t.Fatal("Ctrl+, without a selection is a no-op")
+	}
+}
+
+// collectionProvider serves fixed album and playlist contents.
+type collectionProvider struct {
+	mockProvider
+	albums    map[string][]provider.Track
+	playlists map[string][]provider.Track
+}
+
+func (p *collectionProvider) GetAlbumTracks(_ context.Context, id string) ([]provider.Track, error) {
+	return p.albums[id], nil
+}
+func (p *collectionProvider) GetPlaylistTracks(_ context.Context, id string) ([]provider.Track, error) {
+	return p.playlists[id], nil
+}
+func (p *collectionProvider) GetCatalogPlaylistTracks(_ context.Context, id string) ([]provider.Track, error) {
+	return p.playlists[id], nil
+}
+
+func TestAddSelection_ExpandsAlbumsAndPlaylistsInResultOrder(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	m.provider = &collectionProvider{
+		albums:    map[string][]provider.Track{"a1": {{ID: "a1-1", CatalogID: "a1-1", Title: "Album song 1", Artist: "Band"}, {ID: "a1-2", CatalogID: "a1-2", Title: "Album song 2", Artist: "Band"}}},
+		playlists: map[string][]provider.Track{"pl1": {{ID: "pl-1", CatalogID: "pl-1", Title: "Playlist song", Artist: "Other"}}},
+	}
+	m.mode = modeSearch
+	m.search.SetSize(80, 40)
+	m.search.SetResults(&provider.SearchResult{
+		Playlists: []provider.Playlist{{ID: "pl1", Name: "Mix"}},
+		Albums:    []provider.Album{{ID: "a1", Title: "LP", Artist: "Band"}},
+		Tracks:    catalogTracks(2),
+	}, false, nil)
+	// Highlight starts on the playlist: Shift+↓ sweeps playlist and album
+	// (skipping the section controls); then walk to k1 and toggle it.
+	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+	if a := m.search.SelectedAlbum(); a == nil || a.ID != "a1" {
+		t.Fatalf("the sweep should land on the album, not on a control row (album=%v)", a)
+	}
+	for i := 0; i < 10 && (m.search.SelectedTrack() == nil || m.search.SelectedTrack().ID != "k1"); i++ {
+		m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
+	items := m.search.SelectedItems()
+	if len(items) != 3 || items[0].Playlist == nil || items[1].Album == nil || items[2].Track == nil {
+		t.Fatalf("selection should hold playlist, album, song in result order: %+v", items)
+	}
+	if v := m.search.View(); strings.Count(v, "✓") != 2 { // playlist and album; k1 is highlighted
+		t.Fatalf("albums and playlists get the check mark too: %q", v)
+	}
+	cmd := m.handleSearchKey("ctrl+.", tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
+	if cmd == nil || m.search.SelectionCount() != 0 {
+		t.Fatal("Ctrl+. with collections should expand them asynchronously and clear the selection")
+	}
+	msg := cmd()
+	sel, ok := msg.(selectionTracksMsg)
+	if !ok || sel.err != nil || len(sel.tracks) != 4 {
+		t.Fatalf("expected 4 songs (1 playlist + 2 album + 1 song), got %+v", msg)
+	}
+	_, next := m.Update(msg)
+	if next != nil {
+		next()
+	}
+	if strings.Join(m.queueIDs, ",") != "pl-1,a1-1,a1-2,k1" {
+		t.Fatalf("songs land in result order: %v", m.queueIDs)
+	}
+	started := mp.setQueueAtStart
+	if n := len(mp.syncCalls); n > 0 {
+		started = mp.syncCalls[n-1].Play
+	}
+	if started != "pl-1" {
+		t.Fatalf("the first song of the first selected item starts, got %q", started)
+	}
+}
+
+func TestSearchView_UnselectedHighlightGoesGreyWhileSelecting(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 40)
+	m.search.SetState(catalogTracks(3), false, nil)
+	grey := styles.QueueItemMuted.Render("Track k0")
+	if strings.Contains(m.search.View(), grey) {
+		t.Fatal("without a selection the highlighted song keeps the highlight colour")
+	}
+	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}) // select k0
+	if strings.Contains(m.search.View(), grey) {
+		t.Fatal("a highlighted song that is selected keeps the highlight colour")
+	}
+	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}) // deselect k0 → no selection at all
+	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}) // select k1
+	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})                                // back on k0, unselected
+	v := m.search.View()
+	if !strings.Contains(v, grey) || !strings.Contains(v, "▶") {
+		t.Fatalf("with a selection active, the highlighted unselected song is grey but keeps the pointer: %q", v)
 	}
 }

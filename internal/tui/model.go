@@ -995,6 +995,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case selectionTracksMsg:
+		if msg.err != nil {
+			m.appendLog(fmt.Sprintf("[search] selection: %v", msg.err))
+		}
+		if len(msg.tracks) == 0 {
+			m.errMsg = "no playable tracks found"
+			m.errExpiry = time.Now().Add(3 * time.Second)
+			break
+		}
+		if msg.play {
+			return m, m.appendAndPlay(msg.label, msg.tracks, playbackIDs(msg.tracks), 0)
+		}
+		return m, m.addToQueue(msg.label, msg.tracks, playbackIDs(msg.tracks))
+
 	case searchCollectionTracksMsg:
 		if msg.err != nil {
 			m.errMsg = fmt.Sprintf("search: %v", msg.err)
@@ -1257,11 +1271,6 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		if m.searchVibe && m.searchQuery != "" && m.searchQuery != m.vibeShown {
 			return m.startVibeSearch(m.searchQuery)
 		}
-		// A multi-selection goes to Tracks as a whole and the first one plays.
-		if picked := m.search.SelectedTracks(); len(picked) > 0 {
-			m.search.ClearSelection()
-			return m.appendAndPlay(fmt.Sprintf("%d songs", len(picked)), picked, playbackIDs(picked), 0)
-		}
 		// Enter on a section header folds it or opens it again.
 		if section, ok := m.search.SelectedHeader(); ok {
 			m.search.ToggleSectionOpen(section)
@@ -1312,12 +1321,13 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		// selection need not be contiguous.
 		m.search.ToggleSelected()
 		return nil
+	case "ctrl+,":
+		// The whole multi-selection goes to Tracks; nothing starts playing.
+		return m.addSelection(false)
+	case "ctrl+.":
+		// The whole multi-selection goes to Tracks and its first song starts.
+		return m.addSelection(true)
 	case "shift+enter":
-		// A multi-selection goes to Tracks as a whole, nothing starts playing.
-		if picked := m.search.SelectedTracks(); len(picked) > 0 {
-			m.search.ClearSelection()
-			return m.addToQueue(fmt.Sprintf("%d songs", len(picked)), picked, playbackIDs(picked))
-		}
 		// Track: add to the end of the queue without playing; an already
 		// queued track is highlighted instead of being added twice.
 		if t := m.search.SelectedTrack(); t != nil {
@@ -2290,6 +2300,93 @@ func (m *Model) panelTitle(label string, focused bool) string {
 // them and not while an overlay panel (lyrics, feed, …) is open.
 func (m *Model) queueFocused() bool {
 	return m.mode != modeSearch && m.activePanel < 0
+}
+
+// selectionTracksMsg carries the songs of a multi-selection once every
+// selected album and playlist has been expanded.
+type selectionTracksMsg struct {
+	label  string
+	tracks []provider.Track
+	play   bool
+	err    error
+}
+
+// addSelection sends the multi-selection to Tracks: songs as they are, albums
+// and playlists expanded to their songs, all in result order. With play the
+// first song starts. The selection is cleared straight away.
+func (m *Model) addSelection(play bool) tea.Cmd {
+	items := m.search.SelectedItems()
+	if len(items) == 0 {
+		return nil
+	}
+	m.search.ClearSelection()
+	label := fmt.Sprintf("%d selected", len(items))
+	collections := 0
+	for _, it := range items {
+		if it.Track == nil {
+			collections++
+		}
+	}
+	if collections == 0 {
+		tracks := make([]provider.Track, 0, len(items))
+		for _, it := range items {
+			tracks = append(tracks, *it.Track)
+		}
+		if play {
+			return m.appendAndPlay(label, tracks, playbackIDs(tracks), 0)
+		}
+		return m.addToQueue(label, tracks, playbackIDs(tracks))
+	}
+	prov := m.provider
+	if prov == nil {
+		return nil
+	}
+	m.appendLog(fmt.Sprintf("[search] expanding %d album(s)/playlist(s) of the selection…", collections))
+	snap := make([]views.SelectedItem, len(items))
+	copy(snap, items)
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		type out struct {
+			tracks []provider.Track
+			err    error
+		}
+		results := make([]chan out, len(snap))
+		for i, it := range snap {
+			ch := make(chan out, 1)
+			results[i] = ch
+			switch {
+			case it.Track != nil:
+				ch <- out{tracks: []provider.Track{*it.Track}}
+			case it.Album != nil:
+				go func(id string) {
+					tracks, err := prov.GetAlbumTracks(ctx, id)
+					ch <- out{tracks: tracks, err: err}
+				}(it.Album.ID)
+			case it.Playlist != nil:
+				go func(id string) {
+					var tracks []provider.Track
+					var err error
+					if strings.HasPrefix(id, "p.") {
+						tracks, err = prov.GetPlaylistTracks(ctx, id)
+					} else {
+						tracks, err = prov.GetCatalogPlaylistTracks(ctx, id)
+					}
+					ch <- out{tracks: tracks, err: err}
+				}(it.Playlist.ID)
+			}
+		}
+		var tracks []provider.Track
+		var firstErr error
+		for _, ch := range results {
+			r := <-ch
+			if r.err != nil && firstErr == nil {
+				firstErr = r.err
+			}
+			tracks = append(tracks, r.tracks...)
+		}
+		return selectionTracksMsg{label: label, tracks: tracks, play: play, err: firstErr}
+	}
 }
 
 // playbackIDs lists the playback id of each track, in order.
@@ -3594,8 +3691,9 @@ func (m *Model) statusNavLines(w int) []string {
 			accent.Render("⇧↑↓/⇧→") + muted.Render(" select"),
 		}
 		if n := m.search.SelectionCount(); n > 0 {
-			actions[0] = accent.Render("Enter") + muted.Render(fmt.Sprintf(" add %d & play", n))
-			actions[1] = accent.Render("⇧Enter") + muted.Render(fmt.Sprintf(" add %d", n))
+			actions = append(actions,
+				accent.Render("^,")+muted.Render(fmt.Sprintf(" add %d", n)),
+				accent.Render("^.")+muted.Render(fmt.Sprintf(" add %d & play", n)))
 		}
 		if m.searchVibe && m.searchQuery != m.vibeShown {
 			actions = []string{accent.Render("Enter") + muted.Render(" find songs")}
