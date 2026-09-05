@@ -110,7 +110,7 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `ctrl+↑` / `ctrl+↓` | Move the highlight |
 | `↑` / `↓` | Move the highlight in Tracks without leaving Search |
 | `ctrl+shift+↑` / `ctrl+shift+↓` | Sweep-select: mark the highlighted item and everything passed over |
-| `ctrl+→` | Toggle the highlighted item in or out of the selection |
+| `ctrl+→` | Toggle the highlighted item in or out of the selection; on an opened album or playlist its listed tracks go with it, and dropping one of them drops the collection's mark |
 | `ctrl+←` | Clear the selection; pressed again before anything changes, bring it back |
 | `ctrl+delete` | `SV`: delete the highlighted list, from disk and from the panel |
 | `ctrl+,` | Add the selection, or the highlighted item, to Tracks; never starts playback (with nothing playing, `space` starts the list) |
