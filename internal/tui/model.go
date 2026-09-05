@@ -1410,6 +1410,8 @@ var allCommands = []cmdEntry{
 	{"discover", "discover <n>|auto|stop|metric", "Queue n discovered songs now, auto-discover until stopped, or pick the similarity"},
 	{"vol", "vol <0-100|+n|-n>", "Set, raise, or lower volume (e.g. vol 80, vol +10, vol -5)"},
 	{"quality", "quality <high|standard|256|64>", "Set Apple Music AAC bitrate"},
+	{"model", "model <fable|sonnet|haiku|default|id>", "Model Claude Code uses for CC lookups; bare :model shows the current one"},
+	{"effort", "effort <low|medium|high|xhigh|max|default>", "Effort Claude Code spends on CC lookups"},
 	{"art", "art", "Toggle album-art view (cover + track info instead of the bar)"},
 	{"mute", "mute", "Toggle mute"},
 	{"radio", "radio", "Toggle continuous radio seeded by the playing track (R inserts 5 related songs once)"},
@@ -1510,6 +1512,33 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 	case cmd == "debug-logs":
 		m.debugView = !m.debugView
 		m.debugScroll = 0
+		return nil
+	case cmd == "model" || strings.HasPrefix(cmd, "model "):
+		arg := strings.TrimSpace(strings.TrimPrefix(cmd, "model"))
+		if arg == "" {
+			m.flashInfo("ℹ CC lookups: " + m.vibeSetupLabel())
+			return nil
+		}
+		m.cfg.VibeModel = arg
+		m.applyVibeSetup("model")
+		return nil
+	case cmd == "effort" || strings.HasPrefix(cmd, "effort "):
+		arg := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(cmd, "effort")))
+		if arg == "" {
+			m.flashInfo("ℹ CC lookups: " + m.vibeSetupLabel())
+			return nil
+		}
+		switch arg {
+		case "low", "medium", "high", "xhigh", "max":
+			m.cfg.VibeEffort = arg
+		case "default", "cli":
+			m.cfg.VibeEffort = ""
+		default:
+			m.errMsg = ":effort takes low, medium, high, xhigh, max or default"
+			m.errExpiry = time.Now().Add(3 * time.Second)
+			return nil
+		}
+		m.applyVibeSetup("effort")
 		return nil
 	case strings.HasPrefix(cmd, "discover"):
 		arg := strings.TrimSpace(strings.TrimPrefix(cmd, "discover"))
@@ -2378,6 +2407,41 @@ func (m *Model) addSelection(play bool) tea.Cmd {
 		}
 		return selectionTracksMsg{label: label, tracks: tracks, play: play, err: firstErr}
 	}
+}
+
+// flashInfo shows a short informational status line.
+func (m *Model) flashInfo(text string) {
+	m.errMsg = text
+	m.errExpiry = time.Now().Add(4 * time.Second)
+}
+
+// vibeSetupLabel describes what answers CC lookups: the model and effort the
+// Claude CLI is asked for, or the keyword table.
+func (m *Model) vibeSetupLabel() string {
+	c, ok := m.vibePlanner.(*vibe.ClaudePlanner)
+	if !ok {
+		return "keyword table (no model)"
+	}
+	model := c.Model
+	if model == "" {
+		model = "CLI default"
+	}
+	effort := c.Effort
+	if effort == "" {
+		effort = "default"
+	}
+	return "Claude " + model + ", effort " + effort
+}
+
+// applyVibeSetup rebuilds the planner from the config's vibe_agent /
+// vibe_model / vibe_effort, saves the config and reports the result.
+func (m *Model) applyVibeSetup(what string) {
+	m.vibePlanner = vibe.NewPlanner(m.cfg.VibeAgent, m.cfg.VibeModel, m.cfg.VibeEffort)
+	if err := m.cfg.Save(""); err != nil {
+		m.appendLog(fmt.Sprintf("[vibe] config save error: %v", err))
+	}
+	m.appendLog(fmt.Sprintf("[vibe] %s set: %s", what, m.vibeSetupLabel()))
+	m.flashInfo("✓ CC lookups: " + m.vibeSetupLabel())
 }
 
 // playbackIDs lists the playback id of each track, in order.

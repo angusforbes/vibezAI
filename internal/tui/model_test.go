@@ -4625,3 +4625,41 @@ func TestHandleSearchKey_EnterAndShiftEnter_NoLongerAdd(t *testing.T) {
 		t.Fatalf("the album's songs should be queued: %v", m.queueIDs)
 	}
 }
+
+func TestExecuteCommand_ModelAndEffort(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.cfg.VibeAgent = "claude" // the planner is the CLI (nothing is spawned here)
+	m.applyVibeSetup("test")
+	m.executeCommand("model")
+	if !strings.Contains(m.errMsg, vibe.DefaultClaudeModel) || !strings.Contains(m.errMsg, "effort default") {
+		t.Fatalf("bare :model reports the current setup, got %q", m.errMsg)
+	}
+	m.executeCommand("model haiku")
+	c, ok := m.vibePlanner.(*vibe.ClaudePlanner)
+	if !ok || c.Model != "haiku" || m.cfg.VibeModel != "haiku" || !strings.Contains(m.errMsg, "haiku") {
+		t.Fatalf(":model haiku should rebuild the planner and remember it (planner=%+v cfg=%q msg=%q)", m.vibePlanner, m.cfg.VibeModel, m.errMsg)
+	}
+	m.executeCommand("effort low")
+	if c := m.vibePlanner.(*vibe.ClaudePlanner); c.Effort != "low" || c.Model != "haiku" || m.cfg.VibeEffort != "low" {
+		t.Fatalf(":effort low should keep the model and set the effort: %+v", c)
+	}
+	m.executeCommand("effort silly")
+	if c := m.vibePlanner.(*vibe.ClaudePlanner); c.Effort != "low" || !strings.Contains(m.errMsg, ":effort takes") {
+		t.Fatalf("an unknown effort is refused: %+v %q", c, m.errMsg)
+	}
+	m.executeCommand("model default")
+	m.executeCommand("effort default")
+	if c := m.vibePlanner.(*vibe.ClaudePlanner); c.Model != "" || c.Effort != "" || !strings.Contains(m.errMsg, "CLI default") {
+		t.Fatalf("default hands both back to the CLI: %+v %q", c, m.errMsg)
+	}
+	// The commands are in the palette.
+	found := 0
+	for _, c := range allCommands {
+		if c.trigger == "model" || c.trigger == "effort" {
+			found++
+		}
+	}
+	if found != 2 {
+		t.Fatalf("model and effort should be listed in the palette, found %d", found)
+	}
+}
