@@ -4276,13 +4276,16 @@ func TestCommandFooter_ListsEveryCommand(t *testing.T) {
 			t.Fatalf("the CMD row lists every command, always; %q is missing from %q", ":"+c.trigger, plain)
 		}
 	}
-	for _, hint := range []string{"Enter run", "Tab complete", "Esc cancel"} {
-		if !strings.Contains(plain, hint) {
-			t.Fatalf("the editing keys stay listed; %q is missing from %q", hint, plain)
-		}
+	if !strings.Contains(plain, "Esc cancel") || strings.Contains(plain, "Tab complete") || strings.Contains(plain, "Enter run") {
+		t.Fatalf("the row is the commands and Esc only: %q", plain)
 	}
 	if wide := m.statusNavLines(400); len(wide) != 1 {
 		t.Fatalf("on a wide terminal the CMD row is one line, got %d", len(wide))
+	}
+	// The CMD row is the whole footer: no Tracks or playback keys while a
+	// command is typed.
+	if all := ansi.Strip(strings.Join(m.statusLines(90), " ")); strings.Contains(all, "play/pause") || strings.Contains(all, "next/prev") {
+		t.Fatalf("command mode shows the CMD row alone, got %q", all)
 	}
 
 	// A long buffer is cut on the left so the cursor stays on the row.

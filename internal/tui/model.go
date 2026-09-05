@@ -3758,10 +3758,11 @@ func (m *Model) statusNavLines(w int) []string {
 		return wrapFit(parts, dot, w)
 	case modeCommand:
 		// The one place commands are listed: every command, always, like the
-		// SEARCH row lists every key. Type one and press Enter; Tab completes
-		// the first command matching what is typed. The buffer is windowed
-		// like the search query so a long `:save <name>` keeps its cursor on
-		// the row. The split stays on screen underneath.
+		// SEARCH row lists every key. The row is the commands and Esc only;
+		// Enter runs what is typed and Tab completes the first match, both
+		// unlisted. The buffer is windowed like the search query so a long
+		// `:save <name>` keeps its cursor on the row. The split stays on
+		// screen underneath, and this row is the whole footer (statusLines).
 		label := styles.ModeCommand.Render("CMD") + "  " + muted.Render(":")
 		runes := []rune(m.cmdBuf)
 		shown, _, cutLeft, _ := queryWindow(runes, len(runes), max(8, w-lipgloss.Width(label)-1))
@@ -3773,11 +3774,7 @@ func (m *Model) statusNavLines(w int) []string {
 		for _, c := range allCommands {
 			parts = append(parts, accent.Render(":"+c.trigger))
 		}
-		parts = append(parts,
-			accent.Render("Enter")+muted.Render(" run"),
-			accent.Render("Tab")+muted.Render(" complete"),
-			accent.Render("Esc")+muted.Render(" cancel"),
-		)
+		parts = append(parts, accent.Render("Esc")+muted.Render(" cancel"))
 		return wrapFit(parts, dot, w)
 	default:
 		var parts []string
@@ -3886,9 +3883,10 @@ func (m *Model) statusPlayParts() []string {
 // so panelHeight consults it rather than assuming a fixed two rows.
 func (m *Model) statusLines(w int) []string {
 	switch {
-	case m.mode == modeSearch:
-		// Keys go to the search input here, so the Tracks key list would be
-		// noise; the SEARCH row already lists what works.
+	case m.mode == modeSearch, m.mode == modeCommand:
+		// Keys go to the search input or the command line here, so the Tracks
+		// and playback key lists would be noise; the SEARCH and CMD rows
+		// already list what works.
 		return m.statusNavLines(w)
 	case m.mode == modeNormal && !m.debugView && m.activePanel < 0:
 		// The Tracks panel: one continuous key list, broken only where the

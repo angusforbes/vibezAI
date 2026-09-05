@@ -109,7 +109,7 @@ Albums and playlists are expanded to their songs when added. An item already in 
 
 ### Command mode (`:`)
 
-Typing `:` keeps both columns on screen. The footer lists every command; type one and press `Enter`. `Tab` completes the first match, `esc` cancels.
+Typing `:` keeps both columns on screen and swaps the footer for the command list alone; type one and press `Enter`. `Tab` completes the first match, `esc` cancels.
 
 | Command | Description |
 |---------|-------------|
