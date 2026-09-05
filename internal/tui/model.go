@@ -1239,12 +1239,19 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 }
 
 func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
+	// While a panel (lyrics, feed, equalizer, about) or the debug log covers
+	// the content it owns the keys, whichever column has them.
+	if !m.searchTyping && (m.activePanel >= 0 || m.debugView) {
+		return m.handleNormalKey(msg, k)
+	}
 	if !m.searchTyping {
 		// Browsing: the prompt takes nothing until Ctrl+' opens it, so keys
 		// cannot land in the query by accident. Enter and space are Tracks'
 		// keys here (play the highlighted track, play/pause), → acts on the
 		// Search row (open/fold, ±5) and ":" opens command mode as it does
-		// from Tracks.
+		// from Tracks. Every other key that is not Search's own is Tracks'
+		// too (s, n/p, d, delete, y, …): the columns share their keys while
+		// nothing is typed; each footer lists only its own.
 		switch {
 		case k == ":":
 			m.mode = modeCommand
@@ -1259,8 +1266,10 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			return m.togglePlayPause()
 		case k == "right":
 			return m.actOnSearchRow()
-		case isSearchEditKey(k):
-			return nil
+		case k == "left", k == "home", k == "ctrl+a", k == "end", k == "ctrl+e", k == "backspace", k == "ctrl+w", k == "ctrl+u":
+			return nil // prompt-editing keys mean nothing while browsing
+		case !isSearchKey(k):
+			return m.handleNormalKey(msg, k)
 		}
 	}
 	switch k {
@@ -1461,14 +1470,18 @@ func (m *Model) actOnSearchRow() tea.Cmd {
 	return nil
 }
 
-// isSearchEditKey reports whether k edits the Search prompt: text, and the
-// cursor and deletion keys. While browsing these are ignored.
-func isSearchEditKey(k string) bool {
+// isSearchKey reports whether k is one of the Search column's own keys while
+// browsing, handled by handleSearchKey's switch; anything else is Tracks'.
+// (handleNormalKey forwards exactly the Ctrl keys named here, so no key can
+// bounce between the two handlers.)
+func isSearchKey(k string) bool {
 	switch k {
-	case "left", "right", "home", "ctrl+a", "end", "ctrl+e", "backspace", "delete", "ctrl+w", "ctrl+u", "space":
+	case "ctrl+'", "ctrl+;", "esc", "ctrl+/", "ctrl+_", "tab", "shift+tab",
+		"ctrl+shift+up", "ctrl+shift+down", "ctrl+right", "ctrl+left", "ctrl+delete",
+		"ctrl+,", "ctrl+.", "ctrl+up", "ctrl+down", "pgup", "pgdown", "up", "down":
 		return true
 	}
-	return len(k) == 1 && k[0] >= 32
+	return false
 }
 
 // ── Command palette ───────────────────────────────────────────────────────
@@ -3940,11 +3953,6 @@ func (m *Model) statusPlayParts() []string {
 		accent.Render("s") + muted.Render(" random"),
 		accent.Render("r") + muted.Render(" repeat"),
 		accent.Render("c") + muted.Render(" clear"),
-		accent.Render("^↑/↓") + muted.Render(" search pick"),
-		accent.Render("^⇧↑/↓") + muted.Render(" search select"),
-		accent.Render("^→/^←") + muted.Render(" search toggle/clear"),
-		accent.Render("^,") + muted.Render(" add from search"),
-		accent.Render("^.") + muted.Render(" add & play from search"),
 		accent.Render("^/") + muted.Render(" "+m.nextSourceLabel()),
 	}
 	if m.discovery.enabled {

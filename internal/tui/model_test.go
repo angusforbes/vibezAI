@@ -927,10 +927,14 @@ func TestTracksCtrlArrows_DriveTheSearchList(t *testing.T) {
 	if m.queueIDs[1] != "1" || m.queueCursor != 1 {
 		t.Fatalf("J moves the highlighted track down: ids=%v cursor=%d", m.queueIDs, m.queueCursor)
 	}
-	footer := ansi.Strip(strings.Join(m.statusLines(400), " "))
-	for _, want := range []string{"^↑/↓ search pick", "^⇧↑/↓ search select", "^→/^← search toggle/clear", "K/J move"} {
-		if !strings.Contains(footer, want) {
-			t.Fatalf("the TRACKS row lists %q: %q", want, footer)
+	// The keys work from Tracks but the TRACKS row lists only its own keys.
+	footer := ansi.Strip(strings.Join(m.statusLines(600), " "))
+	if !strings.Contains(footer, "K/J move") {
+		t.Fatalf("the TRACKS row lists its own keys: %q", footer)
+	}
+	for _, hidden := range []string{"search pick", "search select", "search toggle/clear", "add from search"} {
+		if strings.Contains(footer, hidden) {
+			t.Fatalf("the TRACKS row does not list the Search keys (%q): %q", hidden, footer)
 		}
 	}
 }
@@ -1102,8 +1106,8 @@ func TestCtrlCommaDotFromTracks_AddFromSearch(t *testing.T) {
 	m := newModel(mp)
 	seedSearchResults(m, provider.Track{Title: "A", CatalogID: "a"}, provider.Track{Title: "B", CatalogID: "b"})
 	m.mode = modeNormal
-	if f := ansi.Strip(strings.Join(m.statusLines(600), " ")); !strings.Contains(f, "^, add from search") || !strings.Contains(f, "^. add & play from search") {
-		t.Fatalf("the TRACKS row lists the add keys: %q", f)
+	if f := ansi.Strip(strings.Join(m.statusLines(600), " ")); strings.Contains(f, "add from search") {
+		t.Fatalf("the TRACKS row leaves the Search keys unlisted: %q", f)
 	}
 	// Ctrl+, adds the highlighted Search song; the keys stay in Tracks.
 	if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}, "ctrl+,"); cmd != nil {
@@ -1119,6 +1123,52 @@ func TestCtrlCommaDotFromTracks_AddFromSearch(t *testing.T) {
 	}
 	if len(m.queueIDs) != 2 || m.queueIDs[1] != "b" || mp.setQueueAtStart != "b" {
 		t.Fatalf("^. from Tracks adds and plays the Search pick: queue=%v start=%q", m.queueIDs, mp.setQueueAtStart)
+	}
+}
+
+func TestSearchBrowsing_TracksKeysWorkButAreNotListed(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	m.queueTracks = []provider.Track{{ID: "1", Title: "One"}, {ID: "2", Title: "Two"}, {ID: "3", Title: "Three"}}
+	m.queueIDs = []string{"1", "2", "3"}
+	m.syncQueue()
+	m.setQueueCursor(1)
+	seedSearchResults(m, provider.Track{Title: "Alpha", CatalogID: "a"})
+	// n is next, d removes the highlighted track: Tracks keys, from Search.
+	if cmd := m.handleSearchKey("n", tea.KeyPressMsg{Code: 'n', Text: "n"}); cmd != nil {
+		_ = cmd()
+	}
+	if !mp.nextCalled || m.searchQuery != "" {
+		t.Fatalf("n is next while browsing: next=%v query=%q", mp.nextCalled, m.searchQuery)
+	}
+	if cmd := m.handleSearchKey("d", tea.KeyPressMsg{Code: 'd', Text: "d"}); cmd != nil {
+		_ = cmd()
+	}
+	if len(m.queueIDs) != 2 || m.queueIDs[1] != "3" || m.mode != modeSearch {
+		t.Fatalf("d removes the Tracks pick from Search: %v mode=%v", m.queueIDs, m.mode)
+	}
+	// A panel opened from Search owns the keys until it closes.
+	m.handleSearchKey("y", tea.KeyPressMsg{Code: 'y', Text: "y"})
+	if m.activePanel < 0 || m.panels[m.activePanel] != m.lyricsP {
+		t.Fatalf("y opens lyrics from Search, got panel %d", m.activePanel)
+	}
+	m.handleSearchKey("esc", tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.activePanel >= 0 || m.mode != modeSearch {
+		t.Fatalf("esc closes the panel and leaves the keys in Search: panel=%d mode=%v", m.activePanel, m.mode)
+	}
+	// The SEARCH row does not list them.
+	footer := ansi.Strip(strings.Join(m.statusLines(600), " "))
+	for _, hidden := range []string{"next/prev", " remove", "random", "repeat"} {
+		if strings.Contains(footer, hidden) {
+			t.Fatalf("the SEARCH row leaves the Tracks keys unlisted (%q): %q", hidden, footer)
+		}
+	}
+	// While typing, letters are text.
+	mp.nextCalled = false
+	m.searchTyping = true
+	m.handleSearchKey("n", tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if mp.nextCalled || m.searchQuery != "n" {
+		t.Fatalf("typing: n is text: next=%v query=%q", mp.nextCalled, m.searchQuery)
 	}
 }
 
