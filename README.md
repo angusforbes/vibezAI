@@ -106,7 +106,7 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `ctrl+/` | Cycle the source: `AM` → `CC` → `SV` (saved lists) → `FE` (recommendations) → `AM`; text already typed is looked up when switching to `CC`, `AM` waits for `enter` |
 | `enter` | While typing: search (`AM`) or look up (`CC`) the text and stop typing. Otherwise: play the track highlighted in Tracks |
 | `space` | Play / pause (not while typing) |
-| `→` | Open or fold a section header (a saved list opens whole), grow or shrink a section by five |
+| `→` / `ctrl+enter` | Open or fold a section header (a saved list opens whole), grow or shrink a section by five, or open an album or playlist to its tracks and fold it again |
 | `ctrl+↑` / `ctrl+↓` | Move the highlight |
 | `↑` / `↓` | Move the highlight in Tracks without leaving Search |
 | `ctrl+shift+↑` / `ctrl+shift+↓` | Sweep-select: mark the highlighted item and everything passed over |
@@ -119,7 +119,7 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 
 Albums and playlists are expanded to their songs when added. An item already in Tracks is never added twice; it is highlighted there instead.
 
-The two columns share their keys: while nothing is being typed, every Tracks key works from Search (`s`, `n`/`p`, `d`, `c`, `R`, `T`, …) and every Search key works from Tracks (`ctrl+↑/↓`, `ctrl+shift+↑/↓`, `ctrl+→/←`, `ctrl+,`, `ctrl+.`, `ctrl+/`). Each footer lists only its own column's keys; `ctrl+'` is the one Search key the Tracks footer shows, as the way in.
+The two columns share their keys: while nothing is being typed, every Tracks key works from Search (`s`, `n`/`p`, `d`, `c`, `R`, `T`, …) and every Search key works from Tracks (`ctrl+enter`, `ctrl+↑/↓`, `ctrl+shift+↑/↓`, `ctrl+→/←`, `ctrl+,`, `ctrl+.`, `ctrl+/`). Each footer lists only its own column's keys; `ctrl+'` is the one Search key the Tracks footer shows, as the way in.
 
 ### Command mode (`:`)
 
@@ -185,7 +185,7 @@ vibezAI started from vibez 0.7.0. The engines, themes, equalizer, discovery and 
 | Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+shift+↑/↓` and `ctrl+→`, albums and playlists included |
 | Related songs | Continuous radio | `R` inserts five related songs once |
 | Library | Browser panel | `T` (shift+t) inserts five random library songs; the library is searched as part of every search |
-| Feed | `F` opens a Feed panel | `FE` source in Search: the same sections, marks and adds as a search |
+| Feed | `F` opens a Feed panel | `FE` source in Search: the same sections, marks and adds as a search; `→` opens any album or playlist to its tracks, each addable on its own |
 | Saved lists | — | `:save [name]` keeps Tracks as a list, named by Claude Code when no name is given; Search offers the lists under `SV`, whole or song by song; `ctrl+delete` removes one |
 | Footer | Changes with the mode | One fixed list per column; `:` swaps it for the command list |
 | Model choice | — | `:model`, `:effort`, config keys |
