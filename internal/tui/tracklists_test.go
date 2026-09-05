@@ -163,7 +163,7 @@ func TestSavedSource_AddsASongOrTheWholeList(t *testing.T) {
 	if v := m.search.View(); !strings.Contains(v, "One") || !strings.Contains(v, "Three") || strings.Contains(v, "more") {
 		t.Fatalf("enter opens all songs, no +5 more rows: %q", v)
 	}
-	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
 	if tr := m.search.SelectedTrack(); tr == nil || tr.Title != "One" {
 		t.Fatalf("the first song is highlighted, got %+v", tr)
 	}
@@ -174,7 +174,7 @@ func TestSavedSource_AddsASongOrTheWholeList(t *testing.T) {
 		t.Fatalf("one song added to Tracks: %+v", m.queueTracks)
 	}
 	// Back on the header, ^, adds the whole list; the song already there is not doubled.
-	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})
+	m.handleSearchKey("ctrl+up", tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 	if cmd := m.addSelection(false); cmd != nil {
 		_ = cmd()
 	}
@@ -220,14 +220,14 @@ func TestSavedSource_CtrlDeleteRemovesTheList(t *testing.T) {
 	del := func() { m.handleSearchKey("ctrl+delete", tea.KeyPressMsg{Code: tea.KeyDelete, Mod: tea.ModCtrl}) }
 	// On a song row nothing is deleted; the status line says where to be.
 	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
-	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
 	del()
 	if got := m.savedTrackLists(); len(got) != 2 || !strings.Contains(m.errMsg, "header") {
 		t.Fatalf("a song row deletes nothing: lists=%v msg=%q", got, m.errMsg)
 	}
 	// On the header the list goes, from disk and from the panel, and the
 	// highlight lands on the list that took its place.
-	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})
+	m.handleSearchKey("ctrl+up", tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
 	if l := m.search.SelectedSavedList(); l == nil || l.Name != "newer" {
 		t.Fatalf("setup: the header of newer, got %+v", l)
 	}
@@ -265,7 +265,7 @@ func TestSavedSource_RefreshKeepsOpenListsAndTheHighlight(t *testing.T) {
 	m.mode = modeSearch
 	m.search.SetSize(80, 20)
 	m.setSearchSource(searchSaved)
-	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown}) // header of older
+	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl}) // header of older
 	m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
 	m.refreshSavedLists()
 	if l := m.search.SelectedSavedList(); l == nil || l.Name != "older" {

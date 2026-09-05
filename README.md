@@ -63,7 +63,7 @@ A lookup is two CLI calls, about seven seconds each with Fable 5.1 and roughly a
   <img src="assets/vibezai-select.png" alt="vibezAI: several results marked for adding" width="920">
 </p>
 
-Results, songs as well as whole albums and playlists, can be marked with `Ctrl+↑/↓` sweeps and `Ctrl+→` toggles and then added together with `Ctrl+,` or `Ctrl+.`.
+Results, songs as well as whole albums and playlists, can be marked with `Ctrl+Shift+↑/↓` sweeps and `Ctrl+→` toggles and then added together with `Ctrl+,` or `Ctrl+.`.
 
 ## Saved lists
 
@@ -103,8 +103,9 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | *(type)* | `AM`: search as you type. `CC`: edit the description. `SV`: nothing to type |
 | `ctrl+/` | Cycle the source: `AM` → `CC` → `SV` (saved lists) → `AM`; the text already typed is looked up in the new mode |
 | `enter` | Open or fold a section header (a saved list opens whole), grow or shrink a section by five; in `CC`, look up a new description |
-| `↑` / `↓` | Move the highlight |
-| `ctrl+↑` / `ctrl+↓` | Sweep-select: mark the highlighted item and everything passed over |
+| `ctrl+↑` / `ctrl+↓` | Move the highlight |
+| `↑` / `↓` | Move the highlight in Tracks without leaving Search |
+| `ctrl+shift+↑` / `ctrl+shift+↓` | Sweep-select: mark the highlighted item and everything passed over |
 | `ctrl+→` | Toggle the highlighted item in or out of the selection |
 | `ctrl+←` | Clear the selection; pressed again before anything changes, bring it back |
 | `ctrl+delete` | `SV`: delete the highlighted list, from disk and from the panel |
@@ -175,7 +176,7 @@ vibezAI started from vibez 0.7.0. The engines, themes, equalizer, discovery and 
 | Queue | In memory only | Tracks persist to `queue.json`; navigated in place with `↑/↓`, `enter`, `d`, `D`, `K/J`; never replaced by a search; `:save` keeps named lists that Search offers under `SV` |
 | Search | Single flat result list, `enter` plays and replaces the queue | Sections (Playlists, Albums, Library, Tracks) with `+ 5 more` / `− 5 less`, foldable headers, paging through Apple's results, duplicates never added |
 | Vibe mode | `v` opens a prompt; a keyword table maps words to genres and dumps 15 shuffled songs into the queue | `CC` prompt inside Search; Claude Code plans the terms and ranks a pool of 40 candidates; results shown as a section headed by the model, nothing added until you say so |
-| Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+↑/↓` and `ctrl+→`, albums and playlists included |
+| Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+shift+↑/↓` and `ctrl+→`, albums and playlists included |
 | Related songs | Continuous radio | `R` inserts five related songs once |
 | Library | Browser panel | `T` (shift+t) inserts five random library songs; the library is searched as part of every search |
 | Saved lists | — | `:save [name]` keeps Tracks as a list, named by Claude Code when no name is given; Search offers the lists under `SV`, whole or song by song; `ctrl+delete` removes one |

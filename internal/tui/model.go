@@ -1296,10 +1296,10 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		// Hand the keys back to the queue; the query and results stay visible.
 		m.mode = modeNormal
 		return nil
-	case "ctrl+up", "ctrl+down":
+	case "ctrl+shift+up", "ctrl+shift+down":
 		// Sweep: select the highlighted item, move, select the one landed on.
 		dir := 1
-		if k == "ctrl+up" {
+		if k == "ctrl+shift+up" {
 			dir = -1
 		}
 		m.search.SelectAndMove(dir)
@@ -1325,9 +1325,27 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 	case "ctrl+.":
 		// The selection (or the highlighted item) goes to Tracks and its first song starts.
 		return m.addSelection(true)
-	case "up", "down", "pgup", "pgdown":
+	case "ctrl+up", "ctrl+down":
+		// Move the Search highlight; the plain arrows belong to Tracks (below).
+		code := tea.KeyUp
+		if k == "ctrl+down" {
+			code = tea.KeyDown
+		}
+		_, cmd := m.search.Update(tea.KeyPressMsg{Code: code})
+		return cmd
+	case "pgup", "pgdown":
 		_, cmd := m.search.Update(msg)
 		return cmd
+	case "up", "down":
+		// The Tracks highlight moves without leaving Search: where R and T
+		// insert, and what enter plays after Tab, can be set while a search
+		// is on screen.
+		delta := 1
+		if k == "up" {
+			delta = -1
+		}
+		m.moveQueueCursor(delta)
+		return nil
 	case "left":
 		if m.searchCursor > 0 {
 			m.searchCursor--
@@ -3677,9 +3695,9 @@ func (m *Model) statusNavLines(w int) []string {
 			enter = accent.Render("Enter") + muted.Render(" find songs")
 		}
 		actions := []string{
-			accent.Render("↑/↓") + muted.Render(" pick"),
+			accent.Render("^↑/↓") + muted.Render(" pick"),
 			enter,
-			accent.Render("^↑/↓") + muted.Render(" select"),
+			accent.Render("^⇧↑/↓") + muted.Render(" select"),
 			accent.Render("^→") + muted.Render(" toggle select"),
 			accent.Render("^←") + muted.Render(" clear/restore"),
 			accent.Render("^,") + muted.Render(" add"),
@@ -3703,7 +3721,7 @@ func (m *Model) statusNavLines(w int) []string {
 			query += muted.Render("…")
 		}
 		parts := append([]string{head + query}, actions...)
-		parts = append(parts, toggle, accent.Render("Tab")+muted.Render(" tracks"))
+		parts = append(parts, toggle, accent.Render("↑/↓")+muted.Render(" move in tracks"), accent.Render("Tab")+muted.Render(" tracks"))
 		return wrapFit(parts, dot, w)
 	case modeCommand:
 		// The one place commands are listed: every command with what it takes,
