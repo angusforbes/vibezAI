@@ -3813,8 +3813,11 @@ func TestSearchFindLines_TitleUnderlineInputOnly(t *testing.T) {
 	if !strings.Contains(lines[1], "─────") || strings.Contains(lines[1], strings.Repeat("─", 6)) {
 		t.Fatalf("second line should be the five-dash underline like the Queue's: %q", lines[1])
 	}
-	if !strings.Contains(lines[2], "/") {
-		t.Fatalf("third line should be the query input: %q", lines[2])
+	if !strings.Contains(lines[2], "AM") {
+		t.Fatalf("third line should be the query input with the Apple Music prompt: %q", lines[2])
+	}
+	if !strings.Contains(lines[0], "Apple Music") {
+		t.Fatalf("the header names the mode next to the title: %q", lines[0])
 	}
 	for _, l := range lines[3:] {
 		if strings.Contains(l, "press /") || strings.Contains(l, "type to search") {
@@ -3867,11 +3870,11 @@ func TestPanelTitles_BoldFollowsFocus(t *testing.T) {
 		t.Skip("styling is disabled in this environment")
 	}
 	m.mode = modeNormal
-	if m.findHeader() != plain || !m.queueFocused() {
+	if !strings.HasPrefix(m.findHeader(), plain) || !m.queueFocused() {
 		t.Fatalf("with the keys on the queue, Search must be plain and Queue focused (header=%q focused=%v)", m.findHeader(), m.queueFocused())
 	}
 	m.mode = modeSearch
-	if m.findHeader() != bold || m.queueFocused() {
+	if !strings.HasPrefix(m.findHeader(), bold) || m.queueFocused() {
 		t.Fatalf("with the keys on Search, its title must be bold and Queue unfocused (header=%q focused=%v)", m.findHeader(), m.queueFocused())
 	}
 	m.mode = modeNormal
@@ -3919,8 +3922,11 @@ func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 		t.Fatalf("ctrl+/ should switch to vibes mode without searching (cmd=%v vibe=%v)", cmd != nil, m.searchVibe)
 	}
 	lines := m.searchFindLines(40, 6)
-	if !strings.Contains(lines[2], "CC") || strings.Contains(lines[2], "/") {
-		t.Fatalf("vibes mode shows a CC prompt (Claude Code) instead of the slash: %q", lines[2])
+	if !strings.Contains(lines[2], "CC") || strings.Contains(lines[2], "AM") {
+		t.Fatalf("vibes mode shows the CC prompt (Claude Code) instead of AM: %q", lines[2])
+	}
+	if !strings.Contains(lines[0], "Claude Code") || strings.Contains(lines[0], "Apple Music") {
+		t.Fatalf("the header should say Claude Code in vibes mode: %q", lines[0])
 	}
 	// Typing a description does not search as you type.
 	for _, r := range "chill" {
@@ -3939,8 +3945,8 @@ func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 	if cmd := m.handleSearchKey("ctrl+_", tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}); cmd == nil || m.searchVibe {
 		t.Fatalf("ctrl+/ again (legacy ctrl+_ spelling) should return to regular search and look the text up (cmd=%v vibe=%v)", cmd != nil, m.searchVibe)
 	}
-	if lines := m.searchFindLines(40, 6); !strings.Contains(lines[2], "/") {
-		t.Fatalf("regular mode shows the slash prompt: %q", lines[2])
+	if lines := m.searchFindLines(40, 6); !strings.Contains(lines[2], "AM") || !strings.Contains(lines[0], "Apple Music") {
+		t.Fatalf("regular mode shows the AM prompt and names Apple Music: %q / %q", lines[2], lines[0])
 	}
 }
 
@@ -4194,7 +4200,7 @@ func TestSearchFindLines_LongQueryWraps(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.mode = modeSearch
 	m.search.SetSize(20, 20)
-	m.searchQuery = strings.Repeat("abcdefghij", 5) // 50 runes, 18 fit per row
+	m.searchQuery = strings.Repeat("abcdefghij", 5) // 50 runes, 17 fit per row
 	m.searchCursor = len(m.searchQuery)
 	lines := m.searchFindLines(20, 14)
 	var plain []string
@@ -4209,7 +4215,7 @@ func TestSearchFindLines_LongQueryWraps(t *testing.T) {
 	if !strings.Contains(joined, m.searchQuery) {
 		t.Fatalf("the whole query should be readable across the wrapped rows, got %q", plain[2:6])
 	}
-	if !strings.HasPrefix(plain[2], "/ ") || !strings.HasPrefix(plain[3], "  ") || !strings.Contains(plain[4], "█") {
+	if !strings.HasPrefix(plain[2], "AM ") || !strings.HasPrefix(plain[3], "   ") || !strings.Contains(plain[4], "█") {
 		t.Fatalf("first row carries the prompt, continuation rows are indented, the cursor sits at the end: %q", plain[2:5])
 	}
 	// Too little height for every row: the rows ending at the cursor are kept.
@@ -4218,7 +4224,7 @@ func TestSearchFindLines_LongQueryWraps(t *testing.T) {
 	for _, l := range lines {
 		plain = append(plain, ansi.Strip(l))
 	}
-	if !strings.Contains(plain[3], "█") || strings.Contains(plain[2], "abcdefghijabcdefgh") {
+	if !strings.Contains(plain[3], "█") || strings.Contains(plain[2], "abcdefghijabcdefg") {
 		t.Fatalf("with two input rows the last ones (with the cursor) win: %q", plain[2:4])
 	}
 }
@@ -4242,7 +4248,7 @@ func TestSearchFooter_LongQueryKeepsCursorAndHints(t *testing.T) {
 	// Cursor in the middle: the window follows it.
 	m.searchCursor = 10
 	plain = ansi.Strip(m.statusNavLines(90)[0])
-	if !strings.Contains(plain, "long vibe █descri") || !strings.Contains(plain, "…   Enter") {
+	if !strings.Contains(plain, "long vibe █desc") || !strings.Contains(plain, "…   Enter") {
 		t.Fatalf("the window should show the text around the cursor and mark the cut on the right: %q", plain)
 	}
 }

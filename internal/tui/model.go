@@ -3518,7 +3518,7 @@ func (m *Model) statusNavLines(w int) []string {
 
 	switch m.mode {
 	case modeSearch:
-		label, glyph, toggle := "SEARCH", "/", accent.Render("^/")+muted.Render(" vibes")
+		label, glyph, toggle := "SEARCH", "AM ", accent.Render("^/")+muted.Render(" vibes")
 		if m.searchVibe {
 			label, glyph, toggle = "VIBES", "CC ", accent.Render("^/")+muted.Render(" search")
 		}

@@ -30,9 +30,14 @@ func (m *Model) findLines(w, h int) []string {
 }
 
 // findHeader is the column title, underlined like the Queue's and bold while
-// Search has the keys; the keys themselves are listed in the footer.
+// Search has the keys, followed by the mode the way the Queue shows its track
+// count: "Apple Music" (plain search) or "Claude Code" (vibes lookups).
 func (m *Model) findHeader() string {
-	return m.panelTitle("Search", m.mode == modeSearch)
+	mode := "Apple Music"
+	if m.searchVibe {
+		mode = "Claude Code"
+	}
+	return m.panelTitle("Search", m.mode == modeSearch) + styles.QueueItemMuted.Render("  "+mode)
 }
 
 func (m *Model) searchFindLines(w, h int) []string {
@@ -40,7 +45,7 @@ func (m *Model) searchFindLines(w, h int) []string {
 	muted := lipgloss.NewStyle().Foreground(styles.ColorMuted)
 	textStyle := lipgloss.NewStyle().Foreground(styles.ColorFg)
 
-	glyph := "/"
+	glyph := "AM" // Apple Music's own search
 	if m.searchVibe {
 		glyph = "CC" // Claude Code plans these lookups
 	}
@@ -50,12 +55,12 @@ func (m *Model) searchFindLines(w, h int) []string {
 	// that is not enough.
 	runes := []rune(m.searchQuery)
 	cur := min(m.searchCursor, len(runes))
-	inputRows := wrapQuery(runes, cur, m.mode == modeSearch, max(1, w-2), max(1, (h-2)/2), textStyle, accent)
+	inputRows := wrapQuery(runes, cur, m.mode == modeSearch, max(1, w-3), max(1, (h-2)/2), textStyle, accent)
 	for i, row := range inputRows {
 		if i == 0 {
 			inputRows[i] = accent.Render(glyph) + " " + row
 		} else {
-			inputRows[i] = "  " + row
+			inputRows[i] = "   " + row
 		}
 	}
 	sep := styles.QueueItemMuted.Render(strings.Repeat("─", 5))
