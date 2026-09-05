@@ -604,12 +604,13 @@ func TestModel_Update_PlayerStateMsg(t *testing.T) {
 
 func TestModel_ContentHeight(t *testing.T) {
 	m := newModel(nil)
+	m.width = 600
 	m.height = 26
 	got := m.panelHeight()
-	// fixed overhead = 10 lines (4 border/divider rows, the 4-row Now Playing
-	// block, two status lines)
-	if got != 16 {
-		t.Errorf("panelHeight() = %d, want 16", got)
+	// fixed overhead = 9 lines (4 border/divider rows, the 4-row Now Playing
+	// block, one status row: the Tracks keys are one flow on a wide terminal)
+	if got != 17 {
+		t.Errorf("panelHeight() = %d, want 17", got)
 	}
 }
 
@@ -4369,5 +4370,21 @@ func TestStatusLines_SearchModeDropsTheTracksKeys(t *testing.T) {
 	m.mode = modeNormal
 	if len(m.statusLines(200)) < 2 {
 		t.Fatal("the Tracks keys come back with the Tracks panel")
+	}
+}
+
+func TestStatusLines_TracksKeysAreOneFlow(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeNormal
+	lines := m.statusLines(400)
+	if len(lines) != 1 {
+		t.Fatalf("on a wide terminal the Tracks key list is one row, got %d: %q", len(lines), lines)
+	}
+	plain := ansi.Strip(lines[0])
+	if !strings.Contains(plain, ":q quit  ·  spc play/pause") {
+		t.Fatalf("the navigation and playback keys are joined with a dot, not a line break: %q", plain)
+	}
+	if narrow := m.statusLines(60); len(narrow) < 2 {
+		t.Fatal("a narrow terminal still wraps the list onto more rows")
 	}
 }

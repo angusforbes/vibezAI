@@ -3621,27 +3621,38 @@ func (m *Model) statusNavLines(w int) []string {
 				accent.Render("esc/?") + muted.Render(" close"),
 			}
 		default:
-			parts = []string{
-				styles.ModeNormal.Render("TRACKS"),
-				accent.Render(":") + muted.Render(" command"),
-				accent.Render("Tab") + muted.Render(" search"),
-				accent.Render("y") + muted.Render(" lyrics"),
-				accent.Render("F") + muted.Render(" feed"),
-				accent.Render("e") + muted.Render(" equalizer"),
-				accent.Render("?") + muted.Render(" about"),
-				accent.Render(":q") + muted.Render(" quit"),
-			}
+			parts = m.tracksNavParts()
 		}
 		return wrapFit(parts, dot, w)
+	}
+}
+
+// tracksNavParts is the navigation half of the Tracks panel's key list.
+func (m *Model) tracksNavParts() []string {
+	muted := styles.QueueItemMuted
+	accent := styles.KeyName
+	return []string{
+		styles.ModeNormal.Render("TRACKS"),
+		accent.Render(":") + muted.Render(" command"),
+		accent.Render("Tab") + muted.Render(" search"),
+		accent.Render("y") + muted.Render(" lyrics"),
+		accent.Render("F") + muted.Render(" feed"),
+		accent.Render("e") + muted.Render(" equalizer"),
+		accent.Render("?") + muted.Render(" about"),
+		accent.Render(":q") + muted.Render(" quit"),
 	}
 }
 
 // statusPlayLines is the bottom status line: always shows playback controls,
 // wrapped to fit width w.
 func (m *Model) statusPlayLines(w int) []string {
+	return wrapFit(m.statusPlayParts(), styles.QueueItemMuted.Render("  ·  "), w)
+}
+
+// statusPlayParts lists the playback and Tracks-editing keys.
+func (m *Model) statusPlayParts() []string {
 	muted := styles.QueueItemMuted
 	accent := styles.KeyName
-	dot := muted.Render("  ·  ")
 
 	parts := []string{
 		accent.Render("spc") + muted.Render(" play/pause"),
@@ -3667,7 +3678,7 @@ func (m *Model) statusPlayLines(w int) []string {
 	if m.radio.enabled {
 		parts = append(parts, accent.Render(":radio")+styles.Playing.Render(" 📻 on"))
 	}
-	return wrapFit(parts, dot, w)
+	return parts
 }
 
 // commandLines renders the command palette in the panel area when CMD mode is active.
@@ -3707,13 +3718,17 @@ func (m *Model) commandLines(_ int, h int) []string {
 // each already wrapped to fit width w. The count varies with terminal width,
 // so panelHeight consults it rather than assuming a fixed two rows.
 func (m *Model) statusLines(w int) []string {
-	nav := m.statusNavLines(w)
-	if m.mode == modeSearch {
+	switch {
+	case m.mode == modeSearch:
 		// Keys go to the search input here, so the Tracks key list would be
 		// noise; the SEARCH row already lists what works.
-		return nav
+		return m.statusNavLines(w)
+	case m.mode == modeNormal && !m.debugView && m.activePanel < 0:
+		// The Tracks panel: one continuous key list, broken only where the
+		// width forces it.
+		return wrapFit(append(m.tracksNavParts(), m.statusPlayParts()...), styles.QueueItemMuted.Render("  ·  "), w)
 	}
-	return append(nav, m.statusPlayLines(w)...)
+	return append(m.statusNavLines(w), m.statusPlayLines(w)...)
 }
 
 // panelHeight returns the number of rows available for the split panel section.

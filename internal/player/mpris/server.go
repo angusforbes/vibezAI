@@ -3,7 +3,7 @@
 package mpris
 
 // Server exports vibez as an MPRIS2 media player on the D-Bus session bus.
-// Desktop environments (GNOME, KDE, …) discover it as "vibez" in their
+// Desktop environments (GNOME, KDE, …) discover it as "vibezAI" in their
 // media panels and send play/pause/next/prev actions to it.
 //
 // Usage:
@@ -216,7 +216,7 @@ func NewServer(ctrl Controller) (*Server, error) {
 			"CanQuit":             {Value: false, Writable: false, Emit: prop.EmitFalse},
 			"CanRaise":            {Value: false, Writable: false, Emit: prop.EmitFalse},
 			"HasTrackList":        {Value: false, Writable: false, Emit: prop.EmitFalse},
-			"Identity":            {Value: "vibez", Writable: false, Emit: prop.EmitFalse},
+			"Identity":            {Value: "vibezAI", Writable: false, Emit: prop.EmitFalse},
 			"DesktopEntry":        {Value: "io.github.simonepelosi.vibez", Writable: false, Emit: prop.EmitFalse},
 			"SupportedUriSchemes": {Value: []string{}, Writable: false, Emit: prop.EmitFalse},
 			"SupportedMimeTypes":  {Value: []string{}, Writable: false, Emit: prop.EmitFalse},

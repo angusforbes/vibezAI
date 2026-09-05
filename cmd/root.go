@@ -25,9 +25,9 @@ var demo bool
 var noUpdate bool
 
 var rootCmd = &cobra.Command{
-	Use:   "vibez",
-	Short: "vibez — a vibe-driven music player for your terminal",
-	Long:  "vibez — a vibe-driven music player for your terminal.\n\nRun without arguments to open the TUI.",
+	Use:   "vibezAI",
+	Short: "vibezAI — a vibe-driven music player for your terminal",
+	Long:  "vibezAI — a vibe-driven music player for your terminal.\n\nRun without arguments to open the TUI.",
 	RunE:  runTUI,
 }
 
