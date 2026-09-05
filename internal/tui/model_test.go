@@ -3858,7 +3858,7 @@ func TestSearchFooter_ListsEnterShiftEnterTab(t *testing.T) {
 	m.mode = modeSearch
 	lines := m.statusLines(200)
 	joined := strings.Join(lines, " ")
-	for _, want := range []string{"Enter", "add & play", "⇧Enter", "Tab", "back to tracks"} {
+	for _, want := range []string{"↑/↓", "Enter", "add & play", "⇧Enter", "⇧↑/↓", "⇧→", "⇧←", "^,", "^.", "^/", "Tab", "tracks"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("search footer should mention %q: %q", want, joined)
 		}
@@ -4268,10 +4268,10 @@ func TestSearchFooter_LongQueryKeepsCursorAndHints(t *testing.T) {
 		}
 	}
 	plain := ansi.Strip(strings.Join(lines, " "))
-	if !strings.Contains(plain, "…") || !strings.Contains(plain, "█") || !strings.Contains(plain, "back to tracks") {
+	if !strings.Contains(plain, "…") || !strings.Contains(plain, "█") || !strings.Contains(plain, "tracks") {
 		t.Fatalf("a long query is cut on the left, keeping the cursor and the hints: %q", plain)
 	}
-	if wide := m.statusNavLines(400); len(wide) != 1 {
+	if wide := m.statusNavLines(700); len(wide) != 1 {
 		t.Fatalf("on a wide terminal the search row is one line, got %d", len(wide))
 	}
 	// Cursor in the middle: the window follows it.
@@ -4367,7 +4367,7 @@ func TestStatusLines_SearchModeDropsTheTracksKeys(t *testing.T) {
 		t.Fatalf("search mode shows only the SEARCH row, got %d rows: %q", len(lines), lines)
 	}
 	joined := strings.Join(lines, " ")
-	for _, stale := range []string{"cut below", "remove", "+5 related", "+5 library", "play/pause", "repeat", "random", "clear"} {
+	for _, stale := range []string{"cut below", "remove", "+5 related", "+5 library", "play/pause", "repeat", "random"} {
 		if strings.Contains(joined, stale) {
 			t.Fatalf("Tracks key %q must not be listed while searching: %q", stale, joined)
 		}
@@ -4412,8 +4412,8 @@ func TestHandleSearchKey_MultiSelectAddsAll(t *testing.T) {
 		t.Fatalf("selection = %+v, want k0 k1 k4", got)
 	}
 	footer := ansi.Strip(strings.Join(m.statusLines(400), " "))
-	if !strings.Contains(footer, "^, add 3") || !strings.Contains(footer, "^. add 3 & play") {
-		t.Fatalf("the footer offers the selection keys with the count: %q", footer)
+	if !strings.Contains(footer, "^, add selected") || !strings.Contains(footer, "^. add selected & play") {
+		t.Fatalf("the footer lists the selection keys: %q", footer)
 	}
 	// Enter keeps its row meaning: on the "+ 1 more" row it reveals, adds nothing.
 	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
@@ -4476,13 +4476,12 @@ func TestShiftLeft_ClearsAndRestoresTheSelection(t *testing.T) {
 	m.search.SetSize(80, 40)
 	m.search.SetState(catalogTracks(4), false, nil)
 	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift}) // k0, k1
-	footer := func() string { return ansi.Strip(strings.Join(m.statusLines(400), " ")) }
-	if !strings.Contains(footer(), "⇧← clear") {
-		t.Fatalf("with a selection the footer offers clear: %q", footer())
+	if footer := ansi.Strip(strings.Join(m.statusLines(400), " ")); !strings.Contains(footer, "⇧← clear/restore") {
+		t.Fatalf("the footer always lists Shift+←: %q", footer)
 	}
 	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
-	if m.search.SelectionCount() != 0 || !strings.Contains(footer(), "⇧← restore") {
-		t.Fatalf("Shift+← clears and offers restore: sel=%d footer=%q", m.search.SelectionCount(), footer())
+	if m.search.SelectionCount() != 0 || !m.search.CanRestoreSelection() {
+		t.Fatalf("Shift+← clears and keeps the selection for restoring: sel=%d", m.search.SelectionCount())
 	}
 	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
 	if got := m.search.SelectedTracks(); len(got) != 2 || got[0].ID != "k0" || got[1].ID != "k1" {

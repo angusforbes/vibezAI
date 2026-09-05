@@ -3692,21 +3692,21 @@ func (m *Model) statusNavLines(w int) []string {
 		if m.searchVibe {
 			glyph, toggle = "CC ", accent.Render("^/")+muted.Render(" apple music")
 		}
-		actions := []string{
-			accent.Render("Enter") + muted.Render(" add & play"),
-			accent.Render("⇧Enter") + muted.Render(" add"),
-			accent.Render("⇧↑↓/⇧→") + muted.Render(" select"),
-		}
-		if n := m.search.SelectionCount(); n > 0 {
-			actions = append(actions,
-				accent.Render("^,")+muted.Render(fmt.Sprintf(" add %d", n)),
-				accent.Render("^.")+muted.Render(fmt.Sprintf(" add %d & play", n)),
-				accent.Render("⇧←")+muted.Render(" clear"))
-		} else if m.search.CanRestoreSelection() {
-			actions = append(actions, accent.Render("⇧←")+muted.Render(" restore"))
-		}
+		// Every key that works here, always listed; only Enter's meaning
+		// changes, when a new description waits to be looked up by Claude.
+		enter := accent.Render("Enter") + muted.Render(" add & play")
 		if m.searchVibe && m.searchQuery != m.vibeShown {
-			actions = []string{accent.Render("Enter") + muted.Render(" find songs")}
+			enter = accent.Render("Enter") + muted.Render(" find songs")
+		}
+		actions := []string{
+			accent.Render("↑/↓") + muted.Render(" pick"),
+			enter,
+			accent.Render("⇧Enter") + muted.Render(" add"),
+			accent.Render("⇧↑/↓") + muted.Render(" select"),
+			accent.Render("⇧→") + muted.Render(" toggle select"),
+			accent.Render("⇧←") + muted.Render(" clear/restore"),
+			accent.Render("^,") + muted.Render(" add selected"),
+			accent.Render("^.") + muted.Render(" add selected & play"),
 		}
 		head := styles.ModeSearch.Render(label) + "  " + accent.Render(glyph)
 		// The prompt shows the part of the query around the cursor that fits
@@ -3723,7 +3723,7 @@ func (m *Model) statusNavLines(w int) []string {
 			query += muted.Render("…")
 		}
 		parts := append([]string{head + query}, actions...)
-		parts = append(parts, toggle, accent.Render("Tab")+muted.Render(" back to tracks"))
+		parts = append(parts, toggle, accent.Render("Tab")+muted.Render(" tracks"))
 		return wrapFit(parts, dot, w)
 	case modeCommand:
 		return []string{styles.ModeCommand.Render("CMD") + "  " +
