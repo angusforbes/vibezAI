@@ -4313,6 +4313,48 @@ func TestSearchFooter_LongQueryKeepsCursorAndHints(t *testing.T) {
 	}
 }
 
+func TestCommandFooter_ListsEveryCommand(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeCommand
+	m.cmdBuf = "vo"
+	lines := m.statusNavLines(90)
+	for _, l := range lines {
+		if lipgloss.Width(l) > 90 {
+			t.Fatalf("every footer row must fit the width, got %d: %q", lipgloss.Width(l), ansi.Strip(l))
+		}
+	}
+	if len(lines) < 2 {
+		t.Fatalf("at 90 columns the command list needs more than one row, got %d", len(lines))
+	}
+	plain := ansi.Strip(strings.Join(lines, " "))
+	if !strings.HasPrefix(strings.TrimSpace(plain), "CMD") || !strings.Contains(plain, ":vo_") {
+		t.Fatalf("the row opens with the mode chip and the typed command: %q", plain)
+	}
+	for _, c := range allCommands {
+		if c.trigger == "quit" {
+			continue // alias of :q, deliberately not repeated
+		}
+		if !strings.Contains(plain, ":"+c.trigger) {
+			t.Fatalf("the CMD row lists every command, always; %q is missing from %q", ":"+c.trigger, plain)
+		}
+	}
+	for _, hint := range []string{"Tab complete", "↑/↓ navigate", "Esc cancel"} {
+		if !strings.Contains(plain, hint) {
+			t.Fatalf("the editing keys stay listed; %q is missing from %q", hint, plain)
+		}
+	}
+	if wide := m.statusNavLines(400); len(wide) != 1 {
+		t.Fatalf("on a wide terminal the CMD row is one line, got %d", len(wide))
+	}
+
+	// A long buffer is cut on the left so the cursor stays on the row.
+	m.cmdBuf = "save " + strings.Repeat("summer ", 20)
+	plain = ansi.Strip(m.statusNavLines(90)[0])
+	if !strings.Contains(plain, ":…") || !strings.Contains(plain, "summer _") {
+		t.Fatalf("a long command is cut on the left, keeping the cursor: %q", plain)
+	}
+}
+
 func TestCtrlSlash_KeepsEachModesResultsAndSkipsRepeatLookups(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.provider = &termProvider{n: 3}

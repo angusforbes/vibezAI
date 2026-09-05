@@ -3773,9 +3773,30 @@ func (m *Model) statusNavLines(w int) []string {
 		parts = append(parts, toggle, accent.Render("Tab")+muted.Render(" tracks"))
 		return wrapFit(parts, dot, w)
 	case modeCommand:
-		return []string{styles.ModeCommand.Render("CMD") + "  " +
-			muted.Render(":") + m.cmdBuf + accent.Render("_") +
-			muted.Render("  Tab complete · ↑/↓ navigate · Esc cancel")}
+		// Every command, always listed, like the SEARCH row lists every key;
+		// the palette in the panel area adds usage and descriptions for what
+		// matches the typed prefix. The buffer is windowed like the search
+		// query so a long `:save <name>` keeps its cursor on the row.
+		label := styles.ModeCommand.Render("CMD") + "  " + muted.Render(":")
+		runes := []rune(m.cmdBuf)
+		shown, _, cutLeft, _ := queryWindow(runes, len(runes), max(8, w-lipgloss.Width(label)-1))
+		buf := string(shown)
+		if cutLeft {
+			buf = muted.Render("…") + buf
+		}
+		parts := []string{label + buf + accent.Render("_")}
+		for _, c := range allCommands {
+			if c.trigger == "quit" {
+				continue // alias of :q; one entry keeps the row short
+			}
+			parts = append(parts, accent.Render(":"+c.trigger))
+		}
+		parts = append(parts,
+			accent.Render("Tab")+muted.Render(" complete"),
+			accent.Render("↑/↓")+muted.Render(" navigate"),
+			accent.Render("Esc")+muted.Render(" cancel"),
+		)
+		return wrapFit(parts, dot, w)
 	default:
 		var parts []string
 		switch {
