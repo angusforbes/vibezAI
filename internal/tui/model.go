@@ -1288,40 +1288,26 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			}
 			return nil
 		}
-		// Track: add to the end of the queue and start it. Never replaces the queue.
-		if t := m.search.SelectedTrack(); t != nil {
-			tc := *t
-			return m.appendAndPlay(tc.Artist+" — "+tc.Title, []provider.Track{tc}, []string{views.PlaybackID(tc)}, 0)
-		}
-		// Album: fetch all tracks then play.
-		if a := m.search.SelectedAlbum(); a != nil {
-			m.playerState.Loading = true
-			return m.fetchSearchCollectionCmd(a, nil, true, false)
-		}
-		// Playlist: fetch all tracks then play.
-		if p := m.search.SelectedPlaylist(); p != nil {
-			m.playerState.Loading = true
-			return m.fetchSearchCollectionCmd(nil, p, true, false)
-		}
+		// On a song, album or playlist Enter does nothing: adding is Ctrl+, / Ctrl+.
 		return nil
 	case "tab", "shift+tab":
 		// Hand the keys back to the queue; the query and results stay visible.
 		m.mode = modeNormal
 		return nil
-	case "shift+up", "shift+down":
-		// Sweep: select the highlighted song, move, select the one landed on.
+	case "ctrl+up", "ctrl+down":
+		// Sweep: select the highlighted item, move, select the one landed on.
 		dir := 1
-		if k == "shift+up" {
+		if k == "ctrl+up" {
 			dir = -1
 		}
 		m.search.SelectAndMove(dir)
 		return nil
-	case "shift+right":
-		// Toggle the highlighted song in or out of the selection, so a
+	case "ctrl+right":
+		// Toggle the highlighted item in or out of the selection, so a
 		// selection need not be contiguous.
 		m.search.ToggleSelected()
 		return nil
-	case "shift+left":
+	case "ctrl+left":
 		// Clear the selection; pressed again before anything else changes
 		// it, bring the same selection back.
 		if !m.search.RestoreSelection() {
@@ -1329,27 +1315,11 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	case "ctrl+,":
-		// The whole multi-selection goes to Tracks; nothing starts playing.
+		// The selection (or the highlighted item) goes to Tracks; nothing starts.
 		return m.addSelection(false)
 	case "ctrl+.":
-		// The whole multi-selection goes to Tracks and its first song starts.
+		// The selection (or the highlighted item) goes to Tracks and its first song starts.
 		return m.addSelection(true)
-	case "shift+enter":
-		// Track: add to the end of the queue without playing; an already
-		// queued track is highlighted instead of being added twice.
-		if t := m.search.SelectedTrack(); t != nil {
-			tc := *t
-			return m.addToQueue(tc.Artist+" — "+tc.Title, []provider.Track{tc}, []string{views.PlaybackID(tc)})
-		}
-		// Album: fetch all tracks then add to queue.
-		if a := m.search.SelectedAlbum(); a != nil {
-			return m.fetchSearchCollectionCmd(a, nil, false, false)
-		}
-		// Playlist: fetch all tracks then add to queue.
-		if p := m.search.SelectedPlaylist(); p != nil {
-			return m.fetchSearchCollectionCmd(nil, p, false, false)
-		}
-		return nil
 	case "up", "down", "pgup", "pgdown":
 		_, cmd := m.search.Update(msg)
 		return cmd
@@ -2318,16 +2288,30 @@ type selectionTracksMsg struct {
 	err    error
 }
 
-// addSelection sends the multi-selection to Tracks: songs as they are, albums
-// and playlists expanded to their songs, all in result order. With play the
-// first song starts. The selection stays as it is.
+// addSelection sends the multi-selection — or, with nothing marked, the
+// highlighted item — to Tracks: songs as they are, albums and playlists
+// expanded to their songs, all in result order. With play the first song
+// starts. The selection stays as it is.
 func (m *Model) addSelection(play bool) tea.Cmd {
 	items := m.search.SelectedItems()
-	if len(items) == 0 {
-		return nil
-	}
-	// The selection stays marked after the add (Shift+← clears it).
 	label := fmt.Sprintf("%d selected", len(items))
+	if len(items) == 0 {
+		// Nothing marked: the highlighted song, album or playlist is meant.
+		switch {
+		case m.search.SelectedTrack() != nil:
+			t := m.search.SelectedTrack()
+			items, label = []views.SelectedItem{{Track: t}}, t.Artist+" — "+t.Title
+		case m.search.SelectedAlbum() != nil:
+			a := m.search.SelectedAlbum()
+			items, label = []views.SelectedItem{{Album: a}}, a.Title
+		case m.search.SelectedPlaylist() != nil:
+			pl := m.search.SelectedPlaylist()
+			items, label = []views.SelectedItem{{Playlist: pl}}, pl.Name
+		default:
+			return nil
+		}
+	}
+	// The selection stays marked after the add (Ctrl+← clears it).
 	collections := 0
 	for _, it := range items {
 		if it.Track == nil {
@@ -3694,19 +3678,18 @@ func (m *Model) statusNavLines(w int) []string {
 		}
 		// Every key that works here, always listed; only Enter's meaning
 		// changes, when a new description waits to be looked up by Claude.
-		enter := accent.Render("Enter") + muted.Render(" add & play")
+		enter := accent.Render("Enter") + muted.Render(" open/fold")
 		if m.searchVibe && m.searchQuery != m.vibeShown {
 			enter = accent.Render("Enter") + muted.Render(" find songs")
 		}
 		actions := []string{
 			accent.Render("↑/↓") + muted.Render(" pick"),
 			enter,
-			accent.Render("⇧Enter") + muted.Render(" add"),
-			accent.Render("⇧↑/↓") + muted.Render(" select"),
-			accent.Render("⇧→") + muted.Render(" toggle select"),
-			accent.Render("⇧←") + muted.Render(" clear/restore"),
-			accent.Render("^,") + muted.Render(" add selected"),
-			accent.Render("^.") + muted.Render(" add selected & play"),
+			accent.Render("^↑/↓") + muted.Render(" select"),
+			accent.Render("^→") + muted.Render(" toggle select"),
+			accent.Render("^←") + muted.Render(" clear/restore"),
+			accent.Render("^,") + muted.Render(" add"),
+			accent.Render("^.") + muted.Render(" add & play"),
 		}
 		head := styles.ModeSearch.Render(label) + "  " + accent.Render(glyph)
 		// The prompt shows the part of the query around the cursor that fits

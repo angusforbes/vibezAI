@@ -725,7 +725,7 @@ func seedSearchResults(m *Model, tracks ...provider.Track) {
 	m.search.SetState(tracks, false, nil)
 }
 
-func TestHandleSearchKey_Enter_AppendsAndPlays(t *testing.T) {
+func TestHandleSearchKey_CtrlDot_AppendsAndPlaysHighlighted(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	m.queueTracks = []provider.Track{{Title: "Already", CatalogID: "1"}}
@@ -735,7 +735,7 @@ func TestHandleSearchKey_Enter_AppendsAndPlays(t *testing.T) {
 	track := provider.Track{Title: "Hi", Artist: "There", CatalogID: "99999"}
 	seedSearchResults(m, track)
 
-	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	cmd := m.handleSearchKey("ctrl+.", tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("handleSearchKey(enter) returned nil cmd")
 	}
@@ -753,13 +753,13 @@ func TestHandleSearchKey_Enter_AppendsAndPlays(t *testing.T) {
 	}
 }
 
-func TestHandleSearchKey_Enter_UsesLibraryID_WhenNoCatalogID(t *testing.T) {
+func TestHandleSearchKey_CtrlDot_UsesLibraryID_WhenNoCatalogID(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	track := provider.Track{Title: "Library Song", ID: "i.LibraryAbc123"}
 	seedSearchResults(m, track)
 
-	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	cmd := m.handleSearchKey("ctrl+.", tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
 	if cmd != nil {
 		cmd()
 	}
@@ -770,14 +770,14 @@ func TestHandleSearchKey_Enter_UsesLibraryID_WhenNoCatalogID(t *testing.T) {
 	}
 }
 
-func TestHandleSearchKey_Enter_NoResults_NoCall(t *testing.T) {
+func TestHandleSearchKey_CtrlDot_NoResults_NoCall(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	m.mode = modeSearch
 	m.search.SetSize(80, 20)
 	// No results set → SelectedTrack() is nil.
 
-	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	cmd := m.handleSearchKey("ctrl+.", tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
 	// cmd may be nil or return no player call — SetQueue must NOT be called.
 	if cmd != nil {
 		cmd()
@@ -787,13 +787,13 @@ func TestHandleSearchKey_Enter_NoResults_NoCall(t *testing.T) {
 	}
 }
 
-func TestHandleSearchKey_ShiftEnter_CallsAppendQueue(t *testing.T) {
+func TestHandleSearchKey_CtrlComma_CallsAppendQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	track := provider.Track{Title: "Queued", Artist: "Band", CatalogID: "12345"}
 	seedSearchResults(m, track)
 
-	cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("handleSearchKey(shift+enter) returned nil cmd — expected AppendQueue call")
 	}
@@ -807,12 +807,12 @@ func TestHandleSearchKey_ShiftEnter_CallsAppendQueue(t *testing.T) {
 	}
 }
 
-func TestHandleSearchKey_ShiftEnter_DoesNotCallSetQueue(t *testing.T) {
+func TestHandleSearchKey_CtrlComma_DoesNotCallSetQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	seedSearchResults(m, provider.Track{Title: "T", CatalogID: "x"})
 
-	cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift})
+	cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl})
 	if cmd != nil {
 		cmd()
 	}
@@ -821,7 +821,7 @@ func TestHandleSearchKey_ShiftEnter_DoesNotCallSetQueue(t *testing.T) {
 	}
 }
 
-func TestHandleSearchKey_ShiftEnter_NeverQueuesTheSameTrackTwice(t *testing.T) {
+func TestHandleSearchKey_CtrlComma_NeverQueuesTheSameTrackTwice(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	tracks := []provider.Track{
@@ -833,7 +833,7 @@ func TestHandleSearchKey_ShiftEnter_NeverQueuesTheSameTrackTwice(t *testing.T) {
 	// Shift+Enter twice on the same selection: the second press adds nothing and
 	// just points at the queued copy.
 	for range 2 {
-		if cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}); cmd != nil {
+		if cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}); cmd != nil {
 			cmd()
 		}
 	}
@@ -846,7 +846,7 @@ func TestHandleSearchKey_ShiftEnter_NeverQueuesTheSameTrackTwice(t *testing.T) {
 
 	// A different track still gets added.
 	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
-	if cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}); cmd != nil {
+	if cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}); cmd != nil {
 		cmd()
 	}
 	if len(mp.appendQueueIDs) != 2 || len(m.queueIDs) != 2 || m.queueIDs[1] != "222" {
@@ -854,7 +854,7 @@ func TestHandleSearchKey_ShiftEnter_NeverQueuesTheSameTrackTwice(t *testing.T) {
 	}
 }
 
-func TestHandleSearchKey_Enter_OnQueuedTrackPlaysExistingCopy(t *testing.T) {
+func TestHandleSearchKey_CtrlDot_OnQueuedTrackPlaysExistingCopy(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	m.queueTracks = []provider.Track{{Title: "Already", CatalogID: "1"}, {Title: "Hi", Artist: "There", CatalogID: "99999"}}
@@ -863,7 +863,7 @@ func TestHandleSearchKey_Enter_OnQueuedTrackPlaysExistingCopy(t *testing.T) {
 	m.playerState.Track = &cur
 	seedSearchResults(m, provider.Track{Title: "Hi", Artist: "There", CatalogID: "99999"})
 
-	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil {
+	if cmd := m.handleSearchKey("ctrl+.", tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl}); cmd != nil {
 		cmd()
 	}
 	if len(m.queueIDs) != 2 || len(mp.syncCalls) != 0 || mp.setQueueIDs != nil {
@@ -3853,12 +3853,12 @@ func TestTab_TogglesFocusBetweenQueueAndSearch(t *testing.T) {
 	}
 }
 
-func TestSearchFooter_ListsEnterShiftEnterTab(t *testing.T) {
+func TestSearchFooter_ListsEveryKey(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.mode = modeSearch
 	lines := m.statusLines(200)
-	joined := strings.Join(lines, " ")
-	for _, want := range []string{"↑/↓", "Enter", "add & play", "⇧Enter", "⇧↑/↓", "⇧→", "⇧←", "^,", "^.", "^/", "Tab", "tracks"} {
+	joined := ansi.Strip(strings.Join(lines, " "))
+	for _, want := range []string{"↑/↓", "Enter", "open/fold", "^↑/↓", "^→", "^←", "^, add", "^. add & play", "^/", "Tab", "tracks"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("search footer should mention %q: %q", want, joined)
 		}
@@ -3981,25 +3981,25 @@ func TestHandleSearchKey_EnterInVibesModeFindsSongsThenActsOnRows(t *testing.T) 
 		t.Fatalf("vibe songs should be listed like search results with the more/less controls: %q", view)
 	}
 	footer := strings.Join(m.statusLines(200), " ")
-	if !strings.Contains(footer, "add & play") || strings.Contains(footer, "find songs") {
-		t.Fatalf("once the songs are listed, Enter acts on rows: %q", footer)
+	if !strings.Contains(footer, "open/fold") || strings.Contains(footer, "find songs") {
+		t.Fatalf("once the songs are listed, Enter is back to opening and folding: %q", footer)
 	}
-	// Enter on the highlighted song adds it to the queue and plays it.
-	cmd = m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	// Ctrl+. on the highlighted song adds it to the queue and plays it.
+	cmd = m.handleSearchKey("ctrl+.", tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
 	if cmd == nil {
-		t.Fatal("Enter on a vibe song should add & play it")
+		t.Fatal("Ctrl+. on a vibe song should add & play it")
 	}
 	cmd()
 	if len(m.queueIDs) != 1 || m.queueIDs[0] != "v0" {
 		t.Fatalf("queue should hold the chosen song, got %v", m.queueIDs)
 	}
-	// Shift+Enter adds the next one without playing.
+	// Ctrl+, adds the next one without playing.
 	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
-	if cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}); cmd != nil {
+	if cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}); cmd != nil {
 		cmd()
 	}
 	if len(m.queueIDs) != 2 || m.queueIDs[1] != "v1" {
-		t.Fatalf("Shift+Enter should append the next song, got %v", m.queueIDs)
+		t.Fatalf("Ctrl+, should append the next song, got %v", m.queueIDs)
 	}
 	// Editing the description makes Enter a lookup again.
 	m.handleSearchKey("!", tea.KeyPressMsg{Code: '!', Text: "!"})
@@ -4402,18 +4402,18 @@ func TestHandleSearchKey_MultiSelectAddsAll(t *testing.T) {
 	tracks := catalogTracks(6)
 	m.search.SetState(tracks, false, nil)
 	// Shift+↓ twice: k0, k1, k2; Shift+→ drops k2; ↓ ↓ and Shift+→ adds k4.
-	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
-	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
-	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
+	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
+	m.handleSearchKey("ctrl+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl})
 	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
 	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
-	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl})
 	if got := m.search.SelectedTracks(); len(got) != 3 || got[0].ID != "k0" || got[1].ID != "k1" || got[2].ID != "k4" {
 		t.Fatalf("selection = %+v, want k0 k1 k4", got)
 	}
 	footer := ansi.Strip(strings.Join(m.statusLines(400), " "))
-	if !strings.Contains(footer, "^, add selected") || !strings.Contains(footer, "^. add selected & play") {
-		t.Fatalf("the footer lists the selection keys: %q", footer)
+	if !strings.Contains(footer, "^, add") || !strings.Contains(footer, "^. add & play") {
+		t.Fatalf("the footer lists the add keys: %q", footer)
 	}
 	// Enter keeps its row meaning: on the "+ 1 more" row it reveals, adds nothing.
 	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
@@ -4434,7 +4434,7 @@ func TestHandleSearchKey_MultiSelectAddsAll(t *testing.T) {
 		t.Fatal("the selection stays marked after adding")
 	}
 	// Shift+← clears it; Ctrl+. with a fresh selection adds and starts the first of them (k2).
-	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
 	if m.search.SelectionCount() != 0 {
 		t.Fatal("Shift+← clears the selection")
 	}
@@ -4444,7 +4444,7 @@ func TestHandleSearchKey_MultiSelectAddsAll(t *testing.T) {
 	if cur := m.search.SelectedTrack(); cur == nil || cur.ID != "k2" {
 		t.Fatalf("setup: expected the highlight on k2, got %+v", cur)
 	}
-	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift}) // k2, k3
+	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl}) // k2, k3
 	cmd := m.handleSearchKey("ctrl+.", tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("Ctrl+. with a selection should add and play")
@@ -4464,42 +4464,42 @@ func TestHandleSearchKey_MultiSelectAddsAll(t *testing.T) {
 		t.Fatal("selection kept after Ctrl+.")
 	}
 	// Without a selection the keys do nothing.
-	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
 	if cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}); cmd != nil {
 		t.Fatal("Ctrl+, without a selection is a no-op")
 	}
 }
 
-func TestShiftLeft_ClearsAndRestoresTheSelection(t *testing.T) {
+func TestCtrlLeft_ClearsAndRestoresTheSelection(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.mode = modeSearch
 	m.search.SetSize(80, 40)
 	m.search.SetState(catalogTracks(4), false, nil)
-	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift}) // k0, k1
-	if footer := ansi.Strip(strings.Join(m.statusLines(400), " ")); !strings.Contains(footer, "⇧← clear/restore") {
-		t.Fatalf("the footer always lists Shift+←: %q", footer)
+	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl}) // k0, k1
+	if footer := ansi.Strip(strings.Join(m.statusLines(400), " ")); !strings.Contains(footer, "^← clear/restore") {
+		t.Fatalf("the footer always lists Ctrl+←: %q", footer)
 	}
-	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
 	if m.search.SelectionCount() != 0 || !m.search.CanRestoreSelection() {
 		t.Fatalf("Shift+← clears and keeps the selection for restoring: sel=%d", m.search.SelectionCount())
 	}
-	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
 	if got := m.search.SelectedTracks(); len(got) != 2 || got[0].ID != "k0" || got[1].ID != "k1" {
 		t.Fatalf("Shift+← again brings the same selection back: %+v", got)
 	}
 	// A change after clearing starts over: the old selection is gone for good.
-	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
 	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
-	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}) // k2 only
-	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
-	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl}) // k2 only
+	m.handleSearchKey("ctrl+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
+	m.handleSearchKey("ctrl+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
 	if got := m.search.SelectedTracks(); len(got) != 1 || got[0].ID != "k2" {
 		t.Fatalf("only the latest cleared selection comes back: %+v", got)
 	}
 	// New results drop both the selection and the stash.
-	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
 	m.search.SetState(catalogTracks(2), false, nil)
-	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModCtrl})
 	if m.search.SelectionCount() != 0 {
 		t.Fatal("nothing to restore after a new result set")
 	}
@@ -4538,14 +4538,14 @@ func TestAddSelection_ExpandsAlbumsAndPlaylistsInResultOrder(t *testing.T) {
 	}, false, nil)
 	// Highlight starts on the playlist: Shift+↓ sweeps playlist and album
 	// (skipping the section controls); then walk to k1 and toggle it.
-	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
 	if a := m.search.SelectedAlbum(); a == nil || a.ID != "a1" {
 		t.Fatalf("the sweep should land on the album, not on a control row (album=%v)", a)
 	}
 	for i := 0; i < 10 && (m.search.SelectedTrack() == nil || m.search.SelectedTrack().ID != "k1"); i++ {
 		m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
 	}
-	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift})
+	m.handleSearchKey("ctrl+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl})
 	items := m.search.SelectedItems()
 	if len(items) != 3 || items[0].Playlist == nil || items[1].Album == nil || items[2].Track == nil {
 		t.Fatalf("selection should hold playlist, album, song in result order: %+v", items)
@@ -4587,16 +4587,41 @@ func TestSearchView_UnselectedHighlightGoesGreyWhileSelecting(t *testing.T) {
 	if strings.Contains(m.search.View(), grey) {
 		t.Fatal("without a selection the highlighted song keeps the highlight colour")
 	}
-	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}) // select k0
+	m.handleSearchKey("ctrl+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl}) // select k0
 	if strings.Contains(m.search.View(), grey) {
 		t.Fatal("a highlighted song that is selected keeps the highlight colour")
 	}
-	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}) // deselect k0 → no selection at all
+	m.handleSearchKey("ctrl+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl}) // deselect k0 → no selection at all
 	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
-	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}) // select k1
-	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})                                // back on k0, unselected
+	m.handleSearchKey("ctrl+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModCtrl}) // select k1
+	m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})                              // back on k0, unselected
 	v := m.search.View()
 	if !strings.Contains(v, grey) || !strings.Contains(v, "▶") {
 		t.Fatalf("with a selection active, the highlighted unselected song is grey but keeps the pointer: %q", v)
+	}
+}
+
+func TestHandleSearchKey_EnterAndShiftEnter_NoLongerAdd(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	seedSearchResults(m, provider.Track{Title: "Hi", Artist: "There", CatalogID: "99999"})
+	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil || len(m.queueIDs) != 0 {
+		t.Fatalf("Enter on a song does nothing now (cmd=%v queue=%v)", cmd != nil, m.queueIDs)
+	}
+	if cmd := m.handleSearchKey("shift+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModShift}); cmd != nil || len(m.queueIDs) != 0 {
+		t.Fatalf("Shift+Enter is unbound in Search (cmd=%v queue=%v)", cmd != nil, m.queueIDs)
+	}
+	// Ctrl+, with nothing marked adds the highlighted album via its songs.
+	m.provider = &collectionProvider{albums: map[string][]provider.Track{"a1": {{ID: "a1-1", CatalogID: "a1-1", Title: "One", Artist: "Band"}}}}
+	m.search.SetResults(&provider.SearchResult{Albums: []provider.Album{{ID: "a1", Title: "LP", Artist: "Band"}}}, false, nil)
+	cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("Ctrl+, on a highlighted album should expand it")
+	}
+	if _, next := m.Update(cmd()); next != nil {
+		next()
+	}
+	if strings.Join(m.queueIDs, ",") != "a1-1" {
+		t.Fatalf("the album's songs should be queued: %v", m.queueIDs)
 	}
 }
