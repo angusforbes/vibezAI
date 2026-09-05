@@ -90,6 +90,7 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `ctrl+shift+↑` / `ctrl+shift+↓` | Sweep-select in Search |
 | `ctrl+→` / `ctrl+←` | Toggle / clear the Search selection |
 | `ctrl+/` | Cycle the Search source (`AM` → `CC` → `SV`) without leaving Tracks |
+| `ctrl+,` / `ctrl+.` | Add the Search selection, or its highlighted item, to Tracks / add it and play, without leaving Tracks |
 | `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom |
 | `R` | Insert five related songs after the highlighted track, once |
 | `T` | Insert five random songs from your library after the highlighted track |

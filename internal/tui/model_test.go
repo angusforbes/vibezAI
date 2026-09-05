@@ -1097,6 +1097,31 @@ func TestSearchBrowsing_EnterPlaysTracksPickSpaceTogglesRightActsOnRows(t *testi
 	}
 }
 
+func TestCtrlCommaDotFromTracks_AddFromSearch(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	seedSearchResults(m, provider.Track{Title: "A", CatalogID: "a"}, provider.Track{Title: "B", CatalogID: "b"})
+	m.mode = modeNormal
+	if f := ansi.Strip(strings.Join(m.statusLines(600), " ")); !strings.Contains(f, "^, add from search") || !strings.Contains(f, "^. add & play from search") {
+		t.Fatalf("the TRACKS row lists the add keys: %q", f)
+	}
+	// Ctrl+, adds the highlighted Search song; the keys stay in Tracks.
+	if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}, "ctrl+,"); cmd != nil {
+		_ = cmd()
+	}
+	if len(m.queueIDs) != 1 || m.queueIDs[0] != "a" || m.mode != modeNormal {
+		t.Fatalf("^, from Tracks adds the Search pick: queue=%v mode=%v", m.queueIDs, m.mode)
+	}
+	// Ctrl+↓ moves the Search highlight, Ctrl+. adds that song and starts it.
+	m.handleNormalKey(tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl}, "ctrl+down")
+	if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl}, "ctrl+."); cmd != nil {
+		_ = cmd()
+	}
+	if len(m.queueIDs) != 2 || m.queueIDs[1] != "b" || mp.setQueueAtStart != "b" {
+		t.Fatalf("^. from Tracks adds and plays the Search pick: queue=%v start=%q", m.queueIDs, mp.setQueueAtStart)
+	}
+}
+
 func TestHandleSearchKey_CtrlComma_DoesNotCallSetQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)

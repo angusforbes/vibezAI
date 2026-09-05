@@ -2075,10 +2075,11 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	// remove it, K/J move it (see queue_nav.go). Everything else falls through.
 	if m.activePanel < 0 && !m.debugView {
 		switch k {
-		case "ctrl+up", "ctrl+down", "ctrl+shift+up", "ctrl+shift+down", "ctrl+right", "ctrl+left", "ctrl+/", "ctrl+_":
-			// The Ctrl+arrows drive the Search list from here too, and Ctrl+/
-			// cycles its source, with the meanings they have in Search, so
-			// both columns can be worked without changing columns.
+		case "ctrl+up", "ctrl+down", "ctrl+shift+up", "ctrl+shift+down", "ctrl+right", "ctrl+left", "ctrl+/", "ctrl+_", "ctrl+,", "ctrl+.":
+			// The Ctrl+arrows drive the Search list from here too, Ctrl+/
+			// cycles its source and Ctrl+, / Ctrl+. add from it, with the
+			// meanings they have in Search, so both columns can be worked
+			// without changing columns.
 			m.lastKey = ""
 			return m.handleSearchKey(k, msg)
 		}
@@ -3942,6 +3943,8 @@ func (m *Model) statusPlayParts() []string {
 		accent.Render("^↑/↓") + muted.Render(" search pick"),
 		accent.Render("^⇧↑/↓") + muted.Render(" search select"),
 		accent.Render("^→/^←") + muted.Render(" search toggle/clear"),
+		accent.Render("^,") + muted.Render(" add from search"),
+		accent.Render("^.") + muted.Render(" add & play from search"),
 		accent.Render("^/") + muted.Render(" "+m.nextSourceLabel()),
 	}
 	if m.discovery.enabled {
