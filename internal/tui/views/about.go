@@ -52,7 +52,7 @@ func (a *AboutModel) View() string {
 	sb.WriteString(muted.Render(strings.Repeat("─", 5)) + "\n\n")
 
 	contentLines := []string{
-		primary.Render("vibez ♪"),
+		primary.Render("vibezAI ♪"),
 		muted.Render(fmt.Sprintf("version %s", version.Version)),
 		"",
 		normal.Render("Apple Music in your terminal."),

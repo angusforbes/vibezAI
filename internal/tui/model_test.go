@@ -839,7 +839,7 @@ func TestHandleSearchKey_ShiftEnter_NeverQueuesTheSameTrackTwice(t *testing.T) {
 	if len(mp.appendQueueIDs) != 1 || len(m.queueIDs) != 1 || m.queueIDs[0] != "111" {
 		t.Fatalf("expected a single append of 111, got appends=%v queue=%v", mp.appendQueueIDs, m.queueIDs)
 	}
-	if !strings.Contains(m.errMsg, "Already in the queue") || m.queueCursor != 0 {
+	if !strings.Contains(m.errMsg, "Already in Tracks") || m.queueCursor != 0 {
 		t.Fatalf("the duplicate press should highlight the queued copy and say so, got %q cursor=%d", m.errMsg, m.queueCursor)
 	}
 
@@ -2979,13 +2979,13 @@ func TestQueuePanelLines_Empty(t *testing.T) {
 	}
 	found := false
 	for _, l := range lines {
-		if strings.Contains(l, "empty") || strings.Contains(l, "Queue") {
+		if strings.Contains(l, "No tracks yet") || strings.Contains(l, "Tracks") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("queuePanelLines should contain 'Queue' header or 'empty' message")
+		t.Error("queuePanelLines should contain the 'Tracks' header or the 'No tracks yet' message")
 	}
 }
 
@@ -3857,7 +3857,7 @@ func TestSearchFooter_ListsEnterShiftEnterTab(t *testing.T) {
 	m.mode = modeSearch
 	lines := m.statusLines(200)
 	joined := strings.Join(lines, " ")
-	for _, want := range []string{"Enter", "add & play", "⇧Enter", "Tab", "back to queue"} {
+	for _, want := range []string{"Enter", "add & play", "⇧Enter", "Tab", "back to tracks"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("search footer should mention %q: %q", want, joined)
 		}
@@ -3940,8 +3940,8 @@ func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 		t.Fatalf("query = %q, want chill", m.searchQuery)
 	}
 	footer := strings.Join(m.statusLines(200), " ")
-	if !strings.Contains(footer, "VIBES") || !strings.Contains(footer, "find songs") {
-		t.Fatalf("footer should announce vibes mode and Enter = find songs: %q", footer)
+	if !strings.Contains(footer, "SEARCH") || strings.Contains(footer, "VIBES") || !strings.Contains(footer, "find songs") {
+		t.Fatalf("footer keeps the SEARCH label in vibes mode and says Enter = find songs: %q", footer)
 	}
 	// Back to regular search: the text is looked up the regular way.
 	if cmd := m.handleSearchKey("ctrl+_", tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}); cmd == nil || m.searchVibe {
@@ -4268,13 +4268,13 @@ func TestSearchFooter_LongQueryKeepsCursorAndHints(t *testing.T) {
 	if lipgloss.Width(lines[0]) > 90 {
 		t.Fatalf("footer must fit the width, got %d: %q", lipgloss.Width(lines[0]), plain)
 	}
-	if !strings.Contains(plain, "…") || !strings.Contains(plain, "█") || !strings.Contains(plain, "back to queue") {
+	if !strings.Contains(plain, "…") || !strings.Contains(plain, "█") || !strings.Contains(plain, "back to tracks") {
 		t.Fatalf("a long query is cut on the left, keeping the cursor and the hints: %q", plain)
 	}
 	// Cursor in the middle: the window follows it.
 	m.searchCursor = 10
 	plain = ansi.Strip(m.statusNavLines(90)[0])
-	if !strings.Contains(plain, "long vibe █desc") || !strings.Contains(plain, "…   Enter") {
+	if !strings.Contains(plain, "long vibe █") || !strings.Contains(plain, "…   Enter") {
 		t.Fatalf("the window should show the text around the cursor and mark the cut on the right: %q", plain)
 	}
 }

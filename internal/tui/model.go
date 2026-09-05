@@ -246,9 +246,12 @@ type searchCollectionTracksMsg struct {
 	err      error
 }
 
+// introLogo is the name typed out on the splash.
+const introLogo = "♪ vibezAI"
+
 // introFrames: logo types out letter-by-letter, then holds for 8 frames.
 var introFrames = func() []string {
-	logo := "♪ vibez"
+	logo := introLogo
 	runes := []rune(logo)
 	frames := make([]string, 0, len(runes)+16)
 	for i := range runes {
@@ -1392,7 +1395,7 @@ type cmdEntry struct {
 
 // allCommands is the master list shown in the command palette.
 var allCommands = []cmdEntry{
-	{"save", "save <name>", "Save queue as a playlist in Apple Music"},
+	{"save", "save <name>", "Save the tracks as a playlist in Apple Music"},
 	{"seek", "seek <seconds>", "Jump to a position in the current song"},
 	{"discover", "discover <n>|auto|stop|metric", "Queue n discovered songs now, auto-discover until stopped, or pick the similarity"},
 	{"vol", "vol <0-100|+n|-n>", "Set, raise, or lower volume (e.g. vol 80, vol +10, vol -5)"},
@@ -3018,7 +3021,7 @@ func (m *Model) playNextCmd(label string, tracks []provider.Track, ids []string)
 			if idx := m.queueIndexOf(ids[0]); idx >= 0 {
 				m.setQueueCursor(idx)
 			}
-			m.errMsg = "ℹ Already in the queue: " + label
+			m.errMsg = "ℹ Already in Tracks: " + label
 			m.errExpiry = time.Now().Add(3 * time.Second)
 			return nil
 		}
@@ -3213,7 +3216,7 @@ func (m *Model) renderIntro() string {
 	}
 
 	var subtitle string
-	if m.introStep >= len("♪ vibez") {
+	if m.introStep >= len([]rune(introLogo))+2 { // two hold frames after the last letter
 		statusText := m.initStatus
 		if statusText == "" {
 			statusText = "connecting…"
@@ -3478,13 +3481,13 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 func (m *Model) queuePanelLines(w, h int) []string {
 	total := len(m.queue.m.Tracks())
 
-	// Header: "Queue  12 tracks"
+	// Header: "Tracks  12 songs"
 	var headerLabel string
 	if total > 0 {
-		countStr := styles.QueueItemMuted.Render(fmt.Sprintf("  %d tracks", total))
-		headerLabel = m.panelTitle("Queue", m.queueFocused()) + countStr
+		countStr := styles.QueueItemMuted.Render(fmt.Sprintf("  %d songs", total))
+		headerLabel = m.panelTitle("Tracks", m.queueFocused()) + countStr
 	} else {
-		headerLabel = m.panelTitle("Queue", m.queueFocused())
+		headerLabel = m.panelTitle("Tracks", m.queueFocused())
 	}
 	sep := styles.QueueItemMuted.Render(strings.Repeat("─", 5))
 
@@ -3515,7 +3518,7 @@ func (m *Model) queuePanelLines(w, h int) []string {
 		}
 	}
 	if len(trackLines) == 0 {
-		trackLines = []string{styles.QueueItemMuted.Render("  Queue is empty")}
+		trackLines = []string{styles.QueueItemMuted.Render("  No tracks yet")}
 	}
 
 	// header + sep occupy 2 lines; remaining rows hold track entries.
@@ -3547,16 +3550,18 @@ func (m *Model) statusNavLines(w int) []string {
 
 	switch m.mode {
 	case modeSearch:
-		label, glyph, toggle := "SEARCH", "AM ", accent.Render("^/")+muted.Render(" vibes")
+		// The mode label is SEARCH for both prompts; the prompt glyph and the
+		// panel header say whether Apple Music or Claude Code is answering.
+		label, glyph, toggle := "SEARCH", "AM ", accent.Render("^/")+muted.Render(" claude")
 		if m.searchVibe {
-			label, glyph, toggle = "VIBES", "CC ", accent.Render("^/")+muted.Render(" search")
+			glyph, toggle = "CC ", accent.Render("^/")+muted.Render(" apple music")
 		}
 		action := accent.Render("Enter") + muted.Render(" add & play") + "  " + accent.Render("⇧Enter") + muted.Render(" add")
 		if m.searchVibe && m.searchQuery != m.vibeShown {
 			action = accent.Render("Enter") + muted.Render(" find songs")
 		}
 		head := styles.ModeSearch.Render(label) + "  " + accent.Render(glyph)
-		tail := "   " + action + "  " + toggle + "  " + accent.Render("Tab") + muted.Render(" back to queue")
+		tail := "   " + action + "  " + toggle + "  " + accent.Render("Tab") + muted.Render(" back to tracks")
 		// The footer is one row: show the part of the query around the cursor
 		// that fits between the label and the hints, marking what is cut.
 		runes := []rune(m.searchQuery)
@@ -3617,7 +3622,7 @@ func (m *Model) statusNavLines(w int) []string {
 			}
 		default:
 			parts = []string{
-				styles.ModeNormal.Render("NORMAL"),
+				styles.ModeNormal.Render("TRACKS"),
 				accent.Render(":") + muted.Render(" command"),
 				accent.Render("Tab") + muted.Render(" search"),
 				accent.Render("y") + muted.Render(" lyrics"),

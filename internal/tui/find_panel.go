@@ -134,7 +134,7 @@ func (m *Model) addToQueue(label string, tracks []provider.Track, ids []string) 
 		if idx := m.queueIndexOf(ids[0]); idx >= 0 {
 			m.setQueueCursor(idx)
 		}
-		m.errMsg = "ℹ Already in the queue: " + label
+		m.errMsg = "ℹ Already in Tracks: " + label
 		m.errExpiry = time.Now().Add(3 * time.Second)
 		return nil
 	}
