@@ -386,8 +386,7 @@ type Model struct {
 	searchCC *views.SearchModel // Claude Code (vibes) results
 
 	// Command accumulation (mode == modeCommand)
-	cmdBuf     string
-	cmdSuggIdx int // currently highlighted suggestion (0-based)
+	cmdBuf string
 
 	// Double-key tracking (for 'gg')
 	lastKey string
@@ -1396,14 +1395,15 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 
 // ── Command palette ───────────────────────────────────────────────────────
 
-// cmdEntry describes a single command shown in the command palette.
+// cmdEntry describes a single command listed in the CMD footer.
 type cmdEntry struct {
 	trigger     string // prefix matched against cmdBuf
 	usage       string // full usage shown to the user
 	description string
 }
 
-// allCommands is the master list shown in the command palette.
+// allCommands is the master list: the CMD footer shows it and Tab completes
+// from it, so the two can never disagree.
 var allCommands = []cmdEntry{
 	{"save", "save <name>", "Save the tracks as a playlist in Apple Music"},
 	{"seek", "seek <seconds>", "Jump to a position in the current song"},
@@ -1419,8 +1419,7 @@ var allCommands = []cmdEntry{
 	{"about", "about", "Show information about vibez"},
 	{"donate", "donate", "Support vibez development by donating"},
 	{"debug-logs", "debug-logs", "Toggle debug log panel"},
-	{"q", "q", "Quit vibez"},
-	{"quit", "quit", "Quit vibez"},
+	{"q", "q", "Quit (:quit works too)"},
 }
 
 // commandSuggestions returns commands whose trigger starts with the current
@@ -1441,46 +1440,29 @@ func (m *Model) handleCommandKey(k string) tea.Cmd {
 	case "esc":
 		m.mode = modeNormal
 		m.cmdBuf = ""
-		m.cmdSuggIdx = 0
 	case "enter":
 		cmd := m.cmdBuf
 		m.cmdBuf = ""
-		m.cmdSuggIdx = 0
 		m.mode = modeNormal
 		return m.executeCommand(cmd)
 	case "tab":
-		suggs := m.commandSuggestions()
-		if len(suggs) > 0 {
-			if m.cmdSuggIdx >= len(suggs) {
-				m.cmdSuggIdx = len(suggs) - 1
-			}
-			m.cmdBuf = suggs[m.cmdSuggIdx].usage
+		// Complete to the first command matching what is typed, keeping the
+		// trailing space when the command takes an argument.
+		if suggs := m.commandSuggestions(); len(suggs) > 0 {
+			m.cmdBuf = suggs[0].usage
 			if idx := strings.Index(m.cmdBuf, " <"); idx >= 0 {
 				m.cmdBuf = m.cmdBuf[:idx+1]
 			}
 		}
-	case "up", "ctrl+p":
-		suggs := m.commandSuggestions()
-		if len(suggs) > 0 {
-			m.cmdSuggIdx = max(0, min(len(suggs)-1, m.cmdSuggIdx)-1)
-		}
-	case "down", "ctrl+n":
-		suggs := m.commandSuggestions()
-		if len(suggs) > 0 {
-			m.cmdSuggIdx = min(len(suggs)-1, m.cmdSuggIdx+1)
-		}
 	case "backspace":
 		if len(m.cmdBuf) > 0 {
 			m.cmdBuf = m.cmdBuf[:len(m.cmdBuf)-1]
-			m.cmdSuggIdx = 0
 		}
 	case "space":
 		m.cmdBuf += " "
-		m.cmdSuggIdx = 0
 	default:
 		if len(k) == 1 && k[0] >= 32 {
 			m.cmdBuf += k
-			m.cmdSuggIdx = 0
 		}
 	}
 	return nil
@@ -3307,7 +3289,7 @@ func (m *Model) renderBoxLayout() string {
 	feedActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.feedP
 	eqActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.eqP
 	aboutActive := m.activePanel >= 0 && m.panels[m.activePanel] == m.aboutP
-	fullWidth := lyricsActive || feedActive || eqActive || aboutActive || m.mode == modeCommand || m.debugView
+	fullWidth := lyricsActive || feedActive || eqActive || aboutActive || m.debugView
 
 	var sb strings.Builder
 
@@ -3330,10 +3312,6 @@ func (m *Model) renderBoxLayout() string {
 	switch {
 	case m.debugView:
 		for _, line := range m.debugLogLines(inner-2, panelH) {
-			sb.WriteString("│ " + padRight(line, inner-2) + " │\n")
-		}
-	case m.mode == modeCommand:
-		for _, line := range m.commandLines(inner-2, panelH) {
 			sb.WriteString("│ " + padRight(line, inner-2) + " │\n")
 		}
 	case lyricsActive:
@@ -3773,10 +3751,11 @@ func (m *Model) statusNavLines(w int) []string {
 		parts = append(parts, toggle, accent.Render("Tab")+muted.Render(" tracks"))
 		return wrapFit(parts, dot, w)
 	case modeCommand:
-		// Every command, always listed, like the SEARCH row lists every key;
-		// the palette in the panel area adds usage and descriptions for what
-		// matches the typed prefix. The buffer is windowed like the search
-		// query so a long `:save <name>` keeps its cursor on the row.
+		// The one place commands are listed: every command, always, like the
+		// SEARCH row lists every key. Type one and press Enter; Tab completes
+		// the first command matching what is typed. The buffer is windowed
+		// like the search query so a long `:save <name>` keeps its cursor on
+		// the row. The split stays on screen underneath.
 		label := styles.ModeCommand.Render("CMD") + "  " + muted.Render(":")
 		runes := []rune(m.cmdBuf)
 		shown, _, cutLeft, _ := queryWindow(runes, len(runes), max(8, w-lipgloss.Width(label)-1))
@@ -3786,14 +3765,11 @@ func (m *Model) statusNavLines(w int) []string {
 		}
 		parts := []string{label + buf + accent.Render("_")}
 		for _, c := range allCommands {
-			if c.trigger == "quit" {
-				continue // alias of :q; one entry keeps the row short
-			}
 			parts = append(parts, accent.Render(":"+c.trigger))
 		}
 		parts = append(parts,
+			accent.Render("Enter")+muted.Render(" run"),
 			accent.Render("Tab")+muted.Render(" complete"),
-			accent.Render("↑/↓")+muted.Render(" navigate"),
 			accent.Render("Esc")+muted.Render(" cancel"),
 		)
 		return wrapFit(parts, dot, w)
@@ -3897,39 +3873,6 @@ func (m *Model) statusPlayParts() []string {
 		parts = append(parts, accent.Render(":radio")+styles.Playing.Render(" 📻 on"))
 	}
 	return parts
-}
-
-// commandLines renders the command palette in the panel area when CMD mode is active.
-func (m *Model) commandLines(_ int, h int) []string {
-	muted := styles.QueueItemMuted
-	accent := styles.KeyName
-	header := accent.Render("Commands")
-	sep := muted.Render(strings.Repeat("─", 8))
-
-	suggs := m.commandSuggestions()
-	var rows []string
-	for i, c := range suggs {
-		cursor := "  "
-		nameStyle := styles.QueueItem
-		descStyle := muted
-		if i == m.cmdSuggIdx {
-			cursor = styles.Playing.Render("▶ ")
-			nameStyle = styles.Playing
-			descStyle = styles.QueueItem
-		}
-		usage := nameStyle.Render(fmt.Sprintf("%-20s", c.usage))
-		desc := descStyle.Render(c.description)
-		rows = append(rows, cursor+usage+" "+desc)
-	}
-	if len(rows) == 0 {
-		rows = []string{"  " + muted.Render("no matching commands")}
-	}
-
-	result := append([]string{"", header, sep, ""}, rows...)
-	for len(result) < h {
-		result = append(result, "")
-	}
-	return result[:h]
 }
 
 // statusLines returns every status row — nav hints then playback controls —

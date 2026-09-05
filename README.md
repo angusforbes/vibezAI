@@ -109,6 +109,8 @@ Albums and playlists are expanded to their songs when added. An item already in 
 
 ### Command mode (`:`)
 
+Typing `:` keeps both columns on screen. The footer lists every command; type one and press `Enter`. `Tab` completes the first match, `esc` cancels.
+
 | Command | Description |
 |---------|-------------|
 | `:model <fable\|sonnet\|haiku\|default\|id>` | Model Claude Code uses for `CC` lookups; bare `:model` shows the current one |

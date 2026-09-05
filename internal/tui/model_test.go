@@ -2036,45 +2036,6 @@ func TestHandleCommandKey_Tab_CompletesSuggestion(t *testing.T) {
 	}
 }
 
-func TestHandleCommandKey_Up_DecreaseSuggIdx(t *testing.T) {
-	m := newModel(nil)
-	m.cmdBuf = "sa"
-	m.cmdSuggIdx = 1
-	m.handleCommandKey("up")
-	if m.cmdSuggIdx != 0 {
-		t.Errorf("up should decrease suggIdx, got %d", m.cmdSuggIdx)
-	}
-}
-
-func TestHandleCommandKey_Down_IncreaseSuggIdx(t *testing.T) {
-	m := newModel(nil)
-	m.cmdBuf = "sa"
-	m.cmdSuggIdx = 0
-	m.handleCommandKey("down")
-	// Should increase if there are suggestions.
-	if m.cmdSuggIdx < 0 {
-		t.Error("down should not set suggIdx negative")
-	}
-}
-
-func TestHandleCommandKey_CtrlP_DecreaseSuggIdx(t *testing.T) {
-	m := newModel(nil)
-	m.cmdBuf = "sa"
-	m.cmdSuggIdx = 1
-	m.handleCommandKey("ctrl+p")
-	if m.cmdSuggIdx != 0 {
-		t.Errorf("ctrl+p should decrease suggIdx, got %d", m.cmdSuggIdx)
-	}
-}
-
-func TestHandleCommandKey_CtrlN_IncreaseSuggIdx(t *testing.T) {
-	m := newModel(nil)
-	m.cmdBuf = "sa"
-	m.cmdSuggIdx = 0
-	m.handleCommandKey("ctrl+n")
-	// Just verify no panic.
-}
-
 func TestHandleCommandKey_Enter_ExecutesCommand(t *testing.T) {
 	m := newModel(nil)
 	m.mode = modeCommand
@@ -2740,26 +2701,6 @@ func TestSearchLines_Empty(t *testing.T) {
 	lines := m.searchFindLines(45, 10)
 	if len(lines) != 10 {
 		t.Errorf("searchFindLines(empty) returned %d lines, want 10", len(lines))
-	}
-}
-
-func TestCommandLines_WithSuggestions(t *testing.T) {
-	m := newModel(nil)
-	m.mode = modeCommand
-	m.cmdBuf = "sa"
-	lines := m.commandLines(76, 10)
-	if len(lines) != 10 {
-		t.Errorf("commandLines returned %d lines, want 10", len(lines))
-	}
-}
-
-func TestCommandLines_Empty(t *testing.T) {
-	m := newModel(nil)
-	m.mode = modeCommand
-	m.cmdBuf = ""
-	lines := m.commandLines(76, 10)
-	if len(lines) != 10 {
-		t.Errorf("commandLines(empty) returned %d lines, want 10", len(lines))
 	}
 }
 
@@ -4331,14 +4272,11 @@ func TestCommandFooter_ListsEveryCommand(t *testing.T) {
 		t.Fatalf("the row opens with the mode chip and the typed command: %q", plain)
 	}
 	for _, c := range allCommands {
-		if c.trigger == "quit" {
-			continue // alias of :q, deliberately not repeated
-		}
 		if !strings.Contains(plain, ":"+c.trigger) {
 			t.Fatalf("the CMD row lists every command, always; %q is missing from %q", ":"+c.trigger, plain)
 		}
 	}
-	for _, hint := range []string{"Tab complete", "↑/↓ navigate", "Esc cancel"} {
+	for _, hint := range []string{"Enter run", "Tab complete", "Esc cancel"} {
 		if !strings.Contains(plain, hint) {
 			t.Fatalf("the editing keys stay listed; %q is missing from %q", hint, plain)
 		}
@@ -4352,6 +4290,29 @@ func TestCommandFooter_ListsEveryCommand(t *testing.T) {
 	plain = ansi.Strip(m.statusNavLines(90)[0])
 	if !strings.Contains(plain, ":…") || !strings.Contains(plain, "summer _") {
 		t.Fatalf("a long command is cut on the left, keeping the cursor: %q", plain)
+	}
+}
+
+func TestCommandMode_KeepsTheSplitOnScreen(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.introStep = introDone // skip startup animation
+	m.mode = modeCommand
+	m.cmdBuf = "vo"
+	view := ansi.Strip(m.View().Content)
+	if !strings.Contains(view, "┬") {
+		t.Fatalf("typing a command keeps the Tracks/Search split on screen:\n%s", view)
+	}
+	if strings.Contains(view, "Commands") {
+		t.Fatalf("there is no command panel any more:\n%s", view)
+	}
+	if !strings.Contains(view, ":save") || !strings.Contains(view, ":vo_") {
+		t.Fatalf("the footer lists the commands and the typed one:\n%s", view)
+	}
+	// Tab completes the first match; there is no cursor to move.
+	m.handleCommandKey("tab")
+	if m.cmdBuf != "vol " {
+		t.Fatalf("Tab completes vo → 'vol ', got %q", m.cmdBuf)
 	}
 }
 
