@@ -15,7 +15,7 @@
   <a href="https://github.com/angusforbes/vibezAI/blob/main/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/angusforbes/vibezAI?style=flat-square" alt="Go version"></a>
 </p>
 
-[What it is](#what-it-is) · [Searching with Claude Code](#searching-with-claude-code) · [Key bindings](#key-bindings) · [Installation](#installation) · [Configuration](#configuration) · [How it differs from vibez](#how-it-differs-from-vibez)
+[What it is](#what-it-is) · [Searching with Claude Code](#searching-with-claude-code) · [Saved lists](#saved-lists) · [Key bindings](#key-bindings) · [Installation](#installation) · [Configuration](#configuration) · [How it differs from vibez](#how-it-differs-from-vibez)
 
 ---
 
@@ -65,6 +65,12 @@ A lookup is two CLI calls, about seven seconds each with Fable 5.1 and roughly a
 
 Results, songs as well as whole albums and playlists, can be marked with `Ctrl+↑/↓` sweeps and `Ctrl+→` toggles and then added together with `Ctrl+,` or `Ctrl+.`.
 
+## Saved lists
+
+`:save road trip` keeps the Tracks panel as a list called "road trip". A bare `:save` names it for you, as in `2026-09-05_13-10_late night jazz`: the date and time, then two to four words Claude Code picks from the songs (without the CLI, the artist or genre that dominates them). Lists are plain files in `~/.config/vibez/tracklists/`, in the same format as `queue.json`, and the Tracks you had when you last quit are kept there too, as `last session`.
+
+To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `SV`. Every list is a header with its size, `last session` first, then the newest saves. `Enter` opens one to all of its songs. `Ctrl+,` on the header adds the whole list to Tracks, on a song just that song, and `Ctrl+→` marks a header so a whole list joins a multi-selection. Adding never starts playback: with nothing playing, `space` starts what you have built. `Ctrl+Delete` on a header deletes the list, from disk and from the panel. Nothing here replaces Tracks; to start over from a list, clear Tracks with `c` first.
+
 ## Key bindings
 
 ### Tracks (left column)
@@ -102,7 +108,7 @@ Results, songs as well as whole albums and playlists, can be marked with `Ctrl+�
 | `ctrl+→` | Toggle the highlighted item in or out of the selection |
 | `ctrl+←` | Clear the selection; pressed again before anything changes, bring it back |
 | `ctrl+delete` | `SV`: delete the highlighted list, from disk and from the panel |
-| `ctrl+,` | Add the selection, or the highlighted item, to Tracks |
+| `ctrl+,` | Add the selection, or the highlighted item, to Tracks; never starts playback (with nothing playing, `space` starts the list) |
 | `ctrl+.` | The same, and start the first song |
 | `Tab` / `esc` | Move the keys back to Tracks |
 
@@ -110,7 +116,7 @@ Albums and playlists are expanded to their songs when added. An item already in 
 
 ### Command mode (`:`)
 
-Typing `:` keeps both columns on screen and swaps the footer for the command list alone; type one and press `Enter`. `Tab` completes the first match, `esc` cancels.
+Typing `:` keeps both columns on screen and swaps the footer for the command list alone, each command with what it takes; type one and press `Enter`. `Tab` completes the first match, `esc` cancels.
 
 | Command | Description |
 |---------|-------------|
@@ -119,6 +125,7 @@ Typing `:` keeps both columns on screen and swaps the footer for the command lis
 | `:save [name]` | Save Tracks as a named list in `~/.config/vibez/tracklists/`; the lists appear in Search under `SV`. Without a name the list is dated and named after its songs by Claude Code (from the artists and genres when the CLI is not there) |
 | `:quality <high\|standard\|256\|64>` | AAC bitrate |
 | `:debug-logs` | Toggle the debug log, where Claude's terms and rankings are recorded |
+| `:about` / `:donate` | About the app / support the original author |
 | `:q` / `:quit` | Quit |
 
 ## Installation
@@ -156,7 +163,7 @@ Pass `--no-update`: the self-updater would replace this fork with the upstream r
 | `album_art` | Album-art view on start |
 | `wsl` | Audio workarounds for WSL2 |
 
-Tracks are saved to `~/.config/vibez/queue.json` after every change and restored on the next start without auto-playing.
+Tracks are saved to `~/.config/vibez/queue.json` after every change and restored on the next start without auto-playing; at launch that list is also kept as the saved list `last session`. Named lists live in `~/.config/vibez/tracklists/`, one JSON file each.
 
 ## How it differs from vibez
 
@@ -171,7 +178,8 @@ vibezAI started from vibez 0.7.0. The engines, themes, equalizer, discovery and 
 | Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+↑/↓` and `ctrl+→`, albums and playlists included |
 | Related songs | Continuous radio | `R` inserts five related songs once |
 | Library | Browser panel | `T` (shift+t) inserts five random library songs; the library is searched as part of every search |
-| Footer | Changes with the mode | One fixed list per column |
+| Saved lists | — | `:save [name]` keeps Tracks as a list, named by Claude Code when no name is given; Search offers the lists under `SV`, whole or song by song; `ctrl+delete` removes one |
+| Footer | Changes with the mode | One fixed list per column; `:` swaps it for the command list |
 | Model choice | — | `:model`, `:effort`, config keys |
 | Name | vibez | vibezAI (binary, MPRIS identity, splash and About) |
 
@@ -201,6 +209,7 @@ vibezAI/
 │   │   ├── model.go        # Bubble Tea model, key handling, footers
 │   │   ├── find_panel.go   # Search column: prompts, wrapping input
 │   │   ├── queue_*.go      # Tracks navigation, related songs, library picks
+│   │   ├── tracklists.go   # :save, automatic names, the saved-lists source
 │   │   └── views/          # search sections + multi-select, now playing, lyrics, about
 │   └── vibe/               # Planner + Reranker: Claude Code CLI, keyword fallback
 └── pkg-config/             # webkit2gtk shim for building on Arch
