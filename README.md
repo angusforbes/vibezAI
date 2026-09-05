@@ -95,7 +95,7 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `Tab` | Move the keys to Search |
 | `ctrl+'` | Move the keys to Search and start typing into the `AM` or `CC` prompt |
 | `:` | Command mode |
-| `y` / `F` / `e` / `?` | Lyrics / feed / equalizer / about |
+| `y` / `F` / `e` / `?` | Lyrics / feed / equalizer / about; `Tab`, `esc` or the same key again closes the panel and returns to the column you came from |
 
 ### Search (right column)
 

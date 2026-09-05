@@ -2211,13 +2211,21 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		}
 	}
 
-	// Forward remaining keys to other active panels (e.g. library).
+	// Forward remaining keys to other active panels (e.g. library). Esc steps
+	// back inside a panel that has somewhere to go, else closes it; Tab, like
+	// the panel's own key, closes it. Closing returns to the column that had
+	// the keys, since the mode was left as it was when the panel opened.
 	if m.activePanel >= 0 {
-		if k == "esc" {
+		switch k {
+		case "esc":
 			if m.panels[m.activePanel].Back() {
 				m.lastKey = ""
 				return nil
 			}
+			m.activePanel = -1
+			m.lastKey = ""
+			return nil
+		case "tab", "shift+tab":
 			m.activePanel = -1
 			m.lastKey = ""
 			return nil

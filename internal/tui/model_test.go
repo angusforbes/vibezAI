@@ -1174,6 +1174,53 @@ func TestSearchBrowsing_TracksKeysWorkButAreNotListed(t *testing.T) {
 	}
 }
 
+func TestPanels_TabEscOrOwnKeyReturnToThePreviousColumn(t *testing.T) {
+	m := newModel(newMockPlayer())
+	press := func(k string) {
+		msg := tea.KeyPressMsg{Code: rune(k[0]), Text: k}
+		if k == "tab" {
+			msg = tea.KeyPressMsg{Code: tea.KeyTab}
+		} else if k == "esc" {
+			msg = tea.KeyPressMsg{Code: tea.KeyEsc}
+		}
+		if m.mode == modeSearch {
+			m.handleSearchKey(k, msg)
+		} else {
+			m.handleNormalKey(msg, k)
+		}
+	}
+	// Lyrics from Tracks: Tab closes it and Tracks has the keys again.
+	press("y")
+	if m.activePanel < 0 || m.panels[m.activePanel] != m.lyricsP {
+		t.Fatalf("y opens lyrics, got panel %d", m.activePanel)
+	}
+	press("tab")
+	if m.activePanel >= 0 || m.mode != modeNormal {
+		t.Fatalf("Tab closes the panel and returns to Tracks: panel=%d mode=%v", m.activePanel, m.mode)
+	}
+	// The same key again closes it too.
+	press("y")
+	press("y")
+	if m.activePanel >= 0 || m.mode != modeNormal {
+		t.Fatalf("y again closes lyrics: panel=%d mode=%v", m.activePanel, m.mode)
+	}
+	// Equalizer from Search: Esc and Tab both return to Search.
+	m.mode = modeSearch
+	press("e")
+	if m.activePanel < 0 || m.panels[m.activePanel] != m.eqP {
+		t.Fatalf("e opens the equalizer from Search, got panel %d", m.activePanel)
+	}
+	press("esc")
+	if m.activePanel >= 0 || m.mode != modeSearch {
+		t.Fatalf("Esc closes it and returns to Search: panel=%d mode=%v", m.activePanel, m.mode)
+	}
+	press("e")
+	press("tab")
+	if m.activePanel >= 0 || m.mode != modeSearch {
+		t.Fatalf("Tab closes it and returns to Search: panel=%d mode=%v", m.activePanel, m.mode)
+	}
+}
+
 func TestHandleSearchKey_CtrlComma_DoesNotCallSetQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
