@@ -1400,7 +1400,8 @@ type cmdEntry struct {
 // allCommands is the master list: the CMD footer shows it and Tab completes
 // from it, so the two can never disagree.
 var allCommands = []cmdEntry{
-	{"save", "save <name>", "Save the tracks as a playlist in Apple Music"},
+	{"save", "save <name>", "Save Tracks as a named list"},
+	{"load", "load <name>", "Replace Tracks with a saved list; bare :load names the lists"},
 	{"quality", "quality <high|standard|256|64>", "Set Apple Music AAC bitrate"},
 	{"model", "model <fable|sonnet|haiku|default|id>", "Model Claude Code uses for CC lookups; bare :model shows the current one"},
 	{"effort", "effort <low|medium|high|xhigh|max|default>", "Effort Claude Code spends on CC lookups"},
@@ -1609,15 +1610,21 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 			return saveAudioQualityMsg{kbps: kbps}
 		}
 
-	case strings.HasPrefix(cmd, "save "), strings.HasPrefix(cmd, "save-playlist "):
-		name := cmd
-		for _, prefix := range []string{"save-playlist ", "save "} {
-			name = strings.TrimPrefix(name, prefix)
+	case cmd == "save" || strings.HasPrefix(cmd, "save "):
+		return m.saveTrackList(strings.TrimPrefix(cmd, "save"))
+
+	case cmd == "load" || strings.HasPrefix(cmd, "load "):
+		if arg := strings.TrimSpace(strings.TrimPrefix(cmd, "load")); arg != "" {
+			return m.loadTrackList(arg)
 		}
-		name = strings.TrimSpace(name)
+		m.listTrackLists()
+		return nil
+
+	case strings.HasPrefix(cmd, "save-playlist "):
+		// Unlisted: the Tracks panel as a new playlist in Apple Music.
+		name := strings.TrimSpace(strings.TrimPrefix(cmd, "save-playlist "))
 		if name == "" {
-			m.errMsg = ":save requires a playlist name"
-			m.errExpiry = time.Now().Add(3 * time.Second)
+			m.flashStatus(":save-playlist requires a playlist name", 3*time.Second)
 			return nil
 		}
 		ids := make([]string, len(m.queueTracks))

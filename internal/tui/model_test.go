@@ -2086,14 +2086,15 @@ func TestExecuteCommand_Save_NoName_SetsError(t *testing.T) {
 	}
 }
 
-func TestExecuteCommand_Save_WithName_CreatesPlaylist(t *testing.T) {
-	m := newModel(nil)
+func TestExecuteCommand_Save_IsALocalListNotAPlaylist(t *testing.T) {
+	m := newModel(nil) // no queue path: nowhere to write a list
 	m.queueTracks = []provider.Track{{Title: "T", ID: "1", CatalogID: "cat1"}}
-	cmd := m.executeCommand("save My Playlist")
-	if cmd == nil {
-		t.Error("save with valid name should return a cmd")
+	if cmd := m.executeCommand("save My Playlist"); cmd != nil {
+		t.Fatal(":save writes a local list synchronously; it never returns a provider command")
 	}
-	cmd() // should call CreatePlaylist on provider
+	if !strings.Contains(m.errMsg, "config directory") {
+		t.Fatalf("without a queue path :save says why it cannot save: %q", m.errMsg)
+	}
 }
 
 func TestExecuteCommand_SavePlaylist_WithName(t *testing.T) {

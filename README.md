@@ -115,7 +115,8 @@ Typing `:` keeps both columns on screen and swaps the footer for the command lis
 |---------|-------------|
 | `:model <fable\|sonnet\|haiku\|default\|id>` | Model Claude Code uses for `CC` lookups; bare `:model` shows the current one |
 | `:effort <low\|medium\|high\|xhigh\|max\|default>` | Effort for those lookups |
-| `:save <name>` | Save Tracks as an Apple Music playlist |
+| `:save <name>` | Save Tracks as a named list in `~/.config/vibez/tracklists/` |
+| `:load <name>` | Replace Tracks with a saved list; bare `:load` names the lists |
 | `:quality <high\|standard\|256\|64>` | AAC bitrate |
 | `:debug-logs` | Toggle the debug log, where Claude's terms and rankings are recorded |
 | `:q` / `:quit` | Quit |
@@ -164,7 +165,7 @@ vibezAI started from vibez 0.7.0. The engines, themes, equalizer, discovery and 
 | Area | vibez 0.7.0 | vibezAI |
 |------|-------------|---------|
 | Layout | Queue with a separate Queue panel, Library panel, Vibe panel and a header row | Two columns, Tracks and Search, and nothing else on screen |
-| Queue | In memory only | Tracks persist to `queue.json`; navigated in place with `↑/↓`, `enter`, `d`, `D`, `K/J`; never replaced by a search |
+| Queue | In memory only | Tracks persist to `queue.json`; navigated in place with `↑/↓`, `enter`, `d`, `D`, `K/J`; never replaced by a search; `:save` / `:load` keep named lists |
 | Search | Single flat result list, `enter` plays and replaces the queue | Sections (Playlists, Albums, Library, Tracks) with `+ 5 more` / `− 5 less`, foldable headers, paging through Apple's results, duplicates never added |
 | Vibe mode | `v` opens a prompt; a keyword table maps words to genres and dumps 15 shuffled songs into the queue | `CC` prompt inside Search; Claude Code plans the terms and ranks a pool of 40 candidates; results shown as a section headed by the model, nothing added until you say so |
 | Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+↑/↓` and `ctrl+→`, albums and playlists included |
