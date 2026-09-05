@@ -17,6 +17,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/simone-vibes/vibez/internal/config"
 	"github.com/simone-vibes/vibez/internal/player"
 	"github.com/simone-vibes/vibez/internal/provider"
@@ -4186,5 +4187,62 @@ func TestVibeLookup_RerankerOrdersThePool(t *testing.T) {
 	}
 	if v := m.search.View(); !strings.Contains(v, "ranking failed, search order") {
 		t.Fatalf("a failed ranking must be visible: %q", v)
+	}
+}
+
+func TestSearchFindLines_LongQueryWraps(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(20, 20)
+	m.searchQuery = strings.Repeat("abcdefghij", 5) // 50 runes, 18 fit per row
+	m.searchCursor = len(m.searchQuery)
+	lines := m.searchFindLines(20, 14)
+	var plain []string
+	for i, l := range lines {
+		if lipgloss.Width(l) > 20 {
+			t.Fatalf("row %d is wider than the column: %q", i, l)
+		}
+		plain = append(plain, ansi.Strip(l))
+	}
+	joined := strings.Join(plain[2:6], "")
+	joined = strings.ReplaceAll(strings.ReplaceAll(joined, " ", ""), "█", "")
+	if !strings.Contains(joined, m.searchQuery) {
+		t.Fatalf("the whole query should be readable across the wrapped rows, got %q", plain[2:6])
+	}
+	if !strings.HasPrefix(plain[2], "/ ") || !strings.HasPrefix(plain[3], "  ") || !strings.Contains(plain[4], "█") {
+		t.Fatalf("first row carries the prompt, continuation rows are indented, the cursor sits at the end: %q", plain[2:5])
+	}
+	// Too little height for every row: the rows ending at the cursor are kept.
+	lines = m.searchFindLines(20, 6) // header, underline, at most 2 input rows
+	plain = plain[:0]
+	for _, l := range lines {
+		plain = append(plain, ansi.Strip(l))
+	}
+	if !strings.Contains(plain[3], "█") || strings.Contains(plain[2], "abcdefghijabcdefgh") {
+		t.Fatalf("with two input rows the last ones (with the cursor) win: %q", plain[2:4])
+	}
+}
+
+func TestSearchFooter_LongQueryKeepsCursorAndHints(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.searchQuery = strings.Repeat("long vibe description ", 12)
+	m.searchCursor = len([]rune(m.searchQuery))
+	lines := m.statusNavLines(90)
+	if len(lines) != 1 {
+		t.Fatalf("the search footer stays one row, got %d", len(lines))
+	}
+	plain := ansi.Strip(lines[0])
+	if lipgloss.Width(lines[0]) > 90 {
+		t.Fatalf("footer must fit the width, got %d: %q", lipgloss.Width(lines[0]), plain)
+	}
+	if !strings.Contains(plain, "…") || !strings.Contains(plain, "█") || !strings.Contains(plain, "back to queue") {
+		t.Fatalf("a long query is cut on the left, keeping the cursor and the hints: %q", plain)
+	}
+	// Cursor in the middle: the window follows it.
+	m.searchCursor = 10
+	plain = ansi.Strip(m.statusNavLines(90)[0])
+	if !strings.Contains(plain, "long vibe █descri") || !strings.Contains(plain, "…   Enter") {
+		t.Fatalf("the window should show the text around the cursor and mark the cut on the right: %q", plain)
 	}
 }

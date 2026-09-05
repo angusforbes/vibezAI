@@ -41,8 +41,16 @@ type Planner interface {
 // table, "claude" the Claude Code CLI, anything else ("auto", "") means Claude
 // when the CLI is installed and the keyword table otherwise.
 //
-// model and effort are passed to the CLI as --model / --effort when set.
+// model and effort are passed to the CLI as --model / --effort. An empty
+// model means DefaultClaudeModel; "default" means the CLI's own default
+// (which an organisation policy may pin to another model).
 func NewPlanner(kind, model, effort string) Planner {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "":
+		model = DefaultClaudeModel
+	case "default", "cli":
+		model = ""
+	}
 	claude := &ClaudePlanner{Model: model, Effort: effort}
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "keywords", "keyword":
@@ -79,6 +87,10 @@ func (KeywordPlanner) Plan(_ context.Context, description string) (Plan, error) 
 	}
 	return Plan{Summary: summary, Queries: queries}, nil
 }
+
+// DefaultClaudeModel is the model vibes-mode lookups use unless the config
+// says otherwise: the same one the user's Claude launcher pins.
+const DefaultClaudeModel = "claude-fable-5-1"
 
 // ClaudePlanner asks Claude Code's command-line interface (`claude -p`) for
 // search terms, using the user's existing login; no API key is involved.

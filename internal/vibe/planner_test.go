@@ -152,3 +152,15 @@ func TestShortModel(t *testing.T) {
 		}
 	}
 }
+
+func TestNewPlanner_ModelDefaults(t *testing.T) {
+	if c := NewPlanner("claude", "", "").(*ClaudePlanner); c.Model != DefaultClaudeModel {
+		t.Fatalf("an empty model means %s, got %q", DefaultClaudeModel, c.Model)
+	}
+	if c := NewPlanner("claude", "default", "low").(*ClaudePlanner); c.Model != "" || c.Effort != "low" {
+		t.Fatalf("\"default\" leaves the CLI's model alone; got model=%q effort=%q", c.Model, c.Effort)
+	}
+	if c := NewPlanner("claude", "haiku", "").(*ClaudePlanner); c.Model != "haiku" {
+		t.Fatalf("an explicit model is kept, got %q", c.Model)
+	}
+}

@@ -3518,10 +3518,6 @@ func (m *Model) statusNavLines(w int) []string {
 
 	switch m.mode {
 	case modeSearch:
-		runes := []rune(m.searchQuery)
-		cur := min(m.searchCursor, len(runes))
-		before := styles.Header.Render(string(runes[:cur]))
-		after := styles.Header.Render(string(runes[cur:]))
 		label, glyph, toggle := "SEARCH", "/", accent.Render("^/")+muted.Render(" vibes")
 		if m.searchVibe {
 			label, glyph, toggle = "VIBES", "V ", accent.Render("^/")+muted.Render(" search")
@@ -3530,9 +3526,21 @@ func (m *Model) statusNavLines(w int) []string {
 		if m.searchVibe && m.searchQuery != m.vibeShown {
 			action = accent.Render("Enter") + muted.Render(" find songs")
 		}
-		return []string{styles.ModeSearch.Render(label) + "  " +
-			accent.Render(glyph) + before + accent.Render("█") + after + "   " +
-			action + "  " + toggle + "  " + accent.Render("Tab") + muted.Render(" back to queue")}
+		head := styles.ModeSearch.Render(label) + "  " + accent.Render(glyph)
+		tail := "   " + action + "  " + toggle + "  " + accent.Render("Tab") + muted.Render(" back to queue")
+		// The footer is one row: show the part of the query around the cursor
+		// that fits between the label and the hints, marking what is cut.
+		runes := []rune(m.searchQuery)
+		cur := min(m.searchCursor, len(runes))
+		shown, curIdx, cutLeft, cutRight := queryWindow(runes, cur, max(8, w-lipgloss.Width(head)-lipgloss.Width(tail)-1))
+		query := styles.Header.Render(string(shown[:curIdx])) + accent.Render("█") + styles.Header.Render(string(shown[curIdx:]))
+		if cutLeft {
+			query = muted.Render("…") + query
+		}
+		if cutRight {
+			query += muted.Render("…")
+		}
+		return []string{head + query + tail}
 	case modeCommand:
 		return []string{styles.ModeCommand.Render("CMD") + "  " +
 			muted.Render(":") + m.cmdBuf + accent.Render("_") +
@@ -3698,6 +3706,29 @@ func padRight(s string, w int) string {
 	default:
 		return s + strings.Repeat(" ", w-sw)
 	}
+}
+
+// queryWindow picks the stretch of runes around the cursor that fits budget
+// cells (cursor block included), preferring to end at the cursor; the flags
+// report whether text was cut on either side (the caller marks it with "…").
+func queryWindow(runes []rune, cur, budget int) (shown []rune, curIdx int, cutLeft, cutRight bool) {
+	budget = max(1, budget-1) // the cursor block takes one cell
+	if len(runes) <= budget {
+		return runes, cur, false, false
+	}
+	start := max(0, cur-budget+1)
+	end := min(len(runes), start+budget)
+	cutLeft, cutRight = start > 0, end < len(runes)
+	if cutLeft {
+		start++ // room for the leading ellipsis
+	}
+	if cutRight && end-start >= budget-1 {
+		end-- // room for the trailing ellipsis
+	}
+	if cur > end {
+		cur = end
+	}
+	return runes[start:end], cur - start, cutLeft, cutRight
 }
 
 // wrapFit packs parts into as many lines as needed, each at most visual width

@@ -40,28 +40,33 @@ func (m *Model) searchFindLines(w, h int) []string {
 	muted := lipgloss.NewStyle().Foreground(styles.ColorMuted)
 	textStyle := lipgloss.NewStyle().Foreground(styles.ColorFg)
 
-	runes := []rune(m.searchQuery)
-	cur := min(m.searchCursor, len(runes))
-	before := textStyle.Render(string(runes[:cur]))
-	after := textStyle.Render(string(runes[cur:]))
-	cursor := " "
-	if m.mode == modeSearch {
-		cursor = accent.Render("█")
-	}
 	glyph := "/"
 	if m.searchVibe {
 		glyph = "V"
 	}
-	inputLine := accent.Render(glyph) + " " + before + cursor + after
+	// The query wraps onto further rows instead of running off the right
+	// edge; continuation rows are indented under the text. At most half the
+	// column goes to the input, and the rows around the cursor win when even
+	// that is not enough.
+	runes := []rune(m.searchQuery)
+	cur := min(m.searchCursor, len(runes))
+	inputRows := wrapQuery(runes, cur, m.mode == modeSearch, max(1, w-2), max(1, (h-2)/2), textStyle, accent)
+	for i, row := range inputRows {
+		if i == 0 {
+			inputRows[i] = accent.Render(glyph) + " " + row
+		} else {
+			inputRows[i] = "  " + row
+		}
+	}
 	sep := styles.QueueItemMuted.Render(strings.Repeat("─", 5))
 
-	listH := max(1, h-3) // header + underline + input
+	listH := max(1, h-2-len(inputRows)) // header + underline + input rows
 	m.search.SetSize(w, listH)
 	listView := m.search.View()
 	if listView == "" && !m.search.Loading() && m.searchQuery != "" {
 		listView = "  " + muted.Render("no results")
 	}
-	lines := append([]string{m.findHeader(), sep, inputLine}, toLines(listView, listH)...)
+	lines := append(append([]string{m.findHeader(), sep}, inputRows...), toLines(listView, listH)...)
 	for len(lines) < h {
 		lines = append(lines, "")
 	}
@@ -172,4 +177,68 @@ func (m *Model) appendAndPlay(label string, tracks []provider.Track, ids []strin
 	// One engine step: the list is re-synced by id and the new track starts
 	// only once it is in place (an append followed by a play-by-index raced).
 	return m.syncEngineQueue(targetID)
+}
+
+// wrapQuery lays the query out in rows of at most width cells with the cursor
+// (a block while focused, a space otherwise) in its place in the text. When
+// there are more rows than maxRows, the rows ending at the cursor's row are
+// kept so the cursor is always on screen.
+func wrapQuery(runes []rune, cur int, focused bool, width, maxRows int, text, accent lipgloss.Style) []string {
+	type cell struct {
+		r      rune
+		cursor bool
+	}
+	cells := make([]cell, 0, len(runes)+1)
+	for i := 0; i <= len(runes); i++ {
+		if i == cur {
+			cells = append(cells, cell{cursor: true})
+		}
+		if i < len(runes) {
+			cells = append(cells, cell{r: runes[i]})
+		}
+	}
+	var rows [][]cell
+	for len(cells) > 0 {
+		n := min(width, len(cells))
+		rows = append(rows, cells[:n])
+		cells = cells[n:]
+	}
+	cursorRow := 0
+	for i, row := range rows {
+		for _, c := range row {
+			if c.cursor {
+				cursorRow = i
+			}
+		}
+	}
+	if len(rows) > maxRows {
+		end := max(cursorRow+1, maxRows)
+		rows = rows[end-maxRows : end]
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		var sb strings.Builder
+		var run []rune
+		flush := func() {
+			if len(run) > 0 {
+				sb.WriteString(text.Render(string(run)))
+				run = run[:0]
+			}
+		}
+		for _, c := range row {
+			if c.cursor {
+				flush()
+				if focused {
+					sb.WriteString(accent.Render("█"))
+				} else {
+					sb.WriteString(" ")
+				}
+				continue
+			}
+			run = append(run, c.r)
+		}
+		flush()
+		out = append(out, sb.String())
+	}
+	return out
 }
