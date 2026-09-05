@@ -2205,6 +2205,19 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		m.mode = modeSearch
 		m.searchTyping = false
 
+	case "ctrl+'", "ctrl+;":
+		// Jump to the Search prompt and start typing, when Apple Music or
+		// Claude Code is showing; the saved lists take no text, so there it
+		// is just the column.
+		m.lastKey = ""
+		m.mode = modeSearch
+		if m.searchSrc == searchSaved {
+			m.searchTyping = false
+			m.flashStatus("the saved lists take no text; ^/ for Apple Music or Claude Code", 3*time.Second)
+			return nil
+		}
+		m.searchTyping = true
+
 	case "j", "down":
 		m.lastKey = ""
 		m.moveQueueCursor(1)
@@ -3871,6 +3884,7 @@ func (m *Model) tracksNavParts() []string {
 		styles.ModeNormal.Render("TRACKS"),
 		accent.Render(":") + muted.Render(" command"),
 		accent.Render("Tab") + muted.Render(" search"),
+		accent.Render("^'") + muted.Render(" search & type"),
 		accent.Render("y") + muted.Render(" lyrics"),
 		accent.Render("F") + muted.Render(" feed"),
 		accent.Render("e") + muted.Render(" equalizer"),

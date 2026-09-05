@@ -34,7 +34,7 @@ vibezAI is a keyboard-driven Apple Music player for the terminal. Full tracks st
 
 ## Searching with Claude Code
 
-Press `Tab` to reach Search, `Ctrl+/` to switch the prompt from `AM` to `CC`, and `Ctrl+'` to start typing. Type what you want to hear the way you would say it to a friend and press `Enter`.
+Press `Ctrl+'` to jump to the Search prompt and start typing (`Ctrl+/` switches the prompt between `AM` and `CC`). Type what you want to hear the way you would say it to a friend and press `Enter`.
 
 <p align="center">
   <img src="assets/vibezai-claude.png" alt="vibezAI: a Claude Code lookup, planned by Fable 5.1" width="920">
@@ -96,6 +96,7 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `r` | Cycle repeat |
 | `c` | Clear the list |
 | `Tab` | Move the keys to Search |
+| `ctrl+'` | Move the keys to Search and start typing into the `AM` or `CC` prompt |
 | `:` | Command mode |
 | `y` / `F` / `e` / `?` | Lyrics / feed / equalizer / about |
 

@@ -1002,6 +1002,26 @@ func TestSearchTyping_ToggleEnterAndEsc(t *testing.T) {
 	}
 }
 
+func TestCtrlQuoteFromTracks_JumpsToSearchAndTypes(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &mockProvider{}
+	footer := ansi.Strip(strings.Join(m.statusLines(600), " "))
+	if !strings.Contains(footer, "^' search & type") {
+		t.Fatalf("the TRACKS row lists the key: %q", footer)
+	}
+	m.handleNormalKey(tea.KeyPressMsg{Code: 0x27, Mod: tea.ModCtrl}, "ctrl+'")
+	if m.mode != modeSearch || !m.searchTyping || m.searchSrc != searchApple {
+		t.Fatalf("^' from Tracks lands in Search, typing into AM: mode=%v typing=%v src=%v", m.mode, m.searchTyping, m.searchSrc)
+	}
+	// With the saved lists showing it is just the column, and it says why.
+	m.mode = modeNormal
+	m.setSearchSource(searchSaved)
+	m.handleNormalKey(tea.KeyPressMsg{Code: ';', Mod: tea.ModCtrl}, "ctrl+;")
+	if m.mode != modeSearch || m.searchTyping || !strings.Contains(m.errMsg, "no text") {
+		t.Fatalf("^; with SV showing: mode=%v typing=%v msg=%q", m.mode, m.searchTyping, m.errMsg)
+	}
+}
+
 func TestHandleSearchKey_CtrlComma_DoesNotCallSetQueue(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
