@@ -173,7 +173,7 @@ vibezAI started from vibez 0.7.0. The engines, themes, equalizer, discovery and 
 | Vibe mode | `v` opens a prompt; a keyword table maps words to genres and dumps 15 shuffled songs into the queue | `CC` prompt inside Search; Claude Code plans the terms and ranks a pool of 40 candidates; results shown as a section headed by the model, nothing added until you say so |
 | Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+↑/↓` and `ctrl+→`, albums and playlists included |
 | Related songs | Continuous radio | `R` inserts five related songs once; `:radio` for continuous |
-| Library | Browser panel | `T` inserts five random library songs; the library is searched as part of every search |
+| Library | Browser panel | `T` (shift+t) inserts five random library songs; the library is searched as part of every search |
 | Footer | Changes with the mode | One fixed list per column |
 | Model choice | — | `:model`, `:effort`, config keys |
 | Name | vibez | vibezAI (binary, MPRIS identity, splash and About) |
