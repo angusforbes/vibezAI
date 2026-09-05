@@ -10,6 +10,7 @@ import (
 	"github.com/simone-vibes/vibez/internal/player"
 	"github.com/simone-vibes/vibez/internal/provider"
 	"github.com/simone-vibes/vibez/internal/tui/styles"
+	"github.com/simone-vibes/vibez/internal/tui/views"
 )
 
 // The Find panel is the right column of the main view: Apple Music search,
@@ -32,12 +33,19 @@ func (m *Model) findLines(w, h int) []string {
 // findHeader is the column title, underlined like the Queue's and bold while
 // Search has the keys, followed by the mode the way the Queue shows its track
 // count: "Apple Music" (plain search) or "Claude Code" (vibes lookups).
+//
+// While a lookup is in flight the mode text is the busy indicator: its colours
+// run through the glow palette until the results land.
 func (m *Model) findHeader() string {
 	mode := "Apple Music"
 	if m.searchVibe {
 		mode = "Claude Code"
 	}
-	return m.panelTitle("Search", m.mode == modeSearch) + styles.QueueItemMuted.Render("  "+mode)
+	label := styles.QueueItemMuted.Render("  " + mode)
+	if m.search.Loading() {
+		label = "  " + views.RenderGlowTitle(mode, m.glowStep)
+	}
+	return m.panelTitle("Search", m.mode == modeSearch) + label
 }
 
 func (m *Model) searchFindLines(w, h int) []string {
@@ -68,8 +76,8 @@ func (m *Model) searchFindLines(w, h int) []string {
 	listH := max(1, h-2-len(inputRows)) // header + underline + input rows
 	m.search.SetSize(w, listH)
 	listView := m.search.View()
-	if m.search.Loading() && m.searchVibe {
-		listView = "  " + thinkingDots(m.glowStep) // planning, searching, ranking
+	if m.search.Loading() {
+		listView = "" // the animated mode text in the header says it all
 	}
 	if listView == "" && !m.search.Loading() && m.searchQuery != "" {
 		listView = "  " + muted.Render("no results")
@@ -249,23 +257,4 @@ func wrapQuery(runes []rune, cur int, focused bool, width, maxRows int, text, ac
 		out = append(out, sb.String())
 	}
 	return out
-}
-
-// thinkingDots is the vibes-mode busy indicator: three dots whose colours run
-// through the glow palette, shifted a step every other glow tick.
-func thinkingDots(step int) string {
-	pal := styles.GlowPalette
-	n := len(pal)
-	if n == 0 {
-		return "● ● ●"
-	}
-	var sb strings.Builder
-	for i := range 3 {
-		c := pal[((step/2)+i*max(1, n/3))%n]
-		sb.WriteString(lipgloss.NewStyle().Foreground(c).Render("●"))
-		if i < 2 {
-			sb.WriteString(" ")
-		}
-	}
-	return sb.String()
 }

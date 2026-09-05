@@ -3925,8 +3925,8 @@ func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 	if !strings.Contains(lines[2], "CC") || strings.Contains(lines[2], "AM") {
 		t.Fatalf("vibes mode shows the CC prompt (Claude Code) instead of AM: %q", lines[2])
 	}
-	if !strings.Contains(lines[0], "Claude Code") || strings.Contains(lines[0], "Apple Music") {
-		t.Fatalf("the header should say Claude Code in vibes mode: %q", lines[0])
+	if h := ansi.Strip(lines[0]); !strings.Contains(h, "Claude Code") || strings.Contains(h, "Apple Music") {
+		t.Fatalf("the header should say Claude Code in vibes mode: %q", h)
 	}
 	// Typing a description does not search as you type.
 	for _, r := range "chill" {
@@ -3945,8 +3945,8 @@ func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 	if cmd := m.handleSearchKey("ctrl+_", tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}); cmd == nil || m.searchVibe {
 		t.Fatalf("ctrl+/ again (legacy ctrl+_ spelling) should return to regular search and look the text up (cmd=%v vibe=%v)", cmd != nil, m.searchVibe)
 	}
-	if lines := m.searchFindLines(40, 6); !strings.Contains(lines[2], "AM") || !strings.Contains(lines[0], "Apple Music") {
-		t.Fatalf("regular mode shows the AM prompt and names Apple Music: %q / %q", lines[2], lines[0])
+	if lines := m.searchFindLines(40, 6); !strings.Contains(lines[2], "AM") || !strings.Contains(ansi.Strip(lines[0]), "Apple Music") {
+		t.Fatalf("regular mode shows the AM prompt and names Apple Music: %q / %q", lines[2], ansi.Strip(lines[0]))
 	}
 }
 
@@ -4118,30 +4118,41 @@ func TestRunVibeSearch_FallsBackToKeywordsWhenThePlannerFails(t *testing.T) {
 	}
 }
 
-func TestSearchFindLines_VibeLookupShowsDots(t *testing.T) {
+func TestSearchFindLines_BusyAnimatesTheModeText(t *testing.T) {
 	m := newModel(newMockPlayer())
 	m.mode = modeSearch
 	m.search.SetSize(60, 20)
 	m.searchVibe = true
 	m.vibePlanner = &fakePlanner{plan: vibe.Plan{Queries: []string{"x"}}}
+	idle := m.findHeader()
 	if cmd := m.startVibeSearch("anything"); cmd == nil {
 		t.Fatal("expected a lookup command")
 	}
-	v := strings.Join(m.searchFindLines(60, 12), "\n")
-	if strings.Count(v, "●") != 3 || strings.Contains(v, "asking") || strings.Contains(v, "searching") {
-		t.Fatalf("a vibes lookup in flight shows three dots and nothing else: %q", v)
+	busy := m.findHeader()
+	if !strings.Contains(ansi.Strip(busy), "Claude Code") || busy == idle {
+		t.Fatalf("while busy the mode text is rendered differently (animated): idle=%q busy=%q", idle, busy)
 	}
-	// The dots change colour as the glow ticks.
-	before := thinkingDots(m.glowStep)
-	m.glowStep += 2
-	if thinkingDots(m.glowStep) == before {
-		t.Fatal("the dots should change colour over time")
+	m.glowStep += 3
+	if m.findHeader() == busy {
+		t.Fatal("the mode text should change colour as the glow ticks")
 	}
-	// Plain Apple Music search keeps its text.
+	lines := strings.Join(m.searchFindLines(60, 12), "\n")
+	if strings.Contains(lines, "●") || strings.Contains(lines, "searching") || strings.Contains(lines, "asking") {
+		t.Fatalf("no dots or status text while busy, the header carries it: %q", lines)
+	}
+	// Results in: the header goes back to the plain muted mode text.
+	m.Update(vibeResultMsg{query: "anything", tracks: nil, via: "Test", plan: vibe.Plan{Summary: "s"}})
+	if got := m.findHeader(); got != idle {
+		t.Fatalf("after the lookup the header is back to normal: %q vs %q", got, idle)
+	}
+	// Plain Apple Music search animates its own label too.
 	m.searchVibe = false
 	m.search.SetResults(nil, true, nil)
-	if v := strings.Join(m.searchFindLines(60, 12), "\n"); !strings.Contains(v, "searching") {
-		t.Fatalf("regular search still says searching…: %q", v)
+	if h := m.findHeader(); !strings.Contains(ansi.Strip(h), "Apple Music") || h == styles.Header.Bold(true).Render("Search")+styles.QueueItemMuted.Render("  Apple Music") {
+		t.Fatalf("a slow regular search animates Apple Music: %q", h)
+	}
+	if v := strings.Join(m.searchFindLines(60, 12), "\n"); strings.Contains(v, "searching") {
+		t.Fatalf("no searching… text either: %q", v)
 	}
 }
 
@@ -4175,8 +4186,8 @@ func TestVibeLookup_RerankerOrdersThePool(t *testing.T) {
 	if stage2 == nil {
 		t.Fatal("a reranking planner gets a second stage")
 	}
-	if v := strings.Join(m.searchFindLines(60, 20), "\n"); strings.Count(v, "●") != 3 || strings.Contains(v, "picking") {
-		t.Fatalf("while ranking, the panel shows the three-dot animation and no message: %q", v)
+	if v := strings.Join(m.searchFindLines(60, 20), "\n"); strings.Contains(v, "●") || strings.Contains(v, "picking") || !m.search.Loading() {
+		t.Fatalf("while ranking, the panel stays quiet (only the header animates): %q", v)
 	}
 	final := stage2()
 	if rr.gotDescr != "dreamy soul" || len(rr.gotCands) != 20 || rr.gotLimit != vibeResultCap || rr.gotCands[0].Title != "alpha 0" {
