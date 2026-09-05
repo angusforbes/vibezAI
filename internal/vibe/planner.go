@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode"
 )
 
 // Plan is what a planner makes of a listener's description: a short summary
@@ -337,4 +338,45 @@ func withoutNestedClaudeEnv(env []string) []string {
 		out = append(out, kv)
 	}
 	return out
+}
+
+const nameListSystemPrompt = `You name playlists. The user gives you a list of songs as "artist — title" lines.
+Reply with a short name for the list: 2 to 4 words, lowercase, letters, digits and spaces only, no quotes, no punctuation, nothing else.
+Name what the songs have in common (an artist, a genre, an era, a mood); do not use the words playlist, mix or songs.`
+
+// NameList asks Claude for a 2-4 word name for a list of songs given as
+// "artist — title" lines. The answer is reduced to lowercase letters, digits
+// and single spaces; an answer with nothing usable is an error.
+func (c *ClaudePlanner) NameList(ctx context.Context, lines []string) (string, error) {
+	answer, _, err := c.run(ctx, nameListSystemPrompt, strings.Join(lines, "\n"))
+	if err != nil {
+		return "", err
+	}
+	name := CleanListName(answer)
+	if name == "" {
+		return "", fmt.Errorf("claude: no usable name in %q", strings.TrimSpace(answer))
+	}
+	return name, nil
+}
+
+// CleanListName reduces free text to a file-safe list name: the first line,
+// lowercase, letters, digits and single spaces, at most five words.
+func CleanListName(s string) string {
+	line := s
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	var b strings.Builder
+	for _, r := range strings.ToLower(line) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte(' ')
+		}
+	}
+	words := strings.Fields(b.String())
+	if len(words) > 5 {
+		words = words[:5]
+	}
+	return strings.Join(words, " ")
 }

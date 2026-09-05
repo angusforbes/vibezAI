@@ -26,6 +26,9 @@ func (m *Model) restoreQueue() {
 		m.appendLog("[queue] could not restore the saved queue: " + err.Error())
 		return
 	}
+	// The Tracks of the previous session are also kept as a named list, so
+	// :load can bring them back after something else has been loaded.
+	m.snapshotLastSession(st)
 	if len(st.Tracks) == 0 {
 		return
 	}

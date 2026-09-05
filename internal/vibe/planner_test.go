@@ -178,3 +178,15 @@ func TestPrettyModel(t *testing.T) {
 		}
 	}
 }
+
+func TestCleanListName(t *testing.T) {
+	if got := CleanListName("  Late-Night Jazz!\nsecond line"); got != "late night jazz" {
+		t.Fatalf("CleanListName = %q", got)
+	}
+	if got := CleanListName("one two three four five six seven"); got != "one two three four five" {
+		t.Fatalf("at most five words: %q", got)
+	}
+	if got := CleanListName("!!!"); got != "" {
+		t.Fatalf("nothing usable: %q", got)
+	}
+}

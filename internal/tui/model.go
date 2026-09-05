@@ -1135,6 +1135,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errMsg = "✓ Playlist \"" + msg.name + "\" saved"
 		m.errExpiry = time.Now().Add(4 * time.Second)
 
+	case trackListNamedMsg:
+		m.finishAutoSave(msg)
+
 	case playlistsForPickerMsg:
 		if msg.gen != m.playlistPickerGen {
 			break // stale response; a newer fetch is in flight
@@ -1400,8 +1403,8 @@ type cmdEntry struct {
 // allCommands is the master list: the CMD footer shows it and Tab completes
 // from it, so the two can never disagree.
 var allCommands = []cmdEntry{
-	{"save", "save <name>", "Save Tracks as a named list"},
-	{"load", "load <name>", "Replace Tracks with a saved list; bare :load names the lists"},
+	{"save", "save [name]", "Save Tracks as a named list; without a name it is dated and named after the songs"},
+	{"load", "load [name]", "Replace Tracks with a saved list; space steps through the saved lists"},
 	{"quality", "quality <high|standard|256|64>", "Set Apple Music AAC bitrate"},
 	{"model", "model <fable|sonnet|haiku|default|id>", "Model Claude Code uses for CC lookups; bare :model shows the current one"},
 	{"effort", "effort <low|medium|high|xhigh|max|default>", "Effort Claude Code spends on CC lookups"},
@@ -1458,7 +1461,10 @@ func (m *Model) handleCommandKey(k string) tea.Cmd {
 			m.cmdBuf = m.cmdBuf[:len(m.cmdBuf)-1]
 		}
 	case "space":
-		m.cmdBuf += " "
+		// Inside :load the space key steps through the saved lists.
+		if !m.cycleLoadName() {
+			m.cmdBuf += " "
+		}
 	default:
 		if len(k) == 1 && k[0] >= 32 {
 			m.cmdBuf += k
@@ -3693,6 +3699,9 @@ func (m *Model) statusNavLines(w int) []string {
 				part += muted.Render(args)
 			}
 			parts = append(parts, part)
+		}
+		if m.cmdBuf == "load" || strings.HasPrefix(m.cmdBuf, "load ") {
+			parts = append(parts, accent.Render("spc")+muted.Render(" next saved list"))
 		}
 		parts = append(parts, accent.Render("Esc")+muted.Render(" cancel"))
 		return wrapFit(parts, dot, w)

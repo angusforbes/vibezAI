@@ -4277,7 +4277,7 @@ func TestCommandFooter_ListsEveryCommand(t *testing.T) {
 			t.Fatalf("the CMD row lists every command, always; %q is missing from %q", ":"+c.trigger, plain)
 		}
 	}
-	if !strings.Contains(plain, ":quality <high|standard|256|64>") || !strings.Contains(plain, ":save <name>") || !strings.Contains(plain, ":effort <low|medium|high|xhigh|max|default>") {
+	if !strings.Contains(plain, ":quality <high|standard|256|64>") || !strings.Contains(plain, ":save [name]") || !strings.Contains(plain, ":effort <low|medium|high|xhigh|max|default>") {
 		t.Fatalf("each command shows what it takes: %q", plain)
 	}
 	if !strings.Contains(plain, "Esc cancel") || strings.Contains(plain, "Tab complete") || strings.Contains(plain, "Enter run") {

@@ -115,8 +115,8 @@ Typing `:` keeps both columns on screen and swaps the footer for the command lis
 |---------|-------------|
 | `:model <fable\|sonnet\|haiku\|default\|id>` | Model Claude Code uses for `CC` lookups; bare `:model` shows the current one |
 | `:effort <low\|medium\|high\|xhigh\|max\|default>` | Effort for those lookups |
-| `:save <name>` | Save Tracks as a named list in `~/.config/vibez/tracklists/` |
-| `:load <name>` | Replace Tracks with a saved list; bare `:load` names the lists |
+| `:save [name]` | Save Tracks as a named list in `~/.config/vibez/tracklists/`. Without a name the list is dated and named after its songs by Claude Code (from the artists and genres when the CLI is not there) |
+| `:load [name]` | Replace Tracks with a saved list. Inside `:load`, `space` steps through the saved lists, the previous session's Tracks (`last session`) first |
 | `:quality <high\|standard\|256\|64>` | AAC bitrate |
 | `:debug-logs` | Toggle the debug log, where Claude's terms and rankings are recorded |
 | `:q` / `:quit` | Quit |
