@@ -4430,10 +4430,14 @@ func TestHandleSearchKey_MultiSelectAddsAll(t *testing.T) {
 	if strings.Join(m.queueIDs, ",") != "k0,k1,k4" || len(mp.setQueueIDs) > 0 || mp.setQueueAtStart != "" {
 		t.Fatalf("Ctrl+, appends the selection in order without playing: queue=%v", m.queueIDs)
 	}
-	if m.search.SelectionCount() != 0 {
-		t.Fatal("the selection is cleared once added")
+	if m.search.SelectionCount() != 3 {
+		t.Fatal("the selection stays marked after adding")
 	}
-	// Ctrl+. with a selection: adds and starts the first of them (k2).
+	// Shift+← clears it; Ctrl+. with a fresh selection adds and starts the first of them (k2).
+	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	if m.search.SelectionCount() != 0 {
+		t.Fatal("Shift+← clears the selection")
+	}
 	for range 4 {
 		m.handleSearchKey("up", tea.KeyPressMsg{Code: tea.KeyUp})
 	}
@@ -4456,12 +4460,49 @@ func TestHandleSearchKey_MultiSelectAddsAll(t *testing.T) {
 	if started != "k2" {
 		t.Fatalf("the first selected song should start, got %q", started)
 	}
-	if m.search.SelectionCount() != 0 {
-		t.Fatal("selection cleared after Ctrl+.")
+	if m.search.SelectionCount() != 2 {
+		t.Fatal("selection kept after Ctrl+.")
 	}
 	// Without a selection the keys do nothing.
+	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
 	if cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}); cmd != nil {
 		t.Fatal("Ctrl+, without a selection is a no-op")
+	}
+}
+
+func TestShiftLeft_ClearsAndRestoresTheSelection(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 40)
+	m.search.SetState(catalogTracks(4), false, nil)
+	m.handleSearchKey("shift+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift}) // k0, k1
+	footer := func() string { return ansi.Strip(strings.Join(m.statusLines(400), " ")) }
+	if !strings.Contains(footer(), "⇧← clear") {
+		t.Fatalf("with a selection the footer offers clear: %q", footer())
+	}
+	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	if m.search.SelectionCount() != 0 || !strings.Contains(footer(), "⇧← restore") {
+		t.Fatalf("Shift+← clears and offers restore: sel=%d footer=%q", m.search.SelectionCount(), footer())
+	}
+	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	if got := m.search.SelectedTracks(); len(got) != 2 || got[0].ID != "k0" || got[1].ID != "k1" {
+		t.Fatalf("Shift+← again brings the same selection back: %+v", got)
+	}
+	// A change after clearing starts over: the old selection is gone for good.
+	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	m.handleSearchKey("down", tea.KeyPressMsg{Code: tea.KeyDown})
+	m.handleSearchKey("shift+right", tea.KeyPressMsg{Code: tea.KeyRight, Mod: tea.ModShift}) // k2 only
+	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	if got := m.search.SelectedTracks(); len(got) != 1 || got[0].ID != "k2" {
+		t.Fatalf("only the latest cleared selection comes back: %+v", got)
+	}
+	// New results drop both the selection and the stash.
+	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	m.search.SetState(catalogTracks(2), false, nil)
+	m.handleSearchKey("shift+left", tea.KeyPressMsg{Code: tea.KeyLeft, Mod: tea.ModShift})
+	if m.search.SelectionCount() != 0 {
+		t.Fatal("nothing to restore after a new result set")
 	}
 }
 
@@ -4514,8 +4555,8 @@ func TestAddSelection_ExpandsAlbumsAndPlaylistsInResultOrder(t *testing.T) {
 		t.Fatalf("albums and playlists get the check mark too: %q", v)
 	}
 	cmd := m.handleSearchKey("ctrl+.", tea.KeyPressMsg{Code: '.', Mod: tea.ModCtrl})
-	if cmd == nil || m.search.SelectionCount() != 0 {
-		t.Fatal("Ctrl+. with collections should expand them asynchronously and clear the selection")
+	if cmd == nil || m.search.SelectionCount() != 3 {
+		t.Fatal("Ctrl+. with collections should expand them asynchronously and keep the selection")
 	}
 	msg := cmd()
 	sel, ok := msg.(selectionTracksMsg)

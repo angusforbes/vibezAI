@@ -1321,6 +1321,13 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		// selection need not be contiguous.
 		m.search.ToggleSelected()
 		return nil
+	case "shift+left":
+		// Clear the selection; pressed again before anything else changes
+		// it, bring the same selection back.
+		if !m.search.RestoreSelection() {
+			m.search.ClearSelection()
+		}
+		return nil
 	case "ctrl+,":
 		// The whole multi-selection goes to Tracks; nothing starts playing.
 		return m.addSelection(false)
@@ -2313,13 +2320,13 @@ type selectionTracksMsg struct {
 
 // addSelection sends the multi-selection to Tracks: songs as they are, albums
 // and playlists expanded to their songs, all in result order. With play the
-// first song starts. The selection is cleared straight away.
+// first song starts. The selection stays as it is.
 func (m *Model) addSelection(play bool) tea.Cmd {
 	items := m.search.SelectedItems()
 	if len(items) == 0 {
 		return nil
 	}
-	m.search.ClearSelection()
+	// The selection stays marked after the add (Shift+← clears it).
 	label := fmt.Sprintf("%d selected", len(items))
 	collections := 0
 	for _, it := range items {
@@ -3693,7 +3700,10 @@ func (m *Model) statusNavLines(w int) []string {
 		if n := m.search.SelectionCount(); n > 0 {
 			actions = append(actions,
 				accent.Render("^,")+muted.Render(fmt.Sprintf(" add %d", n)),
-				accent.Render("^.")+muted.Render(fmt.Sprintf(" add %d & play", n)))
+				accent.Render("^.")+muted.Render(fmt.Sprintf(" add %d & play", n)),
+				accent.Render("⇧←")+muted.Render(" clear"))
+		} else if m.search.CanRestoreSelection() {
+			actions = append(actions, accent.Render("⇧←")+muted.Render(" restore"))
 		}
 		if m.searchVibe && m.searchQuery != m.vibeShown {
 			actions = []string{accent.Render("Enter") + muted.Render(" find songs")}

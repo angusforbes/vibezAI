@@ -110,8 +110,10 @@ type SearchModel struct {
 
 	// selected holds the keys (see selKey) of the songs, albums and playlists
 	// picked for a multi-add (Shift+↑/↓ sweep, Shift+→ toggle); cleared when
-	// the results change.
+	// the results change. stash keeps a selection cleared with Shift+← so the
+	// same key can bring it back, as long as nothing else changed it.
 	selected map[string]bool
+	stash    map[string]bool
 
 	// Catalog Tracks paging: Apple answers at most 25 songs per request, so
 	// "+ 5 more" fetches the next page once the loaded ones run out.
@@ -141,7 +143,7 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.err = err
 	m.results = result
 	m.vibe, m.vibeTitle, m.vibeNote = false, "", nil
-	m.selected = nil
+	m.selected, m.stash = nil, nil
 	m.shown = nil // a new result set starts at the default count per section
 	m.catalogNext, m.catalogMore = 0, false
 	m.paging, m.pendingReveal = false, 0
@@ -164,7 +166,7 @@ func (m *SearchModel) SetVibeResults(tracks []provider.Track, title string, note
 	m.vibe = true
 	m.vibeTitle = title
 	m.vibeNote = note
-	m.selected = nil
+	m.selected, m.stash = nil, nil
 	m.shown = nil
 	m.catalogNext, m.catalogMore = 0, false
 	m.paging, m.pendingReveal = false, 0
@@ -638,8 +640,26 @@ func (m *SearchModel) IsSelected(t provider.Track) bool { return m.selected[Play
 // SelectionCount is how many songs, albums and playlists are multi-selected.
 func (m *SearchModel) SelectionCount() int { return len(m.selected) }
 
-// ClearSelection drops the multi-selection.
-func (m *SearchModel) ClearSelection() { m.selected = nil }
+// ClearSelection drops the multi-selection, keeping it for RestoreSelection.
+func (m *SearchModel) ClearSelection() {
+	if len(m.selected) > 0 {
+		m.stash = m.selected
+	}
+	m.selected = nil
+}
+
+// RestoreSelection brings back the selection last cleared, provided nothing
+// has been selected or deselected since. It reports whether it did.
+func (m *SearchModel) RestoreSelection() bool {
+	if len(m.selected) > 0 || m.stash == nil {
+		return false
+	}
+	m.selected, m.stash = m.stash, nil
+	return true
+}
+
+// CanRestoreSelection reports whether Shift+← would bring a selection back.
+func (m *SearchModel) CanRestoreSelection() bool { return len(m.selected) == 0 && m.stash != nil }
 
 // ToggleSelected adds the highlighted song, album or playlist to the
 // multi-selection or takes it out again; headers and controls are ignored.
@@ -651,6 +671,7 @@ func (m *SearchModel) ToggleSelected() {
 	if key == "" {
 		return
 	}
+	m.stash = nil
 	if m.selected[key] {
 		delete(m.selected, key)
 		return
@@ -685,6 +706,7 @@ func (m *SearchModel) pick(row int) {
 	if key == "" {
 		return
 	}
+	m.stash = nil
 	if m.selected == nil {
 		m.selected = map[string]bool{}
 	}
