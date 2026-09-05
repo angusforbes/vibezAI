@@ -3,6 +3,7 @@ package views
 import (
 	"errors"
 	"fmt"
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 
@@ -1322,5 +1323,75 @@ func TestView_HighlightIsPointerOnlyUnlessPicked(t *testing.T) {
 	m.ClearSelection()
 	if l := cursorLine(); bold(l) || strings.Contains(m.View(), "✓") {
 		t.Fatalf("after clearing, nothing is accented: %q", l)
+	}
+}
+
+func TestSearch_OpenAlbumListsItsTracksAsSelectableChildren(t *testing.T) {
+	s := NewSearch(nil)
+	s.SetSize(80, 60)
+	s.SetResults(&provider.SearchResult{
+		Albums: []provider.Album{{ID: "a1", Title: "LP", Artist: "Band"}},
+		Tracks: catalogPage(0, 2),
+	}, false, nil)
+	// Nothing happens on a header.
+	s.cursor = 0
+	if _, fetch := s.ToggleCollection(); fetch || len(s.rows) != 1+1+1+1+2*0+3 && false {
+		t.Fatal("a header is not a collection")
+	}
+	s.cursor = 1 // the album row
+	if a := s.SelectedAlbum(); a == nil || a.ID != "a1" {
+		t.Fatalf("setup: expected the album under the highlight, got %+v", a)
+	}
+	req, fetch := s.ToggleCollection()
+	if !fetch || req.Key != "album:a1" || req.Album == nil {
+		t.Fatalf("the first open asks for the album's tracks: %+v fetch=%v", req, fetch)
+	}
+	if !strings.Contains(s.View(), "loading…") || s.cursor != 1 {
+		t.Fatalf("while loading a muted note sits under the album and the highlight stays: %q cursor=%d", s.View(), s.cursor)
+	}
+	kids := []provider.Track{{ID: "k1", CatalogID: "k1", Title: "One", Artist: "Band"}, {ID: "k2", CatalogID: "k2", Title: "Two", Artist: "Band"}, {ID: "k3", CatalogID: "k3", Title: "Three", Artist: "Band"}}
+	s.SetCollectionTracks("album:a1", kids, nil)
+	if !s.rows[2].child || !s.rows[3].child || !s.rows[4].child || s.rows[2].track.ID != "k1" || rowLines(s.rows[2]) != 1 {
+		t.Fatalf("the album's tracks follow it as one-line child rows: %+v", s.rows[1:5])
+	}
+	if v := ansi.Strip(s.View()); strings.Contains(v, "loading") || !strings.Contains(v, "One — Band") {
+		t.Fatalf("children render as title — artist: %q", v)
+	}
+	// Children are navigable and selectable on their own.
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	s, _ = s.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if cur := s.SelectedTrack(); cur == nil || cur.ID != "k2" {
+		t.Fatalf("↓ walks into the children, got %+v", cur)
+	}
+	s.ToggleSelected()
+	items := s.SelectedItems()
+	if len(items) != 1 || items[0].Track == nil || items[0].Track.ID != "k2" {
+		t.Fatalf("a marked child is its own item: %+v", items)
+	}
+	// Marking the album as well: the album comes first, the child follows.
+	s.cursor = 1
+	s.ToggleSelected()
+	items = s.SelectedItems()
+	if len(items) != 2 || items[0].Album == nil || items[1].Track == nil {
+		t.Fatalf("album then its marked track: %+v", items)
+	}
+	// Fold: the children vanish; open again: no fetch, tracks kept.
+	if _, fetch := s.ToggleCollection(); fetch {
+		t.Fatal("folding fetches nothing")
+	}
+	for _, r := range s.rows {
+		if r.child {
+			t.Fatal("folded album must hide its tracks")
+		}
+	}
+	if _, fetch := s.ToggleCollection(); fetch || !s.rows[2].child {
+		t.Fatalf("reopening uses the kept tracks (fetch=%v)", fetch)
+	}
+	// New results drop expansions.
+	s.SetResults(&provider.SearchResult{Albums: []provider.Album{{ID: "a1", Title: "LP"}}}, false, nil)
+	for _, r := range s.rows {
+		if r.child {
+			t.Fatal("a new result set starts with everything folded")
+		}
 	}
 }

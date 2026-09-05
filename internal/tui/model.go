@@ -754,6 +754,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case collectionTracksMsg:
+		if msg.err != nil {
+			m.appendLog(fmt.Sprintf("[search] opening %s: %v", msg.key, msg.err))
+		}
+		if msg.target != nil {
+			msg.target.SetCollectionTracks(msg.key, msg.tracks, msg.err)
+		}
+
 	case feedResultMsg:
 		// The FE source: an error shows in the column and the next visit
 		// tries again; groups become sections.
@@ -1233,7 +1241,7 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			return nil
 		case k == "space":
 			return m.togglePlayPause()
-		case k == "right":
+		case k == "right", k == "ctrl+enter":
 			return m.actOnSearchRow()
 		case k == "left", k == "home", k == "ctrl+a", k == "end", k == "ctrl+e", k == "backspace", k == "ctrl+w", k == "ctrl+u":
 			return nil // prompt-editing keys mean nothing while browsing
@@ -1439,8 +1447,46 @@ func (m *Model) actOnSearchRow() tea.Cmd {
 		if wanted := m.search.ShowMore(section); wanted > 0 {
 			return m.fetchMoreTracksCmd(wanted, 0)
 		}
+		return nil
+	}
+	// An album or playlist opens to its tracks (fetched once) or folds again.
+	if req, fetch := m.search.ToggleCollection(); fetch {
+		return m.fetchCollectionCmd(m.search, req)
 	}
 	return nil
+}
+
+// collectionTracksMsg carries the tracks of an album or playlist opened in a
+// Search list with →.
+type collectionTracksMsg struct {
+	target *views.SearchModel
+	key    string
+	tracks []provider.Track
+	err    error
+}
+
+// fetchCollectionCmd loads the tracks of an opened album or playlist for the
+// list that asked (results may land after the user switched sources).
+func (m *Model) fetchCollectionCmd(target *views.SearchModel, req views.ExpandRequest) tea.Cmd {
+	prov := m.provider
+	if prov == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		var tracks []provider.Track
+		var err error
+		switch {
+		case req.Album != nil:
+			tracks, err = prov.GetAlbumTracks(ctx, req.Album.ID)
+		case req.Playlist != nil && strings.HasPrefix(req.Playlist.ID, "p."):
+			tracks, err = prov.GetPlaylistTracks(ctx, req.Playlist.ID)
+		case req.Playlist != nil:
+			tracks, err = prov.GetCatalogPlaylistTracks(ctx, req.Playlist.ID)
+		}
+		return collectionTracksMsg{target: target, key: req.Key, tracks: tracks, err: err}
+	}
 }
 
 // isSearchKey reports whether k is one of the Search column's own keys while
@@ -1451,7 +1497,7 @@ func isSearchKey(k string) bool {
 	switch k {
 	case "ctrl+'", "ctrl+;", "esc", "ctrl+/", "ctrl+_", "tab", "shift+tab",
 		"ctrl+shift+up", "ctrl+shift+down", "ctrl+right", "ctrl+left", "ctrl+delete",
-		"ctrl+,", "ctrl+.", "ctrl+up", "ctrl+down", "pgup", "pgdown", "up", "down":
+		"ctrl+,", "ctrl+.", "ctrl+up", "ctrl+down", "ctrl+enter", "pgup", "pgdown", "up", "down":
 		return true
 	}
 	return false
@@ -2013,11 +2059,11 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	// remove it, K/J move it (see queue_nav.go). Everything else falls through.
 	if m.activePanel < 0 && !m.debugView {
 		switch k {
-		case "ctrl+up", "ctrl+down", "ctrl+shift+up", "ctrl+shift+down", "ctrl+right", "ctrl+left", "ctrl+/", "ctrl+_", "ctrl+,", "ctrl+.":
+		case "ctrl+up", "ctrl+down", "ctrl+shift+up", "ctrl+shift+down", "ctrl+right", "ctrl+left", "ctrl+/", "ctrl+_", "ctrl+,", "ctrl+.", "ctrl+enter":
 			// The Ctrl+arrows drive the Search list from here too, Ctrl+/
-			// cycles its source and Ctrl+, / Ctrl+. add from it, with the
-			// meanings they have in Search, so both columns can be worked
-			// without changing columns.
+			// cycles its source, Ctrl+, / Ctrl+. add from it and Ctrl+Enter
+			// opens/folds its rows, with the meanings they have in Search, so
+			// both columns can be worked without changing columns.
 			m.lastKey = ""
 			return m.handleSearchKey(k, msg)
 		}
@@ -3728,7 +3774,7 @@ func (m *Model) statusNavLines(w int) []string {
 			actions = append(actions,
 				accent.Render("Enter")+muted.Render(" play tracks pick"),
 				accent.Render("spc")+muted.Render(" play/pause"),
-				accent.Render("→")+muted.Render(" open/fold"),
+				accent.Render("→/^Enter")+muted.Render(" open/fold"),
 			)
 			if m.searchSrc.takesText() {
 				actions = append(actions, accent.Render("^'")+muted.Render(" type"))

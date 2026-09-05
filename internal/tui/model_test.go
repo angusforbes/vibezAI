@@ -959,7 +959,7 @@ func TestSearchTyping_ToggleEnterAndEsc(t *testing.T) {
 		t.Fatalf("browsing: text goes nowhere, got %q", m.searchQuery)
 	}
 	footer := ansi.Strip(strings.Join(m.statusLines(400), " "))
-	if !strings.Contains(footer, "^' type") || !strings.Contains(footer, "→ open/fold") || !strings.Contains(footer, "Enter play tracks pick") {
+	if !strings.Contains(footer, "^' type") || !strings.Contains(footer, "→/^Enter open/fold") || !strings.Contains(footer, "Enter play tracks pick") {
 		t.Fatalf("browsing footer: %q", footer)
 	}
 	if s := (tea.KeyPressMsg{Code: 0x27, Mod: tea.ModCtrl}).String(); s != "ctrl+'" {
@@ -1059,7 +1059,7 @@ func TestSearchBrowsing_EnterPlaysTracksPickSpaceTogglesRightActsOnRows(t *testi
 	m.setQueueCursor(1)
 	seedSearchResults(m, provider.Track{Title: "Alpha", CatalogID: "a"})
 	footer := ansi.Strip(strings.Join(m.statusLines(600), " "))
-	for _, want := range []string{"Enter play tracks pick", "spc play/pause", "→ open/fold"} {
+	for _, want := range []string{"Enter play tracks pick", "spc play/pause", "→/^Enter open/fold"} {
 		if !strings.Contains(footer, want) {
 			t.Fatalf("browsing footer lists %q: %q", want, footer)
 		}
@@ -5272,5 +5272,76 @@ func TestExecuteCommand_ModelAndEffort(t *testing.T) {
 	}
 	if found != 2 {
 		t.Fatalf("model and effort should be listed in the palette, found %d", found)
+	}
+}
+
+// openableFeedProvider serves the feed plus the tracks of its album and playlist.
+type openableFeedProvider struct{ feedProvider }
+
+func (openableFeedProvider) GetAlbumTracks(_ context.Context, id string) ([]provider.Track, error) {
+	return []provider.Track{{ID: id + "-1", CatalogID: id + "-1", Title: "Buddy Holly", Artist: "Weezer"}, {ID: id + "-2", CatalogID: id + "-2", Title: "Undone", Artist: "Weezer"}}, nil
+}
+func (openableFeedProvider) GetCatalogPlaylistTracks(_ context.Context, id string) ([]provider.Track, error) {
+	return []provider.Track{{ID: id + "-x", CatalogID: id + "-x", Title: "Calm", Artist: "Someone"}}, nil
+}
+
+func TestSearchRight_OpensFeedAlbumAndAddsOneTrack(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &openableFeedProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 40)
+	for m.searchSrc != searchFeed { // AM → CC → SV → FE
+		if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil && m.searchSrc == searchFeed {
+			m.Update(cmd())
+		}
+	}
+	if a := m.search.SelectedAlbum(); a == nil || a.ID != "1234" {
+		t.Fatalf("setup: the feed's album should be highlighted first, got %+v", a)
+	}
+	// → on the album fetches and lists its tracks.
+	cmd := m.handleSearchKey("right", tea.KeyPressMsg{Code: tea.KeyRight})
+	if cmd == nil {
+		t.Fatal("→ on an album should fetch its tracks")
+	}
+	m.Update(cmd())
+	view := ansi.Strip(m.search.View())
+	if !strings.Contains(view, "Buddy Holly — Weezer") || !strings.Contains(view, "Undone — Weezer") {
+		t.Fatalf("the album's tracks should be listed under it: %q", view)
+	}
+	// Ctrl+↓ onto the first child, Ctrl+, adds just that one.
+	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
+	if cur := m.search.SelectedTrack(); cur == nil || cur.Title != "Buddy Holly" {
+		t.Fatalf("expected the first child under the highlight, got %+v", cur)
+	}
+	if cmd := m.handleSearchKey("ctrl+,", tea.KeyPressMsg{Code: ',', Mod: tea.ModCtrl}); cmd != nil {
+		cmd()
+	}
+	if strings.Join(m.queueIDs, ",") != "1234-1" {
+		t.Fatalf("only the highlighted child track is added: %v", m.queueIDs)
+	}
+	// Ctrl+Enter is → : back on the album it folds; on the playlist it opens.
+	m.handleSearchKey("ctrl+up", tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModCtrl})
+	if cmd := m.handleSearchKey("ctrl+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl}); cmd != nil {
+		t.Fatal("folding needs no fetch")
+	}
+	if strings.Contains(m.search.View(), "Buddy Holly") {
+		t.Fatal("folded album hides its tracks")
+	}
+	m.handleSearchKey("ctrl+down", tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModCtrl})
+	if pl := m.search.SelectedPlaylist(); pl == nil || pl.ID != "pl.abc" {
+		t.Fatalf("expected the playlist next, got %+v", pl)
+	}
+	cmd = m.handleSearchKey("ctrl+enter", tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+	if cmd == nil {
+		t.Fatal("Ctrl+Enter on a playlist should fetch its tracks")
+	}
+	m.Update(cmd())
+	if v := ansi.Strip(m.search.View()); !strings.Contains(v, "Calm — Someone") {
+		t.Fatalf("the playlist's tracks should be listed: %q", v)
+	}
+	// From the Tracks column Ctrl+Enter reaches the Search row too (folds the playlist).
+	m.mode = modeNormal
+	if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl}, "ctrl+enter"); cmd != nil || strings.Contains(ansi.Strip(m.search.View()), "Calm — Someone") {
+		t.Fatal("Ctrl+Enter from Tracks should fold the opened playlist in Search")
 	}
 }

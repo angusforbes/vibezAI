@@ -72,6 +72,7 @@ type searchRow struct {
 	title    string     // header display text when it differs from label (the section key)
 	list     *SavedList // saved-lists source: the list this header stands for
 	group    bool       // feed source: a recommendation group's header
+	child    bool       // a track listed under its opened album or playlist (one indented line)
 }
 
 // isItem reports whether this row is selectable: an item, a more/less toggle
@@ -83,7 +84,7 @@ func (r searchRow) isItem() bool {
 // rowLines returns the number of visual lines a row occupies. Playlists and
 // the more/less toggles are one line; tracks and albums carry a detail line.
 func rowLines(r searchRow) int {
-	if r.header || r.toggle || r.playlist != nil || r.note != "" {
+	if r.header || r.toggle || r.playlist != nil || r.note != "" || r.child {
 		return 1
 	}
 	return 2
@@ -183,6 +184,12 @@ type SearchModel struct {
 	selected map[string]bool
 	stash    map[string]bool
 
+	// open marks the albums and playlists (by selKey) whose tracks are listed
+	// under them; expansions caches what was fetched for each, so folding and
+	// reopening costs nothing. Both reset with the results.
+	open       map[string]bool
+	expansions map[string]*expansion
+
 	// Catalog Tracks paging: Apple answers at most 25 songs per request, so
 	// "+ 5 more" fetches the next page once the loaded ones run out.
 	catalogNext   int  // offset of the next page
@@ -214,6 +221,7 @@ func (m *SearchModel) SetResults(result *provider.SearchResult, loading bool, er
 	m.saved, m.lists = false, nil
 	m.feed = nil
 	m.selected, m.stash = nil, nil
+	m.open, m.expansions = nil, nil
 	m.shown = nil // a new result set starts at the default count per section
 	m.catalogNext, m.catalogMore = 0, false
 	m.paging, m.pendingReveal = false, 0
@@ -239,6 +247,7 @@ func (m *SearchModel) SetVibeResults(tracks []provider.Track, title string, note
 	m.saved, m.lists = false, nil
 	m.feed = nil
 	m.selected, m.stash = nil, nil
+	m.open, m.expansions = nil, nil
 	m.shown = nil
 	m.catalogNext, m.catalogMore = 0, false
 	m.paging, m.pendingReveal = false, 0
@@ -270,6 +279,7 @@ func (m *SearchModel) SetSavedLists(lists []SavedList) {
 	m.saved, m.lists = true, lists
 	m.feed = nil
 	m.selected, m.stash = nil, nil
+	m.open, m.expansions = nil, nil
 	m.shown = shown
 	m.catalogNext, m.catalogMore = 0, false
 	m.paging, m.pendingReveal = false, 0
@@ -330,6 +340,7 @@ func (m *SearchModel) SetFeed(groups []provider.RecommendationGroup) {
 	m.saved, m.lists = false, nil
 	m.feed = buildFeedSections(groups)
 	m.selected, m.stash = nil, nil
+	m.open, m.expansions = nil, nil
 	m.shown = nil
 	m.catalogNext, m.catalogMore = 0, false
 	m.paging, m.pendingReveal = false, 0
@@ -676,7 +687,9 @@ func (m *SearchModel) sectionRows(label string, total int, item func(i int) sear
 	n := m.shownCount(label, total)
 	m.rows = append(m.rows, searchRow{header: true, label: label})
 	for i := range n {
-		m.rows = append(m.rows, item(i))
+		row := item(i)
+		m.rows = append(m.rows, row)
+		m.rows = append(m.rows, m.childRows(row)...)
 	}
 	switch {
 	case n > 0 && n < total:
@@ -696,6 +709,108 @@ func (m *SearchModel) sectionRows(label string, total int, item func(i int) sear
 // searchSectionCap is how many items a section shows by default and the step
 // its "+ more" / "− less" controls add or remove.
 const searchSectionCap = 5
+
+// expansion is what an opened album or playlist shows under its row.
+type expansion struct {
+	tracks  []provider.Track
+	loading bool
+	err     error
+}
+
+// ExpandRequest names a collection whose tracks have to be fetched.
+type ExpandRequest struct {
+	Key      string
+	Album    *provider.Album
+	Playlist *provider.Playlist
+}
+
+// childRows lists the tracks of an opened album or playlist under its row:
+// one indented line each while loaded, a muted note while loading or on error.
+func (m *SearchModel) childRows(parent searchRow) []searchRow {
+	if parent.album == nil && parent.playlist == nil {
+		return nil
+	}
+	key := selKey(parent)
+	if !m.open[key] {
+		return nil
+	}
+	exp := m.expansions[key]
+	switch {
+	case exp == nil || exp.loading:
+		return []searchRow{{note: "    loading…"}}
+	case exp.err != nil:
+		return []searchRow{{note: "    " + exp.err.Error()}}
+	case len(exp.tracks) == 0:
+		return []searchRow{{note: "    no playable tracks"}}
+	}
+	out := make([]searchRow, 0, len(exp.tracks))
+	for i := range exp.tracks {
+		out = append(out, searchRow{track: &exp.tracks[i], child: true})
+	}
+	return out
+}
+
+// ToggleCollection opens the highlighted album or playlist so its tracks are
+// listed under it, or folds it again. It reports a fetch request the first
+// time a collection is opened; afterwards the tracks are kept and reopening
+// is immediate. On any other row nothing happens.
+func (m *SearchModel) ToggleCollection() (req ExpandRequest, fetch bool) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		return ExpandRequest{}, false
+	}
+	row := m.rows[m.cursor]
+	if row.album == nil && row.playlist == nil {
+		return ExpandRequest{}, false
+	}
+	key := selKey(row)
+	if m.open == nil {
+		m.open = map[string]bool{}
+	}
+	m.open[key] = !m.open[key]
+	if m.open[key] && m.expansions[key] == nil {
+		if m.expansions == nil {
+			m.expansions = map[string]*expansion{}
+		}
+		m.expansions[key] = &expansion{loading: true}
+		fetch = true
+		req = ExpandRequest{Key: key, Album: row.album, Playlist: row.playlist}
+	}
+	m.rebuildRows()
+	m.reselect(row.key())
+	return req, fetch
+}
+
+// SetCollectionTracks delivers what a ToggleCollection fetch found.
+func (m *SearchModel) SetCollectionTracks(key string, tracks []provider.Track, err error) {
+	if m.expansions == nil || m.expansions[key] == nil {
+		return // the results changed meanwhile
+	}
+	m.expansions[key] = &expansion{tracks: tracks, err: err}
+	cur := ""
+	if m.cursor >= 0 && m.cursor < len(m.rows) {
+		cur = m.rows[m.cursor].key()
+	}
+	m.rebuildRows()
+	m.reselect(cur)
+}
+
+// selectedExpansionTracks lists the marked tracks of opened collections, in
+// row order, skipping ids already listed.
+func (m *SearchModel) selectedExpansionTracks(seen map[string]bool) []SelectedItem {
+	var out []SelectedItem
+	for i := range m.rows {
+		r := m.rows[i]
+		if !r.child || r.track == nil {
+			continue
+		}
+		key := PlaybackID(*r.track)
+		if m.selected[key] && !seen[key] {
+			seen[key] = true
+			out = append(out, SelectedItem{Track: m.rows[i].track})
+		}
+	}
+	return out
+}
 
 // isLibraryTrack reports whether a search hit is the user's own library copy.
 func isLibraryTrack(t provider.Track) bool {
@@ -977,12 +1092,14 @@ func (m *SearchModel) SelectedItems() []SelectedItem {
 			out = append(out, SelectedItem{Album: &res.Albums[i]})
 		}
 	}
+	seen := map[string]bool{}
 	for i := range res.Tracks {
-		if m.selected[PlaybackID(res.Tracks[i])] {
+		if key := PlaybackID(res.Tracks[i]); m.selected[key] {
+			seen[key] = true
 			out = append(out, SelectedItem{Track: &res.Tracks[i]})
 		}
 	}
-	return out
+	return append(out, m.selectedExpansionTracks(seen)...)
 }
 
 // selectedSavedItems is the multi-selection of the saved-lists source: whole
@@ -1020,7 +1137,7 @@ func (m *SearchModel) selectedFeedItems() []SelectedItem {
 			out = append(out, SelectedItem{Album: r.album, Playlist: r.playlist})
 		}
 	}
-	return out
+	return append(out, m.selectedExpansionTracks(map[string]bool{})...)
 }
 
 // SelectedTracks returns just the songs of the multi-selection, in result order.
@@ -1232,6 +1349,12 @@ func (m *SearchModel) View() string {
 				ts = lipgloss.NewStyle().Foreground(currentAccent).Bold(true)
 			}
 			sb.WriteString(cur + ts.Render(label) + "\n")
+			linesLeft--
+			continue
+
+		case row.track != nil && row.child:
+			t := row.track
+			sb.WriteString(cur + "  " + tStyle.Render(t.Title) + dStyle.Render(" — "+t.Artist) + "\n")
 			linesLeft--
 			continue
 
