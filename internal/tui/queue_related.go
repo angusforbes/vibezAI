@@ -11,11 +11,10 @@ import (
 	"github.com/simone-vibes/vibez/internal/tui/views"
 )
 
-// One-shot related songs (the R key): fetch the seed's Apple Music station
-// once, keep up to relatedCount picks that are not already queued, and insert
-// them right after the seed. Nothing keeps refilling afterwards; the
-// continuous station mode is still available as the :radio command.
-
+// Related songs from the seed's Apple Music station, fetched once and inserted
+// right after the seed. R takes relatedCount picks for the highlighted track;
+// discover (F) takes one pick for each track that starts playing. Nothing keeps
+// refilling afterwards; the continuous station mode is the :radio command.
 const relatedCount = 5
 
 // relatedResultMsg carries the picks for one R press.
@@ -24,10 +23,17 @@ type relatedResultMsg struct {
 	seed   provider.Track
 	tracks []provider.Track
 	err    error
+	// discover marks a pick fetched by discover (F): quiet (log only) and never
+	// superseded by relatedGen, unlike an R press.
+	discover bool
 }
 
-// fetchRelatedCmd starts a related-songs lookup for seed.
-func (m *Model) fetchRelatedCmd(seed *provider.Track) tea.Cmd {
+// fetchRelatedCmd starts a station lookup for seed and keeps up to count picks
+// that are not already queued. discover marks the quiet, once-per-track form.
+func (m *Model) fetchRelatedCmd(seed *provider.Track, count int, discover bool) tea.Cmd {
+	if count <= 0 {
+		count = 1
+	}
 	if seed == nil || m.provider == nil {
 		return nil
 	}
@@ -37,8 +43,12 @@ func (m *Model) fetchRelatedCmd(seed *provider.Track) tea.Cmd {
 		m.appendLog(fmt.Sprintf("[related] %q has no catalog match; skipping", seed.Title))
 		return nil
 	}
-	m.relatedGen++
-	gen := m.relatedGen
+	gen := 0
+	if !discover {
+		// Only the latest R press counts; a discover pick is never superseded.
+		m.relatedGen++
+		gen = m.relatedGen
+	}
 	s := *seed
 	seedID := views.PlaybackID(s)
 	catalogID := s.CatalogID
@@ -54,15 +64,20 @@ func (m *Model) fetchRelatedCmd(seed *provider.Track) tea.Cmd {
 	for _, t := range m.queueTracks {
 		exclude[strings.ToLower(t.Artist+"||"+t.Title)] = true
 	}
-	m.errMsg = fmt.Sprintf("⏳ Finding songs related to %s…", s.Title)
-	m.errExpiry = time.Now().Add(15 * time.Second)
-	m.appendLog(fmt.Sprintf("[related] fetching station picks for %q", s.Title))
+	tag := "related"
+	if discover {
+		tag = "discover"
+	} else {
+		m.errMsg = fmt.Sprintf("⏳ Finding songs related to %s…", s.Title)
+		m.errExpiry = time.Now().Add(15 * time.Second)
+	}
+	m.appendLog(fmt.Sprintf("[%s] fetching station picks for %q", tag, s.Title))
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		res, err := prov.GetStationTracks(ctx, catalogID)
 		if err != nil {
-			return relatedResultMsg{gen: gen, seed: s, err: err}
+			return relatedResultMsg{gen: gen, seed: s, err: err, discover: discover}
 		}
 		var picks []provider.Track
 		seen := map[string]bool{}
@@ -74,27 +89,41 @@ func (m *Model) fetchRelatedCmd(seed *provider.Track) tea.Cmd {
 			}
 			seen[key] = true
 			picks = append(picks, t)
-			if len(picks) == relatedCount {
+			if len(picks) == count {
 				break
 			}
 		}
-		return relatedResultMsg{gen: gen, seed: s, tracks: picks}
+		return relatedResultMsg{gen: gen, seed: s, tracks: picks, discover: discover}
 	}
 }
 
 // handleRelatedResult inserts the picks right after the seed (or at the end
 // when the seed has left the queue) and mirrors the change into the engine.
+// R results report on the status line; discover picks only log.
 func (m *Model) handleRelatedResult(msg relatedResultMsg) tea.Cmd {
-	if msg.gen != m.relatedGen {
+	tag := "related"
+	switch {
+	case msg.discover && !m.discover.on:
+		m.appendLog(fmt.Sprintf("[discover] off before the pick for %q arrived; dropped", msg.seed.Title))
+		return nil
+	case msg.discover:
+		tag = "discover"
+	case msg.gen != m.relatedGen:
 		return nil
 	}
 	if msg.err != nil {
-		// Fail quietly: just take down the "Finding songs…" notice and log it.
-		m.errMsg = ""
-		m.appendLog(fmt.Sprintf("[related] error: %v", msg.err))
+		// Fail quietly: take down the "Finding songs…" notice and log it.
+		if !msg.discover {
+			m.errMsg = ""
+		}
+		m.appendLog(fmt.Sprintf("[%s] error: %v", tag, msg.err))
 		return nil
 	}
 	if len(msg.tracks) == 0 {
+		if msg.discover {
+			m.appendLog(fmt.Sprintf("[discover] no new station pick for %q", msg.seed.Title))
+			return nil
+		}
 		m.errMsg = "ℹ No new related songs found for " + msg.seed.Title
 		m.errExpiry = time.Now().Add(4 * time.Second)
 		return nil
@@ -111,9 +140,11 @@ func (m *Model) handleRelatedResult(msg relatedResultMsg) tea.Cmd {
 	for i, t := range msg.tracks {
 		ids[i] = views.PlaybackID(t)
 	}
-	m.errMsg = fmt.Sprintf("✓ Added %d related song(s) after %s", len(ids), msg.seed.Title)
-	m.errExpiry = time.Now().Add(4 * time.Second)
-	m.appendLog(fmt.Sprintf("[related] inserted %d track(s) after %q (position %d)", len(ids), msg.seed.Title, insertIdx))
+	if !msg.discover {
+		m.errMsg = fmt.Sprintf("✓ Added %d related song(s) after %s", len(ids), msg.seed.Title)
+		m.errExpiry = time.Now().Add(4 * time.Second)
+	}
+	m.appendLog(fmt.Sprintf("[%s] inserted %d track(s) after %q (position %d)", tag, len(ids), msg.seed.Title, insertIdx))
 	return m.insertQueueAt(insertIdx, msg.tracks, ids)
 }
 

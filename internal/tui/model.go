@@ -6,10 +6,8 @@ import (
 	"fmt"
 	"image"
 	"math"
-	"math/rand"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -168,16 +166,15 @@ type searchDebounceMsg struct {
 	gen   int
 }
 type vibeResultMsg struct {
-	query     string
-	tracks    []provider.Track
-	err       error
-	plan      vibe.Plan // what the planner made of the description
-	via       string    // planner that produced plan ("Claude", "keywords", …)
-	ranking   string    // how the final order came about ("picked 15 of 38", "Apple order …")
-	warnings  []string  // non-fatal provider failures behind an incomplete result
-	discovery bool      // true when result is from a discovery auto-refill
-	radio     bool      // true when result is from a radio auto-refill
-	radioGen  int       // radio generation that produced this result
+	query    string
+	tracks   []provider.Track
+	err      error
+	plan     vibe.Plan // what the planner made of the description
+	via      string    // planner that produced plan ("Claude", "keywords", …)
+	ranking  string    // how the final order came about ("picked 15 of 38", "Apple order …")
+	warnings []string  // non-fatal provider failures behind an incomplete result
+	radio    bool      // true when result is from a radio auto-refill
+	radioGen int       // radio generation that produced this result
 }
 type loveSongMsg struct {
 	title string
@@ -247,36 +244,23 @@ var introFrames = func() []string {
 
 const introDone = -1
 
-// ── Discovery mode ─────────────────────────────────────────────────────────
+// ── Discover mode ──────────────────────────────────────────────────────────
 
-// discoveryMode holds state for the continuous-discovery feature.
-// When enabled, songs are queued according to autoMode and refillCap.
-// The similarity value (0=very different, 1=very similar) controls how
-// adventurous the search is and is set via the metric picker (d key).
-type discoveryMode struct {
-	enabled        bool
-	autoMode       bool // true = auto-refill on last song; false = one-shot
-	refillCap      int  // songs to add per cycle
-	seed           *provider.Track
-	similarity     float64         // 0.0–1.0; persists across stop/start
-	refilling      bool            // background search in progress
-	triggeredForID string          // ID of track for which we already fired a search
-	skipped        map[string]bool // IDs/keys of tracks skipped due to unavailability
-	retries        int             // consecutive failed refill attempts (circuit breaker)
+// discoverMode is F. While it is on, every track that starts playing gets one
+// song from its Apple Music station inserted right after it, so something new
+// plays next: R for one song, fired once per playing track. Session state
+// only; it is not saved with the queue.
+type discoverMode struct {
+	on             bool
+	triggeredForID string // playback id of the track that already got its pick
 }
-
-const discoveryMaxRetries = 5 // give up re-arming after this many consecutive failures
-
-const (
-	discoverySimilarityStep = 0.1
-)
 
 // ── Radio mode ──────────────────────────────────────────────────────────────
 
 // radioMode holds state for the continuous radio feature: an Apple Music
 // station seeded from a track, auto-refilled as the queue runs low. Mutually
-// exclusive with discoveryMode — starting one stops the other, since both
-// compete for the same last-track refill trigger.
+// exclusive with discover (F): starting one stops the other, so only one thing
+// feeds the queue by itself.
 type radioMode struct {
 	enabled        bool
 	seed           *provider.Track
@@ -323,8 +307,8 @@ type Model struct {
 	randomGen        int              // generation of the latest random-library pick
 	relatedGen       int              // generation of the latest R (related songs) lookup
 
-	// Discovery mode
-	discovery discoveryMode
+	// Discover (F)
+	discover discoverMode
 
 	// Radio mode
 	radio radioMode
@@ -342,8 +326,6 @@ type Model struct {
 	lyricsClient      *lyrics.Client
 	lastLyricsTrackID string // ID of the track for which lyrics were last fetched
 
-	// Vibe panel (always visible, right split)
-	vibe *views.VibeModel
 	// vibePlanner turns a vibes-mode description into search terms (Claude
 	// Code CLI or the keyword table, per config "vibe_agent").
 	vibePlanner vibe.Planner
@@ -439,7 +421,6 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	m.lyricsClient = lyrics.NewClient()
 	eqBands := configEQBandsToPlayer(cfg.EQBands)
 	m.eqP = &eqPanel{m: views.NewEqualizer(eqBands)}
-	m.vibe = views.NewVibe()
 	m.vibePlanner = vibe.NewPlanner(cfg.VibeAgent, cfg.VibeModel, cfg.VibeEffort)
 	m.searchAM = views.NewSearch(prov)
 	m.searchCC = views.NewSearch(prov)
@@ -586,31 +567,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if s.SkippedID != "" {
 			// JS silently skipped a track (CONTENT_RESTRICTED / unavailable).
-			// Record the ID in the discovery blacklist so it won't be proposed
-			// again this session, purge ALL blacklisted entries from the queue
-			// (there may be duplicates from earlier discovery cycles), then
-			// re-arm discovery so music keeps flowing without interruption.
+			// Record the ID in the radio blacklist so it is not proposed again
+			// this session, purge ALL blacklisted entries from the queue, then
+			// re-arm radio so music keeps flowing without interruption.
 			skippedID := s.SkippedID
 			s.SkippedID = ""
-			if m.discovery.skipped == nil {
-				m.discovery.skipped = make(map[string]bool)
-			}
-			m.discovery.skipped[skippedID] = true
 			if m.radio.skipped == nil {
 				m.radio.skipped = make(map[string]bool)
 			}
 			m.radio.skipped[skippedID] = true
 			m.purgeSkippedFromQueue()
-			if m.discovery.enabled && !m.discovery.refilling &&
-				m.discovery.retries < discoveryMaxRetries {
-				m.discovery.retries++
-				m.discovery.triggeredForID = ""
-				m.discovery.refilling = true
-				m.syncDiscoveryView()
-				cmds = append(cmds, m.runDiscoverySearch())
-			} else if m.discovery.retries >= discoveryMaxRetries {
-				m.appendLog("[discovery] max retries reached — giving up")
-			}
 			if m.radio.enabled && !m.radio.refilling &&
 				m.radio.retries < radioMaxRetries {
 				m.radio.retries++
@@ -682,22 +648,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s.Track != nil {
 			m.lyricsP.m.SetPosition(s.Position)
 		}
-		// Discovery: in auto mode, fire as soon as the last track in the queue
-		// starts playing. Triggering at the start of the last track gives the
-		// search the maximum possible time to complete before the queue runs dry.
+		// Discover (F): one station pick for every track that starts playing,
+		// inserted right after it, once per track.
+		if cmd := m.discoverFor(s.Track); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		// Radio: fire as soon as the last track in the queue starts playing.
+		// Triggering at the start of the last track gives the search the
+		// maximum possible time to complete before the queue runs dry;
 		// triggeredForID ensures we fire exactly once per track.
 		isLastQueued := len(m.queueTracks) > 0 && s.Track != nil &&
 			views.PlaybackID(*s.Track) == views.PlaybackID(m.queueTracks[len(m.queueTracks)-1])
-		if m.discovery.enabled && m.discovery.autoMode && !m.discovery.refilling &&
-			isLastQueued &&
-			m.discovery.triggeredForID != s.Track.ID {
-			m.discovery.triggeredForID = s.Track.ID
-			m.discovery.refilling = true
-			m.syncDiscoveryView()
-			cmds = append(cmds, m.runDiscoverySearch())
-		}
-		// Radio: same last-track refill trigger as discovery, but always
-		// continuous (no one-shot mode).
 		if m.radio.enabled && !m.radio.refilling &&
 			isLastQueued &&
 			m.radio.triggeredForID != s.Track.ID {
@@ -785,20 +746,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendLog(fmt.Sprintf("[eq] config save error: %v", err))
 		}
 
-	case views.DiscoveryMetricSelectedMsg:
-		// User confirmed a metric in the picker — store it and immediately start
-		// discovery in continuous auto mode (mirrors the old single-key behaviour).
-		m.discovery.similarity = msg.Similarity
-		m.appendLog(fmt.Sprintf("[discovery] metric set: %.0f%% similarity", msg.Similarity*100))
-		if m.playerState.Track != nil {
-			cmds = append(cmds, m.startDiscovery(true, 1))
-		}
+	case views.AboutOpenErrMsg:
+		m.aboutP.m.SetOpenError(msg.Err)
+		m.appendLog(fmt.Sprintf("[about] browser: %v", msg.Err))
 
 	case vibeCandidatesMsg:
 		cmds = append(cmds, m.handleVibeCandidates(msg))
 
 	case vibeResultMsg:
-		if !msg.radio && !msg.discovery {
+		if !msg.radio {
 			m.handleVibeSearchResult(msg)
 			break
 		}
@@ -806,14 +762,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		if msg.err != nil {
-			if msg.radio {
-				m.appendLog(fmt.Sprintf("[radio] search error: %v", msg.err))
-				m.radio.refilling = false
-				break
-			}
-			m.appendLog(fmt.Sprintf("[discovery] search error: %v", msg.err))
-			m.discovery.refilling = false
-			m.syncDiscoveryView()
+			m.appendLog(fmt.Sprintf("[radio] search error: %v", msg.err))
+			m.radio.refilling = false
 			break
 		}
 		// A result can succeed and still be incomplete when one provider backend
@@ -823,54 +773,39 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.appendLog(fmt.Sprintf("[search] partial results: %s", strings.Join(msg.warnings, "; ")))
 		}
 
-		// For discovery/radio results, drop any track that arrived in the
-		// blacklist while the search was in flight (race between search
-		// goroutine and a concurrent goSkipped notification), and also drop
-		// any track already present in the queue (dedup by ID and
-		// artist||title).
+		// Drop any track that arrived in the blacklist while the search was in
+		// flight (race between the search goroutine and a concurrent goSkipped
+		// notification), and any track already present in the queue (dedup by
+		// ID and artist||title).
 		tracks := msg.tracks
-		if msg.discovery || msg.radio {
-			skipped := m.discovery.skipped
-			if msg.radio {
-				skipped = m.radio.skipped
+		skipped := m.radio.skipped
+		filtered := tracks[:0]
+		for _, t := range tracks {
+			id := views.PlaybackID(t)
+			key := strings.ToLower(t.Artist + "||" + t.Title)
+			if skipped[id] {
+				continue
 			}
-			filtered := tracks[:0]
-			for _, t := range tracks {
-				id := views.PlaybackID(t)
-				key := strings.ToLower(t.Artist + "||" + t.Title)
-				if skipped[id] {
-					continue
-				}
-				dup := slices.Contains(m.queueIDs, id)
-				if !dup {
-					for _, qt := range m.queueTracks {
-						if strings.ToLower(qt.Artist+"||"+qt.Title) == key {
-							dup = true
-							break
-						}
+			dup := slices.Contains(m.queueIDs, id)
+			if !dup {
+				for _, qt := range m.queueTracks {
+					if strings.ToLower(qt.Artist+"||"+qt.Title) == key {
+						dup = true
+						break
 					}
 				}
-				if !dup {
-					filtered = append(filtered, t)
-				}
 			}
-			tracks = filtered
+			if !dup {
+				filtered = append(filtered, t)
+			}
 		}
+		tracks = filtered
 		if len(tracks) == 0 {
-			switch {
-			case msg.discovery && m.discovery.retries < discoveryMaxRetries:
-				m.discovery.retries++
-				m.discovery.refilling = true
-				m.syncDiscoveryView()
-				cmds = append(cmds, m.runDiscoverySearch())
-			case msg.radio && m.radio.retries < radioMaxRetries:
+			if m.radio.retries < radioMaxRetries {
 				m.radio.retries++
 				m.radio.refilling = true
 				cmds = append(cmds, m.runRadioSearch())
-			case msg.discovery:
-				m.discovery.refilling = false
-				m.syncDiscoveryView()
-			case msg.radio:
+			} else {
 				m.radio.refilling = false
 			}
 			break
@@ -887,22 +822,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.queueTracks = append(m.queueTracks, tracks...)
 		m.queueIDs = append(m.queueIDs, ids...)
 		m.syncQueue()
-		switch {
-		case msg.discovery:
-			m.discovery.refilling = false
-			m.discovery.retries = 0 // successful refill — reset circuit breaker
-			if !m.discovery.autoMode {
-				// One-shot: disable discovery after this successful refill.
-				m.discovery.enabled = false
-				m.discovery.seed = nil
-			}
-			m.syncDiscoveryView()
-			m.appendLog(fmt.Sprintf("[discovery] refilled %d tracks", len(tracks)))
-		case msg.radio:
-			m.radio.refilling = false
-			m.radio.retries = 0 // successful refill — reset circuit breaker
-			m.appendLog(fmt.Sprintf("[radio] refilled %d tracks", len(tracks)))
-		}
+		m.radio.refilling = false
+		m.radio.retries = 0 // successful refill — reset circuit breaker
+		m.appendLog(fmt.Sprintf("[radio] refilled %d tracks", len(tracks)))
 
 	case loveSongMsg:
 		if msg.err != nil {
@@ -1527,7 +1449,6 @@ var allCommands = []cmdEntry{
 // nor completed: the fork does not use them. Move an entry back into
 // allCommands to bring it back.
 var retiredCommands = []cmdEntry{
-	{"discover", "discover <n>|auto|stop|metric", "Queue n discovered songs now, auto-discover until stopped, or pick the similarity"},
 	{"art", "art", "Toggle album-art view (cover + track info instead of the bar)"},
 	{"radio", "radio", "Toggle continuous radio seeded by the playing track (R inserts 5 related songs once)"},
 }
@@ -1625,33 +1546,6 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 		}
 		m.applyVibeSetup("effort")
 		return nil
-	case strings.HasPrefix(cmd, "discover"):
-		arg := strings.TrimSpace(strings.TrimPrefix(cmd, "discover"))
-		if arg == "stop" || (arg == "" && m.discovery.enabled) {
-			m.stopDiscovery()
-			return nil
-		}
-		if arg == "metric" {
-			// Pick the similarity level; the picker starts discovery when confirmed.
-			sim := m.discovery.similarity
-			if sim == 0 {
-				sim = 0.7
-			}
-			if m.playerState.Track != nil && !m.vibe.PickerActive() {
-				m.vibe.ShowPicker(sim)
-			}
-			return nil
-		}
-		if arg == "" || arg == "auto" {
-			return m.startDiscovery(true, 1)
-		}
-		n, err := strconv.Atoi(arg)
-		if err != nil || n <= 0 {
-			m.errMsg = ":discover requires a positive number or 'auto'"
-			m.errExpiry = time.Now().Add(3 * time.Second)
-			return nil
-		}
-		return m.startDiscovery(false, n)
 	case cmd == "art":
 		if !m.artMode && (m.supportsArtColor == nil || !m.supportsArtColor()) {
 			m.errMsg = "album art needs a terminal with at least 256 colours"
@@ -1833,47 +1727,37 @@ func (m *Model) fetchSearchCollectionCmd(album *provider.Album, playlist *provid
 	return nil
 }
 
-// startDiscovery activates discovery mode with the configured similarity metric.
-// autoMode=false is a one-shot: n songs are queued immediately, then discovery stops.
-func (m *Model) startDiscovery(autoMode bool, n int) tea.Cmd {
-	if m.playerState.Track == nil {
-		m.errMsg = "nothing is playing"
-		m.errExpiry = time.Now().Add(3 * time.Second)
+// toggleDiscover is F. Turning discover on also fetches a pick for the track
+// playing right now, so the next song is already new; turning it off leaves
+// whatever was inserted in place.
+func (m *Model) toggleDiscover() tea.Cmd {
+	if m.discover.on {
+		m.discover.on = false
+		m.discover.triggeredForID = ""
+		m.appendLog("[discover] off")
 		return nil
 	}
-	sim := m.discovery.similarity
-	if sim == 0 {
-		sim = 0.7 // default if no metric was selected yet
+	if m.radio.enabled {
+		m.stopRadio() // discover and radio both insert station picks: one at a time
 	}
-	m.stopRadio() // discovery and radio both refill on the last-track trigger — mutually exclusive
-	m.discovery.enabled = true
-	m.discovery.autoMode = autoMode
-	m.discovery.refillCap = n
-	m.discovery.seed = m.playerState.Track
-	m.discovery.similarity = sim
-	m.discovery.refilling = true // guard against double-trigger while search is in flight
-	m.discovery.triggeredForID = ""
-	m.syncDiscoveryView()
-	mode := "auto"
-	if !autoMode {
-		mode = fmt.Sprintf("%d songs", n)
-	}
-	m.appendLog(fmt.Sprintf("[discovery] started from %q (similarity %.0f%%, mode=%s)",
-		m.playerState.Track.Title, sim*100, mode))
-	return m.runDiscoverySearch()
+	m.discover.on = true
+	m.appendLog("[discover] on")
+	return m.discoverFor(m.playerState.Track)
 }
 
-// stopDiscovery turns discovery mode off and clears its session state.
-func (m *Model) stopDiscovery() {
-	if !m.discovery.enabled {
-		return
+// discoverFor fetches one station pick for t and inserts it right after t,
+// once per track. Nothing happens while discover is off, with no track, or
+// for a track that already had its pick.
+func (m *Model) discoverFor(t *provider.Track) tea.Cmd {
+	if !m.discover.on || t == nil {
+		return nil
 	}
-	m.discovery.enabled = false
-	m.discovery.seed = nil
-	m.discovery.refilling = false
-	m.discovery.triggeredForID = ""
-	m.syncDiscoveryView()
-	m.appendLog("[discovery] stopped")
+	id := views.PlaybackID(*t)
+	if m.discover.triggeredForID == id {
+		return nil
+	}
+	m.discover.triggeredForID = id
+	return m.fetchRelatedCmd(t, 1, true)
 }
 
 // startRadioFrom activates radio mode seeded by the given track, replacing
@@ -1882,7 +1766,7 @@ func (m *Model) startRadioFrom(seed *provider.Track) tea.Cmd {
 	if seed == nil {
 		return nil
 	}
-	m.discovery.enabled = false // discovery and radio are mutually exclusive
+	m.discover.on = false // discover (F) and radio both insert station picks: one at a time
 	m.radio.generation++
 	m.radio.enabled = true
 	m.radio.seed = seed
@@ -1923,8 +1807,7 @@ func (m *Model) stopRadio() {
 }
 
 // runRadioSearch fetches the next batch of tracks for the active radio
-// station and returns a vibeResultMsg tagged as a radio refill, mirroring
-// runDiscoverySearch's dedup/exclude handling.
+// station and returns a vibeResultMsg tagged as a radio refill.
 func (m *Model) runRadioSearch() tea.Cmd {
 	if !m.radio.enabled || m.radio.seed == nil {
 		return nil
@@ -2001,9 +1884,20 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		}
 	}
 
-	// While the discovery-metric picker is open it takes all the keys.
-	if m.vibe.PickerActive() {
-		return m.vibe.Update(msg)
+	// The About panel takes no commands. esc, ? and Tab close it (with the
+	// other panels, below), Ctrl+Shift+D opens the donation page, and every
+	// other key is dropped here so nothing reaches the player, the other
+	// panels or the command line from a screen of credits.
+	if m.activePanel >= 0 && m.panels[m.activePanel] == m.aboutP {
+		switch k {
+		case "esc", "tab", "shift+tab", "?":
+		case "ctrl+shift+d", "ctrl+shift+D":
+			m.lastKey = ""
+			return m.aboutP.Update(msg)
+		default:
+			m.lastKey = ""
+			return nil
+		}
 	}
 
 	// Panel nav keys toggle their panel (always checked first).
@@ -2082,24 +1976,10 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 
 	case "+", "=":
 		m.lastKey = ""
-		if m.discovery.enabled {
-			// Adjust discovery similarity toward "more similar".
-			m.discovery.similarity = min(1.0, m.discovery.similarity+discoverySimilarityStep)
-			m.syncDiscoveryView()
-			m.appendLog(fmt.Sprintf("[discovery] similarity → %.0f%%", m.discovery.similarity*100))
-			return nil
-		}
 		return m.adjustVolume(0.05)
 
 	case "-":
 		m.lastKey = ""
-		if m.discovery.enabled {
-			// Adjust discovery similarity toward "more different".
-			m.discovery.similarity = max(0.0, m.discovery.similarity-discoverySimilarityStep)
-			m.syncDiscoveryView()
-			m.appendLog(fmt.Sprintf("[discovery] similarity → %.0f%%", m.discovery.similarity*100))
-			return nil
-		}
 		return m.adjustVolume(-0.05)
 
 	case "r":
@@ -2139,7 +2019,13 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 			t := m.queueTracks[m.queueCursor]
 			seed = &t
 		}
-		return m.fetchRelatedCmd(seed)
+		return m.fetchRelatedCmd(seed, relatedCount, false)
+
+	case "F":
+		// Discover on/off: while on, every track that starts playing gets one
+		// song from its station inserted right after it (R for one song).
+		m.lastKey = ""
+		return m.toggleDiscover()
 
 	case "T":
 		m.lastKey = ""
@@ -2818,32 +2704,17 @@ func (m *Model) checkSongRatingCmd(t *provider.Track) tea.Cmd {
 	}
 }
 
-// syncDiscoveryView pushes the current discovery state into the vibe view.
-func (m *Model) syncDiscoveryView() {
-	info := views.DiscoveryInfo{}
-	if m.discovery.enabled && m.discovery.seed != nil {
-		info.Active = true
-		info.SeedArtist = m.discovery.seed.Artist
-		info.SeedTitle = m.discovery.seed.Title
-		info.Similarity = m.discovery.similarity
-		info.Refilling = m.discovery.refilling
-		info.AutoMode = m.discovery.autoMode
-		info.Count = m.discovery.refillCap
-	}
-	m.vibe.SetDiscovery(info)
-}
-
 // purgeSkippedFromQueue removes every queued track whose PlaybackID appears in
-// the discovery skip blacklist. It also tells the JS player to remove those
+// the radio skip blacklist. It also tells the JS player to remove those
 // slots so both sides stay in sync. Iterates from the end so index removal
 // doesn't shift the positions of entries not yet processed.
 func (m *Model) purgeSkippedFromQueue() {
-	if len(m.discovery.skipped) == 0 && len(m.radio.skipped) == 0 {
+	if len(m.radio.skipped) == 0 {
 		return
 	}
 	changed := false
 	for i := len(m.queueIDs) - 1; i >= 0; i-- {
-		if !m.discovery.skipped[m.queueIDs[i]] && !m.radio.skipped[m.queueIDs[i]] {
+		if !m.radio.skipped[m.queueIDs[i]] {
 			continue
 		}
 		m.appendLog(fmt.Sprintf("[skip] removing from queue: %s — %s",
@@ -2858,327 +2729,6 @@ func (m *Model) purgeSkippedFromQueue() {
 	}
 	if changed {
 		m.syncQueue()
-	}
-}
-
-// runDiscoverySearch builds search queries from the seed track and similarity
-// value, fetches results in parallel, and returns a vibeResultMsg tagged as a
-// discovery refill so the model knows not to update the vibe panel state.
-func (m *Model) runDiscoverySearch() tea.Cmd {
-	if !m.discovery.enabled || m.discovery.seed == nil {
-		return nil
-	}
-	seed := m.discovery.seed
-	similarity := m.discovery.similarity
-	prov := m.provider
-	refillCap := m.discovery.refillCap
-	if refillCap <= 0 {
-		refillCap = 1
-	}
-	queries := discoveryQueries(seed, similarity)
-	m.appendLog(fmt.Sprintf("[discovery] queries (sim=%.0f%%): %v", similarity*100, queries))
-
-	// Snapshot both the skip blacklist and the already-queued set so the
-	// goroutine can filter without racing on the model's maps/slices.
-	exclude := make(map[string]bool, len(m.discovery.skipped)+len(m.queueIDs))
-	for k := range m.discovery.skipped {
-		exclude[k] = true
-	}
-	for _, id := range m.queueIDs {
-		exclude[id] = true
-	}
-	// Also exclude by normalised artist||title to catch the same song under
-	// a different ID (e.g. library vs catalog copy).
-	for _, t := range m.queueTracks {
-		exclude[strings.ToLower(t.Artist+"||"+t.Title)] = true
-	}
-
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-
-		type out struct {
-			tracks   []provider.Track
-			warnings []string
-			err      error
-		}
-		chs := make([]chan out, len(queries))
-		for i, q := range queries {
-			ch := make(chan out, 1)
-			chs[i] = ch
-			go func(term string, c chan out) {
-				res, err := prov.Search(ctx, term)
-				if err != nil || res == nil {
-					c <- out{err: err}
-					return
-				}
-				c <- out{tracks: res.Tracks, warnings: res.Warnings}
-			}(q, ch)
-		}
-
-		seen := map[string]bool{}
-		var merged []provider.Track
-		var reasons []string
-		for _, ch := range chs {
-			r := <-ch
-			if r.err != nil {
-				reasons = append(reasons, r.err.Error())
-			}
-			reasons = append(reasons, r.warnings...)
-			for _, t := range r.tracks {
-				id := views.PlaybackID(t)
-				key := strings.ToLower(t.Artist + "||" + t.Title)
-				if exclude[id] || exclude[key] {
-					continue // already queued, skipped, or blacklisted
-				}
-				if !seen[key] {
-					seen[key] = true
-					merged = append(merged, t)
-				}
-			}
-		}
-
-		rand.Shuffle(len(merged), func(i, j int) { //nolint:gosec
-			merged[i], merged[j] = merged[j], merged[i]
-		})
-		if len(merged) > refillCap {
-			merged = merged[:refillCap]
-		}
-		if len(merged) == 0 {
-			reasons := dedupeStrings(reasons)
-			if len(reasons) == 0 {
-				return vibeResultMsg{discovery: true, err: errors.New("no results")}
-			}
-			return vibeResultMsg{
-				discovery: true,
-				err:       fmt.Errorf("no results (%s)", strings.Join(reasons, "; ")),
-				warnings:  reasons,
-			}
-		}
-		return vibeResultMsg{discovery: true, tracks: merged, warnings: dedupeStrings(reasons)}
-	}
-}
-
-// discoveryQueries returns search terms based on seed + similarity.
-// similarity 1.0 = same artist; 0.0 = completely random genre exploration.
-//
-// Apple Music's catalog search is artist/title indexed; bare genre strings
-// ("indie", "r&b playlist") rarely match songs. Instead we always build
-// queries from artist names — either the seed artist or curated artists that
-// are representative of the seed's genre or adjacent genres.
-func discoveryQueries(seed *provider.Track, similarity float64) []string {
-	artist := seed.Artist
-	album := seed.Album
-
-	// Resolve the primary genre from the track metadata.  Apple Music often
-	// appends the catch-all "Music" genre; skip it when a more specific tag
-	// is available.
-	genre := ""
-	for _, g := range seed.Genres {
-		if g != "Music" && g != "" {
-			genre = g
-			break
-		}
-	}
-
-	// genrePool returns a randomised slice of artist names that are
-	// representative of the given Apple Music genre string (case-insensitive
-	// prefix match).  Falls back to a broad alternative/indie pool.
-	pool := discoveryArtistPool(genre)
-
-	// pick selects n distinct random elements from pool, avoiding `exclude`.
-	pick := func(n int, exclude ...string) []string {
-		excl := make(map[string]bool, len(exclude))
-		for _, e := range exclude {
-			excl[strings.ToLower(e)] = true
-		}
-		// Shuffle a copy so each call produces different results.
-		shuffled := make([]string, len(pool))
-		copy(shuffled, pool)
-		rand.Shuffle(len(shuffled), func(i, j int) { //nolint:gosec
-			shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
-		})
-		var out []string
-		for _, a := range shuffled {
-			if !excl[strings.ToLower(a)] {
-				out = append(out, a)
-				if len(out) == n {
-					break
-				}
-			}
-		}
-		return out
-	}
-
-	switch {
-	case similarity >= 0.85:
-		// Same-artist focus: search the artist directly, plus a specific album
-		// when available for breadth across their catalogue.
-		qs := []string{artist}
-		if album != "" {
-			qs = append(qs, artist+" "+album)
-		}
-		// Add one more artist from the same genre pool for slight variety.
-		qs = append(qs, pick(1, artist)...)
-		return qs
-
-	case similarity >= 0.65:
-		// Seed artist + a couple of related artists from the same genre.
-		qs := []string{artist}
-		qs = append(qs, pick(2, artist)...)
-		return qs
-
-	case similarity >= 0.45:
-		// Genre-focused: seed artist as anchor + 2–3 artists from same pool.
-		qs := []string{artist}
-		qs = append(qs, pick(3, artist)...)
-		return qs
-
-	case similarity >= 0.20:
-		// Exploration: seed genre pool + one artist from an adjacent genre.
-		adj := discoveryArtistPool(discoveryAdjacentGenre(genre))
-		qs := pick(2, artist)
-		// Pick one from adjacent pool.
-		rand.Shuffle(len(adj), func(i, j int) { adj[i], adj[j] = adj[j], adj[i] }) //nolint:gosec
-		if len(adj) > 0 {
-			qs = append(qs, adj[0])
-		}
-		return qs
-
-	default:
-		// Pure discovery: three artists from two completely random genre pools.
-		genres := []string{
-			"Electronic", "Jazz", "Hip-Hop/Rap", "R&B/Soul",
-			"Folk", "Classical", "Country", "Reggae",
-		}
-		rand.Shuffle(len(genres), func(i, j int) { genres[i], genres[j] = genres[j], genres[i] }) //nolint:gosec
-		p1 := discoveryArtistPool(genres[0])
-		p2 := discoveryArtistPool(genres[1])
-		rand.Shuffle(len(p1), func(i, j int) { p1[i], p1[j] = p1[j], p1[i] }) //nolint:gosec
-		rand.Shuffle(len(p2), func(i, j int) { p2[i], p2[j] = p2[j], p2[i] }) //nolint:gosec
-		var qs []string
-		if len(p1) > 0 {
-			qs = append(qs, p1[0])
-		}
-		if len(p2) > 0 {
-			qs = append(qs, p2[0])
-		}
-		if len(p1) > 1 {
-			qs = append(qs, p1[1])
-		}
-		return qs
-	}
-}
-
-// discoveryAdjacentGenre returns a genre that is stylistically adjacent to g.
-func discoveryAdjacentGenre(g string) string {
-	adjacency := map[string]string{
-		"alternative": "Electronic",
-		"indie":       "Folk",
-		"electronic":  "Alternative",
-		"pop":         "R&B/Soul",
-		"hip-hop":     "R&B/Soul",
-		"r&b":         "Hip-Hop/Rap",
-		"folk":        "Alternative",
-		"jazz":        "Soul",
-		"soul":        "Jazz",
-		"rock":        "Alternative",
-		"metal":       "Rock",
-		"classical":   "Jazz",
-		"country":     "Folk",
-	}
-	low := strings.ToLower(g)
-	for k, v := range adjacency {
-		if strings.Contains(low, k) {
-			return v
-		}
-	}
-	return "Electronic" // safe fallback
-}
-
-// discoveryArtistPool returns a curated list of artist names that are
-// representative of g (matched by case-insensitive substring).
-// Apple Music search resolves artist names to tracks reliably.
-func discoveryArtistPool(g string) []string {
-	low := strings.ToLower(g)
-
-	type genreEntry struct {
-		key     string
-		artists []string
-	}
-	entries := []genreEntry{
-		{"alternative", []string{
-			"Radiohead", "The National", "Pixies", "Sonic Youth", "Pavement",
-			"Dinosaur Jr", "Built to Spill", "Guided by Voices", "Yo La Tengo",
-			"My Bloody Valentine", "Slowdive", "Ride", "Mazzy Star", "Neutral Milk Hotel",
-		}},
-		{"indie", []string{
-			"Bon Iver", "Fleet Foxes", "Arcade Fire", "Modest Mouse", "Death Cab for Cutie",
-			"Sufjan Stevens", "Bright Eyes", "Phosphorescent", "Big Thief", "Phoebe Bridgers",
-			"Waxahatchee", "Angel Olsen", "Sharon Van Etten", "Hand Habits", "Hazel English",
-		}},
-		{"electronic", []string{
-			"Four Tet", "Burial", "Aphex Twin", "Caribou", "James Blake",
-			"Boards of Canada", "Massive Attack", "Portishead", "Thom Yorke",
-			"Floating Points", "Jon Hopkins", "Nils Frahm", "Nicolas Jaar", "Arca",
-		}},
-		{"pop", []string{
-			"Lorde", "Lana Del Rey", "Grimes", "FKA twigs", "Charli XCX",
-			"Caroline Polachek", "Carly Rae Jepsen", "Perfume Genius", "Weyes Blood", "Aldous Harding",
-		}},
-		{"hip-hop", []string{
-			"Kendrick Lamar", "Frank Ocean", "Tyler the Creator", "Danny Brown", "Vince Staples",
-			"JPEGMAFIA", "Denzel Curry", "Little Simz", "Injury Reserve", "billy woods",
-		}},
-		{"r&b", []string{
-			"Frank Ocean", "SZA", "Blood Orange", "Solange", "Kelela",
-			"Syd", "Moses Sumney", "Sampha", "NAO", "Tirzah",
-		}},
-		{"folk", []string{
-			"Iron & Wine", "Gillian Welch", "Jason Isbell", "Phosphorescent", "Gregory Alan Isakov",
-			"Josh Ritter", "Anaïs Mitchell", "The Tallest Man on Earth", "Nick Drake", "John Martyn",
-		}},
-		{"jazz", []string{
-			"Brad Mehldau", "Nubya Garcia", "Kamasi Washington", "Snarky Puppy", "Thundercat",
-			"Makaya McCraven", "Sons of Kemet", "Shabaka Hutchings", "Charles Mingus", "Bill Evans",
-		}},
-		{"soul", []string{
-			"Leon Bridges", "Nathaniel Rateliff", "Anderson Paak", "Charles Bradley",
-			"Sharon Jones", "Michael Kiwanuka", "Lianne La Havas", "Durand Jones",
-		}},
-		{"rock", []string{
-			"Wilco", "The War on Drugs", "Kurt Vile", "Spoon", "Parquet Courts",
-			"Drive-By Truckers", "Steve Gunn", "Jeff Tweedy", "Ty Segall", "Thee Oh Sees",
-		}},
-		{"metal", []string{
-			"Mastodon", "Baroness", "Converge", "Neurosis", "Pallbearer",
-			"Inter Arma", "Bell Witch", "Deafheaven", "Wolves in the Throne Room",
-		}},
-		{"classical", []string{
-			"Nils Frahm", "Max Richter", "Johann Johannsson", "Ólafur Arnalds",
-			"Lubomyr Melnyk", "Dustin O'Halloran", "Ryuichi Sakamoto",
-		}},
-		{"country", []string{
-			"Sturgill Simpson", "Chris Stapleton", "Jason Isbell", "Colter Wall",
-			"Tyler Childers", "Charley Crockett", "Nikki Lane", "Margo Price",
-		}},
-		{"reggae", []string{
-			"Bob Marley", "Toots and the Maytals", "Peter Tosh", "Lee Scratch Perry",
-			"Burning Spear", "Steel Pulse", "The Congos",
-		}},
-	}
-
-	for _, e := range entries {
-		if strings.Contains(low, e.key) {
-			return e.artists
-		}
-	}
-
-	// Broad fallback used when the genre is unknown.
-	return []string{
-		"Radiohead", "Bon Iver", "The National", "Fleet Foxes", "Arcade Fire",
-		"Sufjan Stevens", "Bright Eyes", "James Blake", "Four Tet", "Caribou",
-		"Big Thief", "Phoebe Bridgers", "Angel Olsen", "Weyes Blood", "Wilco",
 	}
 }
 
@@ -3838,27 +3388,8 @@ func (m *Model) statusNavLines(w int) []string {
 				accent.Render("j/k") + muted.Render(" scroll"),
 				accent.Render("esc") + muted.Render(" close"),
 			}
-		case m.activePanel >= 0 && m.panels[m.activePanel] == m.lyricsP:
-			parts = []string{
-				styles.ModeNormal.Render("LYRICS"),
-				accent.Render("j/k") + muted.Render(" scroll"),
-				accent.Render("g/G") + muted.Render(" top/bottom"),
-				accent.Render("esc") + muted.Render(" close"),
-			}
-		case m.activePanel >= 0 && m.panels[m.activePanel] == m.eqP:
-			parts = []string{
-				styles.ModeNormal.Render("EQUALIZER"),
-				accent.Render("←/→") + muted.Render(" band"),
-				accent.Render("↑/↓") + muted.Render(" gain"),
-				accent.Render("0") + muted.Render(" reset band"),
-				accent.Render("r") + muted.Render(" reset all"),
-				accent.Render("e") + muted.Render(" close"),
-			}
-		case m.activePanel >= 0 && m.panels[m.activePanel] == m.aboutP:
-			parts = []string{
-				styles.ModeNormal.Render("ABOUT"),
-				accent.Render("esc/?") + muted.Render(" close"),
-			}
+		case m.activePanel >= 0:
+			return m.panelNavLines(w)
 		default:
 			parts = m.tracksNavParts()
 		}
@@ -3882,13 +3413,52 @@ func (m *Model) tracksNavParts() []string {
 	}
 }
 
+// panelNavLines is the footer while a full-width panel is open: that panel's
+// own keys alone, whichever column had the keys before it opened. Lyrics and
+// the equalizer still take the playback keys, they are just not repeated
+// here; About takes nothing else, and its row is the only place the donate
+// key is listed.
+func (m *Model) panelNavLines(w int) []string {
+	muted := styles.QueueItemMuted
+	accent := styles.KeyName
+	var parts []string
+	switch {
+	case m.activePanel < 0:
+		return nil
+	case m.panels[m.activePanel] == m.lyricsP:
+		parts = []string{
+			styles.ModeNormal.Render("LYRICS"),
+			accent.Render("j/k") + muted.Render(" scroll"),
+			accent.Render("g/G") + muted.Render(" top/bottom"),
+			accent.Render("esc") + muted.Render(" close"),
+		}
+	case m.panels[m.activePanel] == m.eqP:
+		parts = []string{
+			styles.ModeNormal.Render("EQUALIZER"),
+			accent.Render("←/→") + muted.Render(" band"),
+			accent.Render("↑/↓") + muted.Render(" gain"),
+			accent.Render("0") + muted.Render(" reset band"),
+			accent.Render("r") + muted.Render(" reset all"),
+			accent.Render("e") + muted.Render(" close"),
+		}
+	case m.panels[m.activePanel] == m.aboutP:
+		parts = []string{
+			styles.ModeNormal.Render("ABOUT"),
+			accent.Render("^⇧D") + muted.Render(" donate"),
+			accent.Render("esc/?") + muted.Render(" close"),
+		}
+	}
+	return wrapFit(parts, muted.Render("  ·  "), w)
+}
+
 // statusPlayLines is the bottom status line: always shows playback controls,
 // wrapped to fit width w.
 func (m *Model) statusPlayLines(w int) []string {
 	return wrapFit(m.statusPlayParts(), styles.QueueItemMuted.Render("  ·  "), w)
 }
 
-// statusPlayParts lists the playback and Tracks-editing keys.
+// statusPlayParts lists the playback and Tracks-editing keys. The three keys
+// that add songs close the list: R, T, then F discover with its on indicator.
 func (m *Model) statusPlayParts() []string {
 	muted := styles.QueueItemMuted
 	accent := styles.KeyName
@@ -3902,23 +3472,24 @@ func (m *Model) statusPlayParts() []string {
 		accent.Render("←/→") + muted.Render(" seek ±10s"),
 		accent.Render("d") + muted.Render(" remove"),
 		accent.Render("D/^⇧D") + muted.Render(" cut below/above"),
-		accent.Render("J/K ⇧←/⇧→") + muted.Render(" move down/up"),
-		accent.Render("R") + muted.Render(" +5 related"),
-		accent.Render("⇧T") + muted.Render(" +5 library"),
+		accent.Render("J/K ⇧→/⇧←") + muted.Render(" move down/up"),
 		accent.Render("s") + muted.Render(" random"),
 		accent.Render("S") + muted.Render(" shuffle & play"),
 		accent.Render("r") + muted.Render(" repeat"),
 		accent.Render("c") + muted.Render(" clear"),
 	}
-	if m.discovery.enabled {
-		parts = append(parts, accent.Render(":discover")+styles.Playing.Render(" ● on"))
-	} else if m.vibe.PickerActive() {
-		parts = append(parts, accent.Render(":discover")+styles.Playing.Render(" picking…"))
-	}
 	if m.radio.enabled {
 		parts = append(parts, accent.Render(":radio")+styles.Playing.Render(" 📻 on"))
 	}
-	return parts
+	discover := accent.Render("F") + muted.Render(" discover")
+	if m.discover.on {
+		discover += styles.Playing.Render(" ● on")
+	}
+	return append(parts,
+		accent.Render("R")+muted.Render(" +5 related"),
+		accent.Render("T")+muted.Render(" +5 library"),
+		discover,
+	)
 }
 
 // statusLines returns every status row — nav hints then playback controls —
@@ -3926,6 +3497,10 @@ func (m *Model) statusPlayParts() []string {
 // so panelHeight consults it rather than assuming a fixed two rows.
 func (m *Model) statusLines(w int) []string {
 	switch {
+	case !m.debugView && m.activePanel >= 0:
+		// A full-width panel owns the footer: its own keys alone, whichever
+		// column had the keys before it opened (see panelNavLines).
+		return m.panelNavLines(w)
 	case m.mode == modeSearch, m.mode == modeCommand:
 		// Keys go to the search input or the command line here, so the Tracks
 		// and playback key lists would be noise; the SEARCH and CMD rows

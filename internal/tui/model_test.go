@@ -929,7 +929,7 @@ func TestTracksCtrlArrows_DriveTheSearchList(t *testing.T) {
 	}
 	// The keys work from Tracks but the TRACKS row lists only its own keys.
 	footer := ansi.Strip(strings.Join(m.statusLines(600), " "))
-	if !strings.Contains(footer, "⇧←/⇧→ move") {
+	if !strings.Contains(footer, "⇧→/⇧← move") {
 		t.Fatalf("the TRACKS row lists its own keys: %q", footer)
 	}
 	for _, hidden := range []string{"search pick", "search select", "search toggle/clear", "add from search"} {
@@ -1281,12 +1281,13 @@ func TestFeedSource_CyclesLoadsAndSelectsLikeASearch(t *testing.T) {
 	if m.searchSrc != searchFeed || cmd != nil || !m.search.Feed() {
 		t.Fatalf("a second visit keeps the loaded feed: src=%v cmd=%v feed=%v", m.searchSrc, cmd != nil, m.search.Feed())
 	}
-	// F is no longer a panel key.
+	// F is discover on/off, not a panel key.
 	m.mode = modeNormal
 	m.handleNormalKey(tea.KeyPressMsg{Code: 'F', Text: "F"}, "F")
-	if m.activePanel >= 0 {
-		t.Fatalf("F opens nothing now, got panel %d", m.activePanel)
+	if m.activePanel >= 0 || !m.discover.on {
+		t.Fatalf("F toggles discover and opens nothing, got panel %d on=%v", m.activePanel, m.discover.on)
 	}
+	m.handleNormalKey(tea.KeyPressMsg{Code: 'F', Text: "F"}, "F")
 }
 
 func TestShiftArrowsMoveTracks_AndShiftSShufflesAndPlays(t *testing.T) {
@@ -1299,14 +1300,14 @@ func TestShiftArrowsMoveTracks_AndShiftSShufflesAndPlays(t *testing.T) {
 	press := func(k string, code rune, mod tea.KeyMod) tea.Cmd {
 		return m.handleNormalKey(tea.KeyPressMsg{Code: code, Mod: mod}, k)
 	}
-	// Shift+← is J (down), Shift+→ is K (up).
-	press("shift+left", tea.KeyLeft, tea.ModShift)
-	if m.queueIDs[1] != "1" || m.queueCursor != 1 {
-		t.Fatalf("⇧← moves the highlighted track down: ids=%v cursor=%d", m.queueIDs, m.queueCursor)
-	}
+	// Shift+→ is J (down, later in play order), Shift+← is K (up, earlier).
 	press("shift+right", tea.KeyRight, tea.ModShift)
+	if m.queueIDs[1] != "1" || m.queueCursor != 1 {
+		t.Fatalf("⇧→ moves the highlighted track down: ids=%v cursor=%d", m.queueIDs, m.queueCursor)
+	}
+	press("shift+left", tea.KeyLeft, tea.ModShift)
 	if m.queueIDs[0] != "1" || m.queueCursor != 0 {
-		t.Fatalf("⇧→ moves it back up: ids=%v cursor=%d", m.queueIDs, m.queueCursor)
+		t.Fatalf("⇧← moves it back up: ids=%v cursor=%d", m.queueIDs, m.queueCursor)
 	}
 	// S shuffles the whole list and plays from the new top.
 	if cmd := press("S", 'S', 0); cmd != nil {
@@ -1331,7 +1332,7 @@ func TestShiftArrowsMoveTracks_AndShiftSShufflesAndPlays(t *testing.T) {
 		t.Fatalf(":shuffle is no more: %q", m.errMsg)
 	}
 	footer := ansi.Strip(strings.Join(m.statusLines(600), " "))
-	if !strings.Contains(footer, "S shuffle & play") || !strings.Contains(footer, "⇧←/⇧→ move") {
+	if !strings.Contains(footer, "S shuffle & play") || !strings.Contains(footer, "⇧→/⇧← move") {
 		t.Fatalf("the TRACKS row lists S and the shift arrows: %q", footer)
 	}
 }
@@ -1720,14 +1721,6 @@ func TestModel_Update_VibeResultMsg_Error(t *testing.T) {
 	if m.search.Loading() || len(m.search.Results()) != 0 || m.errMsg != "" {
 		t.Fatalf("a failed vibe search should just leave an empty list (loading=%v results=%d err=%q)", m.search.Loading(), len(m.search.Results()), m.errMsg)
 	}
-}
-
-func TestModel_Update_VibeResultMsg_Discovery(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	tracks := []provider.Track{{Title: "Discovery Song", ID: "999", CatalogID: "cat999"}}
-	_, cmd := m.Update(vibeResultMsg{tracks: tracks, discovery: true})
-	_ = cmd
 }
 
 func TestModel_Update_VibeResultMsg_Radio(t *testing.T) {
@@ -2126,28 +2119,6 @@ func TestHandleNormalKey_Minus_VolumeDown(t *testing.T) {
 	}
 }
 
-func TestHandleNormalKey_Plus_Discovery_IncreaseSimilarity(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	m.discovery.enabled = true
-	m.discovery.similarity = 0.5
-	m.handleNormalKey(tea.KeyPressMsg{Code: '+', Text: "+"}, "+")
-	if m.discovery.similarity <= 0.5 {
-		t.Error("+ key in discovery mode should increase similarity")
-	}
-}
-
-func TestHandleNormalKey_Minus_Discovery_DecreaseSimilarity(t *testing.T) {
-	mp := newMockPlayer()
-	m := newModel(mp)
-	m.discovery.enabled = true
-	m.discovery.similarity = 0.7
-	m.handleNormalKey(tea.KeyPressMsg{Code: '-', Text: "-"}, "-")
-	if m.discovery.similarity >= 0.7 {
-		t.Error("- key in discovery mode should decrease similarity")
-	}
-}
-
 func TestHandleNormalKey_R_CycleRepeat(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
@@ -2405,25 +2376,24 @@ func TestHandleNormalKey_R_StartRadio_ResetsStaleSkipped(t *testing.T) {
 	}
 }
 
-func TestHandleNormalKey_R_StopsDiscovery(t *testing.T) {
+func TestRadio_StopsDiscover(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
-	m.discovery.enabled = true
-	m.discovery.seed = &provider.Track{ID: "old-seed"}
+	m.discover.on = true
 	m.playerState.Track = &provider.Track{Title: "New Seed", ID: "new-seed", CatalogID: "newcat"}
 	m.executeCommand("radio")
-	if m.discovery.enabled {
-		t.Error("starting radio should stop discovery — both compete for the last-track refill trigger")
+	if m.discover.on {
+		t.Error("starting radio should turn discover off: one auto-filler at a time")
 	}
 	if !m.radio.enabled {
-		t.Error("R key should have started radio")
+		t.Error(":radio should have started radio")
 	}
 }
 
 func TestHandleNormalKey_V_DoesNothing(t *testing.T) {
 	m := newModel(nil)
 	m.handleNormalKey(tea.KeyPressMsg{Code: 'v', Text: "v"}, "v")
-	if m.vibe.IsFocused() || m.mode != modeNormal {
+	if m.mode != modeNormal {
 		t.Error("the separate vibe prompt is gone; v must not focus anything")
 	}
 }
@@ -3359,66 +3329,6 @@ func TestQueuePanel_SelectedTrack_Empty(t *testing.T) {
 	}
 }
 
-// ─── discoveryQueries ─────────────────────────────────────────────────────────
-
-func TestDiscoveryQueries_HighSimilarity(t *testing.T) {
-	seed := &provider.Track{Artist: "Daft Punk", Title: "Get Lucky", Genres: []string{"electronic"}}
-	queries := discoveryQueries(seed, 0.9) // >= 0.85
-	if len(queries) == 0 {
-		t.Fatal("discoveryQueries(0.9) returned empty slice")
-	}
-	found := false
-	for _, q := range queries {
-		if strings.Contains(q, "Daft Punk") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("discoveryQueries(0.9) should include artist name, got %v", queries)
-	}
-}
-
-func TestDiscoveryQueries_MediumHighSimilarity(t *testing.T) {
-	seed := &provider.Track{Artist: "Kendrick Lamar", Genres: []string{"hip-hop"}}
-	queries := discoveryQueries(seed, 0.7) // >= 0.65
-	if len(queries) == 0 {
-		t.Fatal("discoveryQueries(0.7) returned empty slice")
-	}
-}
-
-func TestDiscoveryQueries_MediumSimilarity(t *testing.T) {
-	seed := &provider.Track{Artist: "Frank Ocean", Genres: []string{"r&b"}}
-	queries := discoveryQueries(seed, 0.5) // >= 0.45
-	if len(queries) == 0 {
-		t.Fatal("discoveryQueries(0.5) returned empty slice")
-	}
-}
-
-func TestDiscoveryQueries_LowSimilarity(t *testing.T) {
-	seed := &provider.Track{Artist: "The Weeknd", Genres: []string{"pop"}}
-	queries := discoveryQueries(seed, 0.3) // >= 0.20
-	if len(queries) == 0 {
-		t.Fatal("discoveryQueries(0.3) returned empty slice")
-	}
-}
-
-func TestDiscoveryQueries_VeryLowSimilarity(t *testing.T) {
-	seed := &provider.Track{Artist: "Artist", Genres: []string{"jazz"}}
-	queries := discoveryQueries(seed, 0.1) // < 0.20
-	if len(queries) == 0 {
-		t.Fatal("discoveryQueries(0.1) returned empty slice")
-	}
-}
-
-func TestDiscoveryQueries_NoGenres(t *testing.T) {
-	seed := &provider.Track{Artist: "Artist", Genres: nil}
-	queries := discoveryQueries(seed, 0.8)
-	if len(queries) == 0 {
-		t.Fatal("discoveryQueries(no genres) returned empty slice")
-	}
-}
-
 // ─── safeIdx ──────────────────────────────────────────────────────────────────
 
 func TestSafeIdx_ValidIndex(t *testing.T) {
@@ -4138,29 +4048,6 @@ func TestNoResultsError(t *testing.T) {
 	}
 	if strings.Count(got, "catalog song search") != 1 {
 		t.Errorf("noResultsError = %q, want the repeated reason collapsed to one", got)
-	}
-}
-
-func TestCommand_DiscoverMetric_OpensPicker(t *testing.T) {
-	m := newModel(newMockPlayer())
-	m.playerState.Track = &provider.Track{Title: "Seed Song", Artist: "Artist", ID: "seed"}
-	_ = m.executeCommand("discover metric")
-	if !m.vibe.PickerActive() || m.discovery.enabled {
-		t.Fatalf(":discover metric should open the picker without starting discovery (picker=%v enabled=%v)", m.vibe.PickerActive(), m.discovery.enabled)
-	}
-}
-
-func TestCommand_Discover_TogglesOff(t *testing.T) {
-	m := newModel(newMockPlayer())
-	m.discovery.enabled = true
-	m.discovery.seed = &provider.Track{ID: "seed"}
-	_ = m.executeCommand("discover")
-	if m.discovery.enabled {
-		t.Fatal(":discover while running should stop discovery")
-	}
-	_ = m.executeCommand("discover stop") // no-op when off
-	if m.discovery.enabled {
-		t.Fatal("stop must keep discovery off")
 	}
 }
 
@@ -5343,5 +5230,199 @@ func TestSearchRight_OpensFeedAlbumAndAddsOneTrack(t *testing.T) {
 	m.mode = modeNormal
 	if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl}, "ctrl+enter"); cmd != nil || strings.Contains(ansi.Strip(m.search.View()), "Calm — Someone") {
 		t.Fatal("Ctrl+Enter from Tracks should fold the opened playlist in Search")
+	}
+}
+
+// About takes no commands: only esc, ? and Tab (close) and Ctrl+Shift+D (the
+// donation page) do anything while it is open, and its footer is the one place
+// that key is listed.
+func TestAboutPanelTakesOnlyCloseAndDonate(t *testing.T) {
+	mp := newMockPlayer()
+	m := newModel(mp)
+	m.mode = modeNormal
+	m.queueTracks = []provider.Track{{ID: "1", Title: "One"}, {ID: "2", Title: "Two"}}
+	m.queueIDs = []string{"1", "2"}
+	m.syncQueue()
+	m.setQueueCursor(0)
+	var opened []string
+	m.aboutP.m.OpenURL = func(u string) error { opened = append(opened, u); return nil }
+	press := func(k string, code rune, mod tea.KeyMod) tea.Cmd {
+		return m.handleNormalKey(tea.KeyPressMsg{Code: code, Mod: mod}, k)
+	}
+	footer := func() string { return ansi.Strip(strings.Join(m.statusLines(600), " ")) }
+	if strings.Contains(footer(), "donate") {
+		t.Fatalf("the TRACKS row never lists the donate key: %q", footer())
+	}
+
+	press("?", '?', 0)
+	if m.activePanel < 0 || m.panels[m.activePanel] != m.aboutP {
+		t.Fatal("? opens About")
+	}
+	if f := footer(); !strings.Contains(f, "^⇧D donate") || !strings.Contains(f, "esc/? close") {
+		t.Fatalf("the ABOUT row lists donate and close: %q", f)
+	}
+	// The ABOUT row is the whole footer: the playback keys are dead here, so
+	// they are not listed, whichever column had the keys before.
+	if rows := m.statusLines(600); len(rows) != 1 || strings.Contains(ansi.Strip(rows[0]), "play/pause") {
+		t.Fatalf("About's footer is its own row alone: %q", rows)
+	}
+	m.mode = modeSearch
+	if rows := m.statusLines(600); len(rows) != 1 || !strings.Contains(ansi.Strip(rows[0]), "^⇧D donate") {
+		t.Fatalf("the ABOUT row shows from Search too: %q", rows)
+	}
+	m.mode = modeNormal
+
+	// Every other key is dropped: nothing reaches the player, Tracks, the
+	// other panels or the command line.
+	for _, k := range []struct {
+		s    string
+		code rune
+		mod  tea.KeyMod
+	}{
+		{"space", tea.KeySpace, 0}, {"n", 'n', 0}, {"p", 'p', 0}, {"enter", tea.KeyEnter, 0},
+		{"d", 'd', 0}, {"c", 'c', 0}, {"S", 'S', tea.ModShift}, {":", ':', 0},
+		{"y", 'y', 0}, {"e", 'e', 0}, {"ctrl+d", 'd', tea.ModCtrl}, {"D", 'D', tea.ModShift},
+	} {
+		if cmd := press(k.s, k.code, k.mod); cmd != nil {
+			t.Fatalf("%s does nothing in About", k.s)
+		}
+	}
+	if mp.playCalled || mp.pauseCalled || mp.nextCalled || mp.prevCalled {
+		t.Fatal("the player keys are dead in About")
+	}
+	if len(m.queueIDs) != 2 || m.mode != modeNormal || m.activePanel < 0 || m.panels[m.activePanel] != m.aboutP {
+		t.Fatalf("About stays open and Tracks untouched: ids=%v mode=%v panel=%d", m.queueIDs, m.mode, m.activePanel)
+	}
+	if len(opened) != 0 {
+		t.Fatalf("no browser without Ctrl+Shift+D: %v", opened)
+	}
+
+	// Ctrl+Shift+D opens the donation page and leaves About open.
+	cmd := press("ctrl+shift+d", 'd', tea.ModCtrl|tea.ModShift)
+	if cmd == nil {
+		t.Fatal("Ctrl+Shift+D returns the open command")
+	}
+	if msg := cmd(); msg != nil {
+		t.Fatalf("a successful open reports nothing, got %#v", msg)
+	}
+	if len(opened) != 1 || opened[0] != views.DonateURL {
+		t.Fatalf("opened %v, want [%s]", opened, views.DonateURL)
+	}
+	if m.activePanel < 0 || m.panels[m.activePanel] != m.aboutP {
+		t.Fatal("About stays open after donating")
+	}
+
+	// esc, ? and Tab close it.
+	press("esc", tea.KeyEscape, 0)
+	if m.activePanel != -1 {
+		t.Fatal("esc closes About")
+	}
+	press("?", '?', 0)
+	press("?", '?', 0)
+	if m.activePanel != -1 {
+		t.Fatal("? closes About")
+	}
+	press("?", '?', 0)
+	press("tab", tea.KeyTab, 0)
+	if m.activePanel != -1 {
+		t.Fatal("Tab closes About")
+	}
+}
+
+// Lyrics and the equalizer list only their own keys in the footer, from either
+// column; the playback keys still work there but are not repeated.
+func TestPanelFootersListOnlyTheirOwnKeys(t *testing.T) {
+	m := newModel(newMockPlayer())
+	for _, tc := range []struct{ key, label, own string }{
+		{"y", "LYRICS", "g/G top/bottom"},
+		{"e", "EQUALIZER", "0 reset band"},
+	} {
+		for _, mode := range []viewMode{modeNormal, modeSearch} {
+			m.mode = modeNormal
+			m.activePanel = -1
+			m.handleNormalKey(tea.KeyPressMsg{Code: rune(tc.key[0])}, tc.key)
+			if m.activePanel < 0 {
+				t.Fatalf("%s opens its panel", tc.key)
+			}
+			m.mode = mode
+			rows := m.statusLines(600)
+			plain := ansi.Strip(strings.Join(rows, " "))
+			if len(rows) != 1 || !strings.Contains(plain, tc.label) || !strings.Contains(plain, tc.own) {
+				t.Fatalf("%s footer in mode %v is its own row alone: %q", tc.label, mode, plain)
+			}
+			for _, absent := range []string{"play/pause", "next/prev", "TRACKS", "SEARCH", "donate"} {
+				if strings.Contains(plain, absent) {
+					t.Fatalf("%s footer lists %q: %q", tc.label, absent, plain)
+				}
+			}
+		}
+	}
+	// The keys are unlisted, not dead: n still skips under the equalizer.
+	m.mode = modeNormal
+	if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: 'n'}, "n"); cmd == nil || !m.playerState.Loading {
+		t.Fatal("n still works while the equalizer is open")
+	}
+}
+
+// F turns discover on: the playing track gets one station pick inserted right
+// after it, every later track that starts playing gets its own, once each, and
+// F again turns it off. It is quiet: the footer's "● on" is the only sign.
+func TestDiscover_F_InsertsOnePickAfterEachPlayingTrack(t *testing.T) {
+	m, _ := navModel(t) // playing "Two" (1); queue One Two Three Four
+	footer := func() string { return ansi.Strip(strings.Join(m.statusLines(600), " ")) }
+	if f := footer(); !strings.Contains(f, "F discover") || strings.Contains(f, "● on") || strings.Contains(f, "⇧T") || !strings.Contains(f, "T +5 library") {
+		t.Fatalf("footer lists F discover (off) and a plain T: %q", f)
+	}
+	if f := strings.TrimRight(footer(), " "); !strings.HasSuffix(f, "R +5 related  ·  T +5 library  ·  F discover") {
+		t.Fatalf("R, T and F close the Tracks list: %q", f)
+	}
+	if cmd := key(m, "F"); cmd == nil || !m.discover.on {
+		t.Fatal("F turns discover on and fetches a pick for the playing track")
+	}
+	if !strings.Contains(footer(), "F discover ● on") {
+		t.Fatalf("footer shows the on indicator: %q", footer())
+	}
+	// The pick lands right after the playing track, without a status message.
+	m.errMsg = ""
+	m.Update(relatedResultMsg{seed: m.queueTracks[1], tracks: []provider.Track{{ID: "p1", Title: "P1"}}, discover: true})
+	want := "1,2,p1,3,4"
+	if got := strings.Join(m.queueIDs, ","); got != want || m.errMsg != "" {
+		t.Fatalf("queue ids = %v, want %v (msg %q)", got, want, m.errMsg)
+	}
+	// One pick per track: the same track gets no second one, the next one does.
+	if cmd := m.discoverFor(&m.queueTracks[1]); cmd != nil {
+		t.Fatal("one pick per track")
+	}
+	if cmd := m.discoverFor(&m.queueTracks[3]); cmd == nil {
+		t.Fatal("the next track that plays gets its own pick")
+	}
+	// F again turns it off; a pick that arrives late is dropped.
+	key(m, "F")
+	if m.discover.on || strings.Contains(footer(), "● on") {
+		t.Fatalf("F turns discover off: on=%v footer=%q", m.discover.on, footer())
+	}
+	m.Update(relatedResultMsg{seed: m.queueTracks[3], tracks: []provider.Track{{ID: "p2", Title: "P2"}}, discover: true})
+	if got := strings.Join(m.queueIDs, ","); got != want {
+		t.Fatalf("a late pick after F off is dropped: %v", got)
+	}
+}
+
+// The old discovery surface is gone: no :discover command, and +/- are volume
+// even while discover is on.
+func TestDiscover_NoCommandsAndPlusMinusAreVolume(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.playerState.Track = &provider.Track{ID: "x", Title: "X", CatalogID: "cx"}
+	for _, c := range []string{"discover", "discover auto", "discover 5", "discover metric", "discover stop"} {
+		m.errMsg = ""
+		_ = m.executeCommand(c)
+		if m.discover.on || !strings.Contains(m.errMsg, "unknown command") {
+			t.Fatalf(":%s must be unknown now: on=%v msg=%q", c, m.discover.on, m.errMsg)
+		}
+	}
+	m.discover.on = true
+	for _, k := range []string{"+", "-"} {
+		if cmd := m.handleNormalKey(tea.KeyPressMsg{Code: rune(k[0]), Text: k}, k); cmd == nil {
+			t.Fatalf("%s adjusts the volume whatever discover does", k)
+		}
 	}
 }

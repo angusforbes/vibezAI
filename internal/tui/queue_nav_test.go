@@ -149,8 +149,8 @@ func TestQueueCursor_DRemovesHighlighted_EvenThePlayingOne(t *testing.T) {
 	if m.queueCursor != 2 {
 		t.Fatalf("cursor should stay on the next entry (2), got %d", m.queueCursor)
 	}
-	if m.vibe.PickerActive() || m.discovery.enabled {
-		t.Fatal("d must not touch discovery any more")
+	if m.discover.on {
+		t.Fatal("d must not touch discover")
 	}
 
 	key(m, "q") // back on the playing track ("Two", index 1)
@@ -505,7 +505,7 @@ func TestRelated_LibraryOnlySeedIsSkippedSilently(t *testing.T) {
 	m, _ := navModel(t)
 	m.provider = &mockProvider{}
 	own := provider.Track{ID: "i.MyRecording", Title: "Demo take", Artist: "Me"}
-	if cmd := m.fetchRelatedCmd(&own); cmd != nil || m.errMsg != "" {
+	if cmd := m.fetchRelatedCmd(&own, relatedCount, false); cmd != nil || m.errMsg != "" {
 		t.Fatalf("a track without a catalog match must be skipped without any notice (cmd=%v err=%q)", cmd != nil, m.errMsg)
 	}
 }

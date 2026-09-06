@@ -85,10 +85,11 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `←` / `→` | Seek ±10 s |
 | `d` | Remove the highlighted track |
 | `D` / `ctrl+shift+d` | Cut everything from the highlight down / everything above it |
-| `K` / `J`, `shift+→` / `shift+←` | Move the highlighted track up / down |
+| `K` / `J`, `shift+←` / `shift+→` | Move the highlighted track up / down |
 | `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom |
 | `R` | Insert five related songs after the highlighted track, once |
 | `T` | Insert five random songs from your library after the highlighted track |
+| `F` | Discover on / off: while on, one song from the playing track's Apple Music station is inserted right after it, once per track, so something new always plays next |
 | `s` | Jump to a random track |
 | `S` | Shuffle Tracks and play from the top |
 | `r` | Cycle repeat |
@@ -96,7 +97,7 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `Tab` | Move the keys to Search |
 | `ctrl+'` | Move the keys to Search and start typing into the `AM` or `CC` prompt |
 | `:` | Command mode |
-| `y` / `e` / `?` | Lyrics / equalizer / about; `Tab`, `esc` or the same key again closes the panel and returns to the column you came from |
+| `y` / `e` / `?` | Lyrics / equalizer / about; `Tab`, `esc` or the same key again closes the panel and returns to the column you came from. About takes no other key but `ctrl+shift+d`, which opens the original author's Ko-fi page in your browser |
 
 ### Search (right column)
 
@@ -132,7 +133,7 @@ Typing `:` keeps both columns on screen and swaps the footer for the command lis
 | `:save [name]` | Save Tracks as a named list in `~/.config/vibez/tracklists/`; the lists appear in Search under `SV`. Without a name the list is dated and named after its songs by Claude Code (from the artists and genres when the CLI is not there) |
 | `:quality <high\|standard\|256\|64>` | AAC bitrate |
 | `:debug-logs` | Toggle the debug log, where Claude's terms and rankings are recorded |
-| `:about` / `:donate` | About the app / support the original author |
+| `:about` | About the app |
 | `:q` / `:quit` | Quit |
 
 ## Installation
@@ -174,7 +175,7 @@ Tracks are saved to `~/.config/vibez/queue.json` after every change and restored
 
 ## How it differs from vibez
 
-vibezAI started from vibez 0.7.0. The engines, themes, equalizer, discovery and radio modes, Last.fm scrobbling and MPRIS integration are as upstream. The interface and the search are not.
+vibezAI started from vibez 0.7.0. The engines, themes, equalizer, radio mode, Last.fm scrobbling and MPRIS integration are as upstream. The interface, the search and discover are not.
 
 | Area | vibez 0.7.0 | vibezAI |
 |------|-------------|---------|

@@ -19,14 +19,10 @@ import (
 // results as they are. Tab adds the selected item to the end of the queue
 // without playing it and Enter adds it and starts it; a track already in the
 // queue is never added twice. Nothing in this panel ever replaces the queue.
-// The vibe prompt and the discovery picker borrow the column while they have
-// focus. (The library browser is not wired in; search covers the library.)
+// (The library browser is not wired in; search covers the library.)
 
 // findLines renders the right column.
 func (m *Model) findLines(w, h int) []string {
-	if m.vibe.PickerActive() {
-		return m.vibe.Lines(w, h, m.glowStep)
-	}
 	return m.searchFindLines(w, h)
 }
 

@@ -273,10 +273,11 @@ func (m *Model) handleQueueCursorKey(k string) (tea.Cmd, bool) {
 		return nil, false
 	}
 	switch k {
-	case "K", "shift+right", "J", "shift+left":
-		// J / Shift+← move the highlighted track down, K / Shift+→ up.
+	case "K", "shift+left", "J", "shift+right":
+		// K / Shift+← move the highlighted track up (earlier in play order),
+		// J / Shift+→ down (later): the arrows follow the list, not the letters.
 		delta := 1
-		if k == "K" || k == "shift+right" {
+		if k == "K" || k == "shift+left" {
 			delta = -1
 		}
 		follow := m.queueFollow

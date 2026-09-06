@@ -6,19 +6,30 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/simone-vibes/vibez/internal/openurl"
 	"github.com/simone-vibes/vibez/internal/tui/styles"
 	"github.com/simone-vibes/vibez/internal/version"
 )
 
-// AboutModel renders the About & support information.
+// DonateURL is the page Ctrl+Shift+D opens from the About panel: the original
+// author's Ko-fi. It is the only website the player itself ever opens.
+const DonateURL = "https://ko-fi.com/pelpsi"
+
+// AboutModel renders the credits. Its one key, Ctrl+Shift+D, opens DonateURL
+// through OpenURL, which is openurl.Open unless a test swaps in a recorder, so
+// `go test` never starts a browser.
 type AboutModel struct {
-	width  int
-	height int
-	status string
+	width   int
+	height  int
+	status  string
+	OpenURL func(url string) error
 }
 
+// AboutOpenErrMsg reports that the browser could not be started for DonateURL.
+type AboutOpenErrMsg struct{ Err error }
+
 func NewAbout() *AboutModel {
-	return &AboutModel{}
+	return &AboutModel{OpenURL: openurl.Open}
 }
 
 func (a *AboutModel) SetSize(w, h int) {
@@ -26,21 +37,40 @@ func (a *AboutModel) SetSize(w, h int) {
 	a.height = h
 }
 
-// Update takes no keys: the About panel is read-only and never opens a
-// browser (the app only ever reaches the web for Apple Music and Claude Code).
-func (a *AboutModel) Update(_ tea.KeyPressMsg) tea.Cmd { return nil }
+// Update handles Ctrl+Shift+D, the only key About owns: it opens DonateURL in
+// the browser and says so in the panel. Every other key does nothing; the
+// model drops them before they get here, so no player command runs from About.
+func (a *AboutModel) Update(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "ctrl+shift+d", "ctrl+shift+D":
+		if a.OpenURL == nil {
+			a.status = "✗ No browser opener is available"
+			return nil
+		}
+		a.status = "Opening " + DonateURL + " in your browser…"
+		open := a.OpenURL
+		return func() tea.Msg {
+			if err := open(DonateURL); err != nil {
+				return AboutOpenErrMsg{Err: err}
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+// SetOpenError shows why the browser did not open (the AboutOpenErrMsg path).
+func (a *AboutModel) SetOpenError(err error) {
+	a.status = "✗ Could not open a browser: " + err.Error()
+}
 
 func (a *AboutModel) View() string {
 	muted := styles.QueueItemMuted
 	normal := lipgloss.NewStyle().Foreground(styles.ColorFg)
-	header := styles.TabActive
 	primary := lipgloss.NewStyle().Foreground(styles.ColorPrimary).Bold(true)
 	secondary := lipgloss.NewStyle().Foreground(styles.ColorSecondary)
 
-	var sb strings.Builder
-	sb.WriteString(header.Render("About") + "\n")
-	sb.WriteString(muted.Render(strings.Repeat("─", 5)) + "\n\n")
-
+	// No header or rule: the panel is the centred credits alone.
 	contentLines := []string{
 		primary.Render("vibezAI ♪"),
 		muted.Render(fmt.Sprintf("version %s", version.Version)),
@@ -58,17 +88,14 @@ func (a *AboutModel) View() string {
 		contentLines = append(contentLines, "", styles.ControlActive.Render(a.status))
 	}
 
-	neededHeight := len(contentLines)
-	topPad := max(0, (a.height-3-neededHeight)/2)
-
+	var sb strings.Builder
+	topPad := max(0, (a.height-len(contentLines))/2)
 	for range topPad {
 		sb.WriteByte('\n')
 	}
-
 	for _, line := range contentLines {
 		sb.WriteString(centerStrAbout(line, a.width) + "\n")
 	}
-
 	return sb.String()
 }
 
