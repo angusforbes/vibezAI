@@ -104,7 +104,7 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | Key | Action |
 |-----|--------|
 | `ctrl+'` | Start or stop typing into the prompt (`AM` and `CC`); nothing is looked up while you type |
-| `ctrl+/` | Cycle the source: `AM` → `CC` → `SV` (saved lists) → `FE` (recommendations) → `AM`; text already typed is looked up when switching to `CC`, `AM` waits for `enter` |
+| `ctrl+/` | Cycle the source: `AM` → `CC` → `SV` (saved lists) → `FE` (recommendations) → `AM`; text already typed is looked up when switching to `CC`, `AM` waits for `enter`; `SV` and `FE` take no text, so the typed text is hidden there and shows again with `AM` or `CC` |
 | `enter` | While typing: search (`AM`) or look up (`CC`) the text and stop typing. Otherwise: play the track highlighted in Tracks |
 | `space` | Play / pause (not while typing) |
 | `→` / `ctrl+enter` | Open or fold a section header (a saved list opens whole), grow or shrink a section by five, or open an album or playlist to its tracks and fold it again |

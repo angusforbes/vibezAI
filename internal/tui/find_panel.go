@@ -68,7 +68,12 @@ func (m *Model) searchFindLines(w, h int) []string {
 	// edge; continuation rows are indented under the text. At most half the
 	// column goes to the input, and the rows around the cursor win when even
 	// that is not enough.
-	runes := []rune(m.searchQuery)
+	// Saved lists and the feed take no text, so text left over from Apple
+	// Music or Claude Code is kept but not shown until one of those is back.
+	var runes []rune
+	if m.searchSrc.takesText() {
+		runes = []rune(m.searchQuery)
+	}
 	cur := min(m.searchCursor, len(runes))
 	inputRows := wrapQuery(runes, cur, m.mode == modeSearch && m.searchTyping, max(1, w-3), max(1, (h-2)/2), textStyle, accent)
 	for i, row := range inputRows {
@@ -92,7 +97,7 @@ func (m *Model) searchFindLines(w, h int) []string {
 	if listView == "" && m.searchSrc == searchFeed && !m.search.Loading() {
 		listView = "  " + muted.Render("no recommendations")
 	}
-	if listView == "" && !m.search.Loading() && m.searchQuery != "" {
+	if listView == "" && !m.search.Loading() && m.searchQuery != "" && m.searchSrc.takesText() {
 		listView = "  " + muted.Render("no results")
 	}
 	lines := append(append([]string{m.findHeader(), sep}, inputRows...), toLines(listView, listH)...)

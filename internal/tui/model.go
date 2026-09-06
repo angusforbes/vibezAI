@@ -3337,7 +3337,12 @@ func (m *Model) statusNavLines(w int) []string {
 		// the row, marking what is cut; the block cursor shows only while
 		// typing. The key hints follow as dot-separated parts and wrap to
 		// further rows only where the width forces it.
-		runes := []rune(m.searchQuery)
+		// SV and FE take no text: leftover Apple Music / Claude Code text is
+		// kept but not shown until one of those sources is back.
+		var runes []rune
+		if m.searchSrc.takesText() {
+			runes = []rune(m.searchQuery)
+		}
 		cur := min(m.searchCursor, len(runes))
 		shown, curIdx, cutLeft, cutRight := queryWindow(runes, cur, max(8, w-lipgloss.Width(head)-1))
 		query := muted.Render(string(shown))

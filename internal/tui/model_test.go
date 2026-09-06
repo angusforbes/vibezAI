@@ -5426,3 +5426,28 @@ func TestDiscover_NoCommandsAndPlusMinusAreVolume(t *testing.T) {
 		}
 	}
 }
+
+// SV and FE take no text: text typed for Apple Music or Claude Code is kept
+// but not shown while they are up, and comes back with AM or CC.
+func TestSearch_SavedAndFeedHideTheLeftoverQuery(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.searchQuery, m.searchCursor = "chill beats", len("chill beats")
+	shows := func() (bool, bool) {
+		footer := ansi.Strip(strings.Join(m.statusLines(600), " "))
+		column := ansi.Strip(strings.Join(m.searchFindLines(60, 14), "\n"))
+		return strings.Contains(footer, "chill beats"), strings.Contains(column, "chill beats")
+	}
+	for _, tc := range []struct {
+		src  searchSource
+		want bool
+	}{{searchApple, true}, {searchSaved, false}, {searchFeed, false}, {searchClaude, true}, {searchApple, true}} {
+		m.searchSrc = tc.src
+		if f, c := shows(); f != tc.want || c != tc.want {
+			t.Fatalf("source %v: footer shows query=%v, column shows query=%v, want %v", tc.src, f, c, tc.want)
+		}
+	}
+	if m.searchQuery != "chill beats" {
+		t.Fatal("the text itself is kept while hidden")
+	}
+}
