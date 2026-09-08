@@ -163,6 +163,9 @@ func PrettyModel(short string) string {
 	}
 	parts := strings.Split(short, "-")
 	name := strings.ToUpper(parts[0][:1]) + parts[0][1:]
+	if strings.EqualFold(parts[0], "gpt") {
+		name = "GPT"
+	}
 	var version []string
 	for _, part := range parts[1:] {
 		if part != "" && strings.Trim(part, "0123456789") == "" {
@@ -233,16 +236,7 @@ func (c *ClaudePlanner) Rerank(ctx context.Context, description string, candidat
 	if len(candidates) == 0 {
 		return nil, errors.New("claude: no candidates to rank")
 	}
-	var sb strings.Builder
-	sb.WriteString("Description: " + description + "\n\nCandidates:\n")
-	for i, cand := range candidates {
-		fmt.Fprintf(&sb, "%d. %s — %s", i+1, cand.Artist, cand.Title)
-		if cand.Album != "" {
-			fmt.Fprintf(&sb, " (%s)", cand.Album)
-		}
-		sb.WriteString("\n")
-	}
-	answer, _, err := c.run(ctx, rerankSystemPrompt(limit), sb.String())
+	answer, _, err := c.run(ctx, rerankSystemPrompt(limit), formatCandidates(description, candidates))
 	if err != nil {
 		return nil, err
 	}

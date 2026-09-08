@@ -28,13 +28,13 @@ vibezAI is a keyboard-driven Apple Music player for the terminal. Full tracks st
 </p>
 
 - **Tracks** (left) is the one list of what plays. It survives restarts, you move through it in place, and nothing you do in the right column ever replaces it.
-- **Search** (right) has three sources, and `Ctrl+/` cycles them. `AM` searches Apple Music when you press `Enter`: Playlists, Albums, Library (your own copies) and Tracks, five per section, with `+ 5 more` / `− 5 less` rows and headers that fold. `CC` sends a plain-English description to Claude Code, which plans the search and ranks the results. `SV` lists the track lists kept with `:save`, the previous session's Tracks first, each a header that opens to all of its songs; add the whole list from its header or pick songs from it. `FE` shows Apple Music's recommendations for you, one section per group, albums and playlists to mark and add like any search hit.
+- **Search** (right) has four sources, and `Ctrl+/` cycles them. `AM` searches Apple Music when you press `Enter`: Playlists, Albums, Library (your own copies) and Tracks, five per section, with `+ 5 more` / `− 5 less` rows and headers that fold. `AI` sends a plain-English description to the selected AI, Claude Code by default or ChatGPT through OpenAI's Codex CLI after `:ai gpt`, which plans the search and ranks the results. `SV` lists the track lists kept with `:save`, the previous session's Tracks first, each a header that opens to all of its songs; add the whole list from its header or pick songs from it. `FE` shows Apple Music's recommendations for you, one section per group, albums and playlists to mark and add like any search hit.
 - **Tab** moves the keys between the two columns. The column that has them shows its title in bold; the mode text next to "Search" glows while a lookup is running.
 - Everything that works in a column is listed once, in the footer.
 
 ## Searching with Claude Code
 
-Press `Ctrl+'` to jump to the Search prompt and start typing (`Ctrl+/` switches the prompt between `AM` and `CC`). Type what you want to hear the way you would say it to a friend and press `Enter`.
+Press `Ctrl+'` to jump to the Search prompt and start typing (`Ctrl+/` switches the prompt between `AM` and `AI`). Type what you want to hear the way you would say it to a friend and press `Enter`.
 
 <p align="center">
   <img src="assets/vibezai-claude.png" alt="vibezAI: a Claude Code lookup, planned by Fable 5.1" width="920">
@@ -58,6 +58,8 @@ Other things that work well as prompts: an artist plus a direction ("early Radio
 The result appears as one section headed by the model that did the planning, with Claude's one-line summary under it. Everything in it is selectable and addable like any search result.
 
 A lookup is two CLI calls, about seven seconds each with Fable 5.1 and roughly a cent in total; Sonnet is about twice as fast and a third of the price. `:model haiku` or `:model sonnet` switches, `:effort low` trims further, and both are remembered. When the CLI is unavailable, the built-in keyword table from vibez takes over and the header says so.
+
+`:ai gpt` hands the same two steps to ChatGPT through OpenAI's Codex CLI (`codex exec`, your ChatGPT login, no API key), and the Search header says so. Each call carries Codex's own agent instructions, about 13k input tokens against your ChatGPT plan. `:model` and `:effort` then apply to ChatGPT, and `:ai cc` switches back. Only one AI is in charge at a time; AI radio (`A` in Tracks) uses the same one.
 
 <p align="center">
   <img src="assets/vibezai-select.png" alt="vibezAI: several results marked for adding" width="920">
@@ -89,13 +91,14 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom |
 | `R` | Insert five related songs after the highlighted track, once |
 | `T` | Insert five random songs from your library after the highlighted track |
-| `F` | Discover on / off: while on, one song from the playing track's Apple Music station is inserted right after it, once per track, so something new always plays next |
+| `F` | Apple radio on / off: while on, one song from the playing track's Apple Music station is inserted right after it, once per track, so something new always plays next |
+| `A` | AI radio on / off: while on, the selected AI (Claude Code, or ChatGPT after `:ai gpt`) picks one song to follow the playing track from what is playing and the ten songs before it; the pick is found on Apple Music and inserted right after the playing track. Apple radio and AI radio switch each other off |
 | `s` | Jump to a random track |
 | `S` | Shuffle Tracks and play from the top |
 | `r` | Cycle repeat |
 | `c` | Clear the list |
 | `Tab` | Move the keys to Search |
-| `ctrl+'` | Move the keys to Search and start typing into the `AM` or `CC` prompt |
+| `ctrl+'` | Move the keys to Search and start typing into the `AM` or `AI` prompt |
 | `:` | Command mode |
 | `y` / `e` / `?` | Lyrics / equalizer / about; `Tab`, `esc` or the same key again closes the panel and returns to the column you came from. About takes no other key but `ctrl+shift+d`, which opens the original author's Ko-fi page in your browser |
 
@@ -103,9 +106,9 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 
 | Key | Action |
 |-----|--------|
-| `ctrl+'` | Start or stop typing into the prompt (`AM` and `CC`); nothing is looked up while you type |
-| `ctrl+/` | Cycle the source: `AM` → `CC` → `SV` (saved lists) → `FE` (recommendations) → `AM`; text already typed is looked up when switching to `CC`, `AM` waits for `enter`; `SV` and `FE` take no text, so the typed text is hidden there and shows again with `AM` or `CC` |
-| `enter` | While typing: search (`AM`) or look up (`CC`) the text and stop typing. Otherwise: play the track highlighted in Tracks |
+| `ctrl+'` | Start or stop typing into the prompt (`AM` and `AI`); nothing is looked up while you type |
+| `ctrl+/` | Cycle the source: `AM` → `AI` → `SV` (saved lists) → `FE` (recommendations) → `AM`; text already typed is looked up when switching to `AI`, `AM` waits for `enter`; `SV` and `FE` take no text, so the typed text is hidden there and shows again with `AM` or `AI` |
+| `enter` | While typing: search (`AM`) or look up (`AI`) the text and stop typing. Otherwise: play the track highlighted in Tracks |
 | `space` | Play / pause (not while typing) |
 | `→` / `ctrl+enter` | Open or fold a section header (a saved list opens whole), grow or shrink a section by five, or open an album or playlist to its tracks and fold it again |
 | `ctrl+↑` / `ctrl+↓` | Move the highlight |
@@ -128,8 +131,9 @@ Typing `:` keeps both columns on screen and swaps the footer for the command lis
 
 | Command | Description |
 |---------|-------------|
-| `:model <fable\|sonnet\|haiku\|default\|id>` | Model Claude Code uses for `CC` lookups; bare `:model` shows the current one |
-| `:effort <low\|medium\|high\|xhigh\|max\|default>` | Effort for those lookups |
+| `:ai <cc\|gpt>` | Which AI answers the `AI` source and AI radio: Claude Code (`cc`, default) or ChatGPT (`gpt`); bare `:ai` shows it |
+| `:model <name\|default>` | Model the AI in charge uses (an alias like `haiku` or a full id; `default` leaves the CLI's own choice); bare `:model` shows it with the effort |
+| `:effort <level\|default>` | Effort for the AI in charge (Claude: `low` … `max`; ChatGPT: `minimal` … `xhigh`); bare `:effort` shows it |
 | `:save [name]` | Save Tracks as a named list in `~/.config/vibez/tracklists/`; the lists appear in Search under `SV`. Without a name the list is dated and named after its songs by Claude Code (from the artists and genres when the CLI is not there) |
 | `:quality <high\|standard\|256\|64>` | AAC bitrate |
 | `:debug-logs` | Toggle the debug log, where Claude's terms and rankings are recorded |
@@ -153,7 +157,7 @@ vibezAI --no-update                 # launch
 
 - Linux x86-64 (the setup this fork is developed on) · Go 1.26+ · WebKit/GStreamer development packages, or the `pkg-config` shim in the tree.
 - An Apple Music subscription and a **MusicKit developer token** in `apple_developer_token` of `~/.config/vibez/config.json`. The upstream vibez releases embed the author's token; a build of this fork has none. Either build with your own key (`make build-with-token`, see upstream) or run the stock vibez release once, which writes its token to the config file.
-- For `CC` lookups, [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` on `PATH`). Without it, the `CC` prompt falls back to vibez's keyword table.
+- For `AI` lookups and AI radio, [Claude Code](https://claude.com/claude-code) installed and logged in (`claude` on `PATH`), or OpenAI's Codex CLI (`codex`, logged in with ChatGPT) with `:ai gpt`. Without either, the `AI` prompt falls back to vibez's keyword table and AI radio has no one to ask.
 
 Pass `--no-update`: the self-updater would replace this fork with the upstream release.
 
@@ -163,9 +167,11 @@ Pass `--no-update`: the self-updater would replace this fork with the upstream r
 
 | Key | Meaning |
 |-----|---------|
-| `vibe_agent` | `auto` (default: Claude when the CLI is installed, else keywords), `claude`, or `keywords` |
+| `vibe_agent` | Which AI answers: `auto` (default: Claude when the CLI is installed, else keywords), `claude`, `chatgpt` (the Codex CLI) or `keywords`; `:ai` sets it |
 | `vibe_model` | Model passed to the CLI. Empty means `claude-fable-5-1`; `default` leaves the CLI's own choice |
 | `vibe_effort` | `low` … `max`; empty leaves the CLI's default |
+| `ai_model` | Codex model slug for ChatGPT. Empty means `gpt-5.6-sol`; `default` leaves the CLI's own choice |
+| `ai_effort` | `minimal` … `xhigh` for ChatGPT; empty leaves the CLI's default |
 | `theme` | `default`, `dracula`, `gruvbox`, `nord`, or a custom theme in `~/.config/vibez/themes/<name>.json` |
 | `audio_quality` | `high`/`256` (default) or `standard`/`64` |
 | `album_art` | Album-art view on start |
@@ -175,21 +181,21 @@ Tracks are saved to `~/.config/vibez/queue.json` after every change and restored
 
 ## How it differs from vibez
 
-vibezAI started from vibez 0.7.0. The engines, themes, equalizer, radio mode, Last.fm scrobbling and MPRIS integration are as upstream. The interface, the search and discover are not.
+vibezAI started from vibez 0.7.0. The engines, themes, equalizer, radio mode, Last.fm scrobbling and MPRIS integration are as upstream. The interface, the search and Apple radio are not.
 
 | Area | vibez 0.7.0 | vibezAI |
 |------|-------------|---------|
 | Layout | Queue with a separate Queue panel, Library panel, Vibe panel and a header row | Two columns, Tracks and Search, and nothing else on screen |
 | Queue | In memory only | Tracks persist to `queue.json`; navigated in place with `↑/↓`, `enter`, `d`, `D`, `K/J`; never replaced by a search; `:save` keeps named lists that Search offers under `SV` |
 | Search | Single flat result list, `enter` plays and replaces the queue | Sections (Playlists, Albums, Library, Tracks) with `+ 5 more` / `− 5 less`, foldable headers, paging through Apple's results, duplicates never added |
-| Vibe mode | `v` opens a prompt; a keyword table maps words to genres and dumps 15 shuffled songs into the queue | `CC` prompt inside Search; Claude Code plans the terms and ranks a pool of 40 candidates; results shown as a section headed by the model, nothing added until you say so |
+| Vibe mode | `v` opens a prompt; a keyword table maps words to genres and dumps 15 shuffled songs into the queue | `AI` prompt inside Search; Claude Code (or ChatGPT) plans the terms and ranks a pool of 40 candidates; results shown as a section headed by the model, nothing added until you say so |
 | Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+shift+↑/↓` and `ctrl+→`, albums and playlists included |
 | Related songs | Continuous radio | `R` inserts five related songs once |
 | Library | Browser panel | `T` (shift+t) inserts five random library songs; the library is searched as part of every search |
 | Feed | `F` opens a Feed panel | `FE` source in Search: the same sections, marks and adds as a search; `→` opens any album or playlist to its tracks, each addable on its own |
 | Saved lists | — | `:save [name]` keeps Tracks as a list, named by Claude Code when no name is given; Search offers the lists under `SV`, whole or song by song; `ctrl+delete` removes one |
 | Footer | Changes with the mode | One fixed list per column; `:` swaps it for the command list |
-| Model choice | — | `:model`, `:effort`, config keys |
+| Model choice | — | `:ai` picks Claude Code or ChatGPT; `:model` and `:effort` set the one in charge; config keys |
 | Name | vibez | vibezAI (binary, MPRIS identity, splash and About) |
 
 The Go module path is still `github.com/simone-vibes/vibez` so that upstream changes merge cleanly.

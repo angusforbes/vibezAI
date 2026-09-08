@@ -13,6 +13,7 @@ import (
 	"github.com/simone-vibes/vibez/internal/provider"
 	"github.com/simone-vibes/vibez/internal/queuestate"
 	"github.com/simone-vibes/vibez/internal/tui/views"
+	"github.com/simone-vibes/vibez/internal/vibe"
 )
 
 // newListModel builds a model whose queue.json lives in dir, so named lists
@@ -22,6 +23,7 @@ func newListModel(t *testing.T, dir string) (*Model, *mockPlayer) {
 	t.Helper()
 	mock := newMockPlayer()
 	m := New(testCfg(), &mockProvider{}, mock, Options{QueueStatePath: filepath.Join(dir, "queue.json")})
+	m.aiPlanner = &fakePlanner{plan: vibe.Plan{Summary: "test", Queries: []string{"ai"}}} // never the real Codex CLI under test
 	return m, mock
 }
 

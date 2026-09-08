@@ -329,6 +329,11 @@ type Model struct {
 	// vibePlanner turns a vibes-mode description into search terms (Claude
 	// Code CLI or the keyword table, per config "vibe_agent").
 	vibePlanner vibe.Planner
+	// aiPlanner is ChatGPT through the Codex CLI, per config "ai_model" /
+	// "ai_effort"; lookupPlanner picks it or vibePlanner by "vibe_agent" (:ai).
+	aiPlanner vibe.Planner
+	// aiRadio is A: the selected AI picks what follows the playing track.
+	aiRadio aiRadioMode
 
 	// Search popup (not a panel)
 	search *views.SearchModel
@@ -422,6 +427,7 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	eqBands := configEQBandsToPlayer(cfg.EQBands)
 	m.eqP = &eqPanel{m: views.NewEqualizer(eqBands)}
 	m.vibePlanner = vibe.NewPlanner(cfg.VibeAgent, cfg.VibeModel, cfg.VibeEffort)
+	m.aiPlanner = vibe.NewAIPlanner(cfg.AIModel, cfg.AIEffort)
 	m.searchAM = views.NewSearch(prov)
 	m.searchCC = views.NewSearch(prov)
 	m.searchSV = views.NewSearch(prov)
@@ -651,6 +657,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Discover (F): one station pick for every track that starts playing,
 		// inserted right after it, once per track.
 		if cmd := m.discoverFor(s.Track); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+		// AI radio (A): the selected AI picks what follows each playing track.
+		if cmd := m.aiRadioFor(s.Track); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 		// Radio: fire as soon as the last track in the queue starts playing.
@@ -1083,6 +1093,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case relatedResultMsg:
 		cmds = append(cmds, m.handleRelatedResult(msg))
 
+	case aiRadioResultMsg:
+		cmds = append(cmds, m.handleAIRadioResult(msg))
+
 	case randomLibraryResultMsg:
 		cmds = append(cmds, m.handleRandomLibraryResult(msg))
 
@@ -1175,7 +1188,7 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		// Start or stop typing into the prompt (two spellings: the keys sit
 		// side by side). The saved lists and the feed take no text.
 		if !m.searchSrc.takesText() {
-			m.flashStatus("this source takes no text; ^/ for Apple Music or Claude Code", 3*time.Second)
+			m.flashStatus("this source takes no text; ^/ for Apple Music or AI", 3*time.Second)
 			return nil
 		}
 		m.searchTyping = !m.searchTyping
@@ -1438,8 +1451,9 @@ type cmdEntry struct {
 var allCommands = []cmdEntry{
 	{"save", "save [name]", "Save Tracks as a named list; without a name it is dated and named after the songs"},
 	{"quality", "quality <high|standard|256|64>", "Set Apple Music AAC bitrate"},
-	{"model", "model <fable|sonnet|haiku|default|id>", "Model Claude Code uses for CC lookups; bare :model shows the current one"},
-	{"effort", "effort <low|medium|high|xhigh|max|default>", "Effort Claude Code spends on CC lookups"},
+	{"ai", "ai <cc|gpt>", "Which AI answers the AI source and AI radio: Claude Code (cc, default) or ChatGPT (gpt); bare :ai shows it"},
+	{"model", "model <name|default>", "Model the AI in charge uses; bare :model shows it with the effort"},
+	{"effort", "effort <level|default>", "Effort the AI in charge spends (the levels depend on the AI); bare :effort shows it"},
 	{"about", "about", "Show information about vibez"},
 	{"debug-logs", "debug-logs", "Toggle debug log panel"},
 	{"q", "q", "Quit (:quit works too)"},
@@ -1519,32 +1533,14 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 		m.debugView = !m.debugView
 		m.debugScroll = 0
 		return nil
+	case cmd == "ai" || strings.HasPrefix(cmd, "ai "):
+		m.setAIBackend(strings.ToLower(strings.TrimSpace(strings.TrimPrefix(cmd, "ai"))))
+		return nil
 	case cmd == "model" || strings.HasPrefix(cmd, "model "):
-		arg := strings.TrimSpace(strings.TrimPrefix(cmd, "model"))
-		if arg == "" {
-			m.flashInfo("ℹ CC lookups: " + m.vibeSetupLabel())
-			return nil
-		}
-		m.cfg.VibeModel = arg
-		m.applyVibeSetup("model")
+		m.setLookupModel(strings.TrimSpace(strings.TrimPrefix(cmd, "model")))
 		return nil
 	case cmd == "effort" || strings.HasPrefix(cmd, "effort "):
-		arg := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(cmd, "effort")))
-		if arg == "" {
-			m.flashInfo("ℹ CC lookups: " + m.vibeSetupLabel())
-			return nil
-		}
-		switch arg {
-		case "low", "medium", "high", "xhigh", "max":
-			m.cfg.VibeEffort = arg
-		case "default", "cli":
-			m.cfg.VibeEffort = ""
-		default:
-			m.errMsg = ":effort takes low, medium, high, xhigh, max or default"
-			m.errExpiry = time.Now().Add(3 * time.Second)
-			return nil
-		}
-		m.applyVibeSetup("effort")
+		m.setLookupEffort(strings.ToLower(strings.TrimSpace(strings.TrimPrefix(cmd, "effort"))))
 		return nil
 	case cmd == "art":
 		if !m.artMode && (m.supportsArtColor == nil || !m.supportsArtColor()) {
@@ -1727,21 +1723,23 @@ func (m *Model) fetchSearchCollectionCmd(album *provider.Album, playlist *provid
 	return nil
 }
 
-// toggleDiscover is F. Turning discover on also fetches a pick for the track
-// playing right now, so the next song is already new; turning it off leaves
-// whatever was inserted in place.
+// toggleDiscover is F, "apple radio" in the footer and the log (the code keeps
+// the discover name). Turning it on also fetches a pick for the track playing
+// right now, so the next song is already new; turning it off leaves whatever
+// was inserted in place.
 func (m *Model) toggleDiscover() tea.Cmd {
 	if m.discover.on {
 		m.discover.on = false
 		m.discover.triggeredForID = ""
-		m.appendLog("[discover] off")
+		m.appendLog("[apple radio] off")
 		return nil
 	}
 	if m.radio.enabled {
 		m.stopRadio() // discover and radio both insert station picks: one at a time
 	}
+	m.aiRadioOff() // and so does AI radio
 	m.discover.on = true
-	m.appendLog("[discover] on")
+	m.appendLog("[apple radio] on")
 	return m.discoverFor(m.playerState.Track)
 }
 
@@ -2027,6 +2025,12 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		m.lastKey = ""
 		return m.toggleDiscover()
 
+	case "A":
+		// AI radio on/off: while on, the selected AI picks what follows each
+		// playing track (see ai_radio.go).
+		m.lastKey = ""
+		return m.toggleAIRadio()
+
 	case "T":
 		m.lastKey = ""
 		seed := m.playerState.Track
@@ -2102,7 +2106,7 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 		m.mode = modeSearch
 		if !m.searchSrc.takesText() {
 			m.searchTyping = false
-			m.flashStatus("this source takes no text; ^/ for Apple Music or Claude Code", 3*time.Second)
+			m.flashStatus("this source takes no text; ^/ for Apple Music or AI", 3*time.Second)
 			return nil
 		}
 		m.searchTyping = true
@@ -2308,33 +2312,142 @@ func (m *Model) flashInfo(text string) {
 	m.errExpiry = time.Now().Add(4 * time.Second)
 }
 
-// vibeSetupLabel describes what answers CC lookups: the model and effort the
-// Claude CLI is asked for, or the keyword table.
-func (m *Model) vibeSetupLabel() string {
-	c, ok := m.vibePlanner.(*vibe.ClaudePlanner)
-	if !ok {
-		return "keyword table (no model)"
+// lookupPlanner is the AI behind the AI source and AI radio: ChatGPT when
+// vibe_agent is "chatgpt", otherwise Claude Code (or the keyword table when
+// its CLI is missing or vibe_agent says "keywords").
+func (m *Model) lookupPlanner() vibe.Planner {
+	if strings.EqualFold(m.cfg.VibeAgent, "chatgpt") {
+		return m.aiPlanner
 	}
-	model := c.Model
+	return m.vibePlanner
+}
+
+// aiBackendLabel names the AI in charge for the Search header and :ai:
+// ChatGPT, or Claude Code (whose slot the keyword table fills when the CLI is
+// missing; the results header says so then).
+func (m *Model) aiBackendLabel() string {
+	if strings.EqualFold(m.cfg.VibeAgent, "chatgpt") {
+		return "ChatGPT"
+	}
+	return "Claude Code"
+}
+
+// plannerSetup is a planner's model and effort for the status line, or a
+// note that the keyword table stands in.
+func plannerSetup(p vibe.Planner) string {
+	var model, effort string
+	switch c := p.(type) {
+	case *vibe.ClaudePlanner:
+		model, effort = c.Model, c.Effort
+	case *vibe.CodexPlanner:
+		model, effort = c.Model, c.Effort
+	default:
+		return "keyword table (CLI missing)"
+	}
 	if model == "" {
 		model = "CLI default"
 	}
-	effort := c.Effort
 	if effort == "" {
 		effort = "default"
 	}
-	return "Claude " + model + ", effort " + effort
+	return model + ", effort " + effort
 }
 
-// applyVibeSetup rebuilds the planner from the config's vibe_agent /
+// inChargeLabel is the AI in charge and its setup, for :model, :effort and :ai.
+func (m *Model) inChargeLabel() string {
+	return m.aiBackendLabel() + ": " + plannerSetup(m.lookupPlanner())
+}
+
+// applyVibeSetup rebuilds the Claude planner from the config's vibe_agent /
 // vibe_model / vibe_effort, saves the config and reports the result.
 func (m *Model) applyVibeSetup(what string) {
 	m.vibePlanner = vibe.NewPlanner(m.cfg.VibeAgent, m.cfg.VibeModel, m.cfg.VibeEffort)
 	if err := m.cfg.Save(""); err != nil {
 		m.appendLog(fmt.Sprintf("[vibe] config save error: %v", err))
 	}
-	m.appendLog(fmt.Sprintf("[vibe] %s set: %s", what, m.vibeSetupLabel()))
-	m.flashInfo("✓ CC lookups: " + m.vibeSetupLabel())
+	m.appendLog(fmt.Sprintf("[vibe] %s set: Claude Code %s", what, plannerSetup(m.vibePlanner)))
+	m.flashInfo("✓ Claude Code: " + plannerSetup(m.vibePlanner))
+}
+
+// applyAISetup rebuilds the ChatGPT planner from the config's ai_model /
+// ai_effort, saves the config and reports the result.
+func (m *Model) applyAISetup(what string) {
+	m.aiPlanner = vibe.NewAIPlanner(m.cfg.AIModel, m.cfg.AIEffort)
+	if err := m.cfg.Save(""); err != nil {
+		m.appendLog(fmt.Sprintf("[ai] config save error: %v", err))
+	}
+	m.appendLog(fmt.Sprintf("[ai] %s set: ChatGPT %s", what, plannerSetup(m.aiPlanner)))
+	m.flashInfo("✓ ChatGPT: " + plannerSetup(m.aiPlanner))
+}
+
+// setLookupModel is :model: bare, it shows the AI in charge with its model and
+// effort; with a name it sets that AI's model ("default" leaves the CLI's own
+// choice). Claude's goes to vibe_model, ChatGPT's to ai_model.
+func (m *Model) setLookupModel(name string) {
+	if name == "" {
+		m.flashInfo("ℹ " + m.inChargeLabel())
+		return
+	}
+	if m.lookupPlanner() == m.aiPlanner {
+		m.cfg.AIModel = name
+		m.applyAISetup("model")
+		return
+	}
+	m.cfg.VibeModel = name
+	m.applyVibeSetup("model")
+}
+
+// setLookupEffort is :effort for the AI in charge: Claude takes low … max,
+// ChatGPT minimal … xhigh; "default" hands the choice back to the CLI; bare,
+// it shows the setup.
+func (m *Model) setLookupEffort(level string) {
+	if level == "" {
+		m.flashInfo("ℹ " + m.inChargeLabel())
+		return
+	}
+	gpt := m.lookupPlanner() == m.aiPlanner
+	levels := []string{"low", "medium", "high", "xhigh", "max"}
+	if gpt {
+		levels = []string{"minimal", "low", "medium", "high", "xhigh"}
+	}
+	switch {
+	case level == "default" || level == "cli":
+		level = ""
+	case !slices.Contains(levels, level):
+		m.flashStatus(":effort takes "+strings.Join(levels, ", ")+" or default", 3*time.Second)
+		return
+	}
+	if gpt {
+		m.cfg.AIEffort = level
+		m.applyAISetup("effort")
+		return
+	}
+	m.cfg.VibeEffort = level
+	m.applyVibeSetup("effort")
+}
+
+// setAIBackend is :ai: which AI answers the AI source and AI radio. Bare, it
+// shows the selection; cc or gpt changes it (saved as vibe_agent).
+func (m *Model) setAIBackend(arg string) {
+	if arg == "" {
+		m.flashInfo("ℹ AI is " + m.inChargeLabel() + "  ·  :ai cc | gpt")
+		return
+	}
+	switch arg {
+	case "cc", "claude", "claude code":
+		m.cfg.VibeAgent = "claude"
+	case "gpt", "chatgpt", "codex":
+		m.cfg.VibeAgent = "chatgpt"
+	default:
+		m.flashStatus(":ai takes cc (Claude Code) or gpt (ChatGPT)", 3*time.Second)
+		return
+	}
+	m.vibePlanner = vibe.NewPlanner(m.cfg.VibeAgent, m.cfg.VibeModel, m.cfg.VibeEffort)
+	if err := m.cfg.Save(""); err != nil {
+		m.appendLog(fmt.Sprintf("[ai] config save error: %v", err))
+	}
+	m.appendLog("[ai] backend: " + m.aiBackendLabel())
+	m.flashInfo("✓ AI is " + m.inChargeLabel())
 }
 
 // playbackIDs lists the playback id of each track, in order.
@@ -2474,7 +2587,7 @@ const (
 // deduplicated by artist and title, up to vibePoolCap candidates. The plan
 // rides along so the panel can show what was searched for.
 func (m *Model) runVibeSearch(query string) tea.Cmd {
-	planner := m.vibePlanner
+	planner := m.lookupPlanner()
 	if planner == nil {
 		planner = vibe.KeywordPlanner{}
 	}
@@ -2569,7 +2682,7 @@ func (m *Model) handleVibeCandidates(msg vibeCandidatesMsg) tea.Cmd {
 		m.handleVibeSearchResult(final)
 		return nil
 	}
-	if rr, ok := m.vibePlanner.(vibe.Reranker); ok && len(msg.pool) > 1 {
+	if rr, ok := m.lookupPlanner().(vibe.Reranker); ok && len(msg.pool) > 1 {
 		return m.rerankVibeCmd(msg, rr) // the panel keeps animating meanwhile
 	}
 	final.tracks = msg.pool[:min(len(msg.pool), vibeResultCap)]
@@ -3289,7 +3402,7 @@ func (m *Model) statusNavLines(w int) []string {
 		label, glyph := "SEARCH", "AM "
 		switch m.searchSrc {
 		case searchClaude:
-			glyph = "CC "
+			glyph = "AI "
 		case searchSaved:
 			glyph = "SV "
 		case searchFeed:
@@ -3462,8 +3575,9 @@ func (m *Model) statusPlayLines(w int) []string {
 	return wrapFit(m.statusPlayParts(), styles.QueueItemMuted.Render("  ·  "), w)
 }
 
-// statusPlayParts lists the playback and Tracks-editing keys. The three keys
-// that add songs close the list: R, T, then F discover with its on indicator.
+// statusPlayParts lists the playback and Tracks-editing keys. The keys that
+// add songs close the list: R, T, F discover and A ai radio, the last two with
+// their on indicators.
 func (m *Model) statusPlayParts() []string {
 	muted := styles.QueueItemMuted
 	accent := styles.KeyName
@@ -3486,14 +3600,19 @@ func (m *Model) statusPlayParts() []string {
 	if m.radio.enabled {
 		parts = append(parts, accent.Render(":radio")+styles.Playing.Render(" 📻 on"))
 	}
-	discover := accent.Render("F") + muted.Render(" discover")
+	discover := accent.Render("F") + muted.Render(" apple radio")
 	if m.discover.on {
 		discover += styles.Playing.Render(" ● on")
+	}
+	radio := accent.Render("A") + muted.Render(" ai radio")
+	if m.aiRadio.on {
+		radio += styles.Playing.Render(" ● on")
 	}
 	return append(parts,
 		accent.Render("R")+muted.Render(" +5 related"),
 		accent.Render("T")+muted.Render(" +5 library"),
 		discover,
+		radio,
 	)
 }
 
@@ -3885,7 +4004,7 @@ type searchSource int
 
 const (
 	searchApple  searchSource = iota // "AM": Apple Music, searches on Enter
-	searchClaude                     // "CC": Claude Code finds songs for a description on Enter
+	searchClaude                     // "AI": the selected AI (Claude Code, or ChatGPT after :ai gpt) finds songs for a description on Enter
 	searchSaved                      // "SV": the saved track lists, one foldable section each
 	searchFeed                       // "FE": Apple's recommendations, one section per group
 )
@@ -3901,7 +4020,7 @@ func (s searchSource) takesText() bool { return s == searchApple || s == searchC
 func (m *Model) nextSourceLabel() string {
 	switch m.searchSrc.next() {
 	case searchClaude:
-		return "claude"
+		return "ai"
 	case searchSaved:
 		return "saved lists"
 	case searchFeed:

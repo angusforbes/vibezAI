@@ -66,7 +66,7 @@ func (m *Model) fetchRelatedCmd(seed *provider.Track, count int, discover bool) 
 	}
 	tag := "related"
 	if discover {
-		tag = "discover"
+		tag = "apple radio"
 	} else {
 		m.errMsg = fmt.Sprintf("⏳ Finding songs related to %s…", s.Title)
 		m.errExpiry = time.Now().Add(15 * time.Second)
@@ -99,15 +99,15 @@ func (m *Model) fetchRelatedCmd(seed *provider.Track, count int, discover bool) 
 
 // handleRelatedResult inserts the picks right after the seed (or at the end
 // when the seed has left the queue) and mirrors the change into the engine.
-// R results report on the status line; discover picks only log.
+// R results report on the status line; apple radio (discover) picks only log.
 func (m *Model) handleRelatedResult(msg relatedResultMsg) tea.Cmd {
 	tag := "related"
 	switch {
 	case msg.discover && !m.discover.on:
-		m.appendLog(fmt.Sprintf("[discover] off before the pick for %q arrived; dropped", msg.seed.Title))
+		m.appendLog(fmt.Sprintf("[apple radio] off before the pick for %q arrived; dropped", msg.seed.Title))
 		return nil
 	case msg.discover:
-		tag = "discover"
+		tag = "apple radio"
 	case msg.gen != m.relatedGen:
 		return nil
 	}
@@ -121,7 +121,7 @@ func (m *Model) handleRelatedResult(msg relatedResultMsg) tea.Cmd {
 	}
 	if len(msg.tracks) == 0 {
 		if msg.discover {
-			m.appendLog(fmt.Sprintf("[discover] no new station pick for %q", msg.seed.Title))
+			m.appendLog(fmt.Sprintf("[apple radio] no new station pick for %q", msg.seed.Title))
 			return nil
 		}
 		m.errMsg = "ℹ No new related songs found for " + msg.seed.Title

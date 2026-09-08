@@ -214,7 +214,10 @@ func TestTestCfg_NeverSavesToTheRealConfig(t *testing.T) {
 }
 
 func newModel(plyr player.Player) *Model {
-	return New(testCfg(), &mockProvider{}, plyr, Options{})
+	m := New(testCfg(), &mockProvider{}, plyr, Options{})
+	// Never the real Codex CLI under test: a fake stands in for ChatGPT.
+	m.aiPlanner = &fakePlanner{plan: vibe.Plan{Summary: "test", Queries: []string{"ai"}}}
+	return m
 }
 
 // --- clamp ---
@@ -4290,8 +4293,8 @@ func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 		t.Fatalf("ctrl+/ should switch to vibes mode without searching (cmd=%v vibe=%v)", cmd != nil, m.searchSrc == searchClaude)
 	}
 	lines := m.searchFindLines(40, 6)
-	if !strings.Contains(lines[2], "CC") || strings.Contains(lines[2], "AM") {
-		t.Fatalf("vibes mode shows the CC prompt (Claude Code) instead of AM: %q", lines[2])
+	if !strings.Contains(lines[2], "AI") || strings.Contains(lines[2], "AM") {
+		t.Fatalf("vibes mode shows the AI prompt instead of AM: %q", lines[2])
 	}
 	if h := ansi.Strip(lines[0]); !strings.Contains(h, "Claude Code") || strings.Contains(h, "Apple Music") {
 		t.Fatalf("the header should say Claude Code in vibes mode: %q", h)
@@ -4691,7 +4694,7 @@ func TestCommandFooter_ListsEveryCommand(t *testing.T) {
 			t.Fatalf("the CMD row lists every command, always; %q is missing from %q", ":"+c.trigger, plain)
 		}
 	}
-	if !strings.Contains(plain, ":quality <high|standard|256|64>") || !strings.Contains(plain, ":save [name]") || !strings.Contains(plain, ":effort <low|medium|high|xhigh|max|default>") {
+	if !strings.Contains(plain, ":quality <high|standard|256|64>") || !strings.Contains(plain, ":save [name]") || !strings.Contains(plain, ":effort <level|default>") {
 		t.Fatalf("each command shows what it takes: %q", plain)
 	}
 	if !strings.Contains(plain, "Esc cancel") || strings.Contains(plain, "Tab complete") || strings.Contains(plain, "Enter run") {
@@ -5124,44 +5127,6 @@ func TestHandleSearchKey_EnterAndShiftEnter_NoLongerAdd(t *testing.T) {
 	}
 }
 
-func TestExecuteCommand_ModelAndEffort(t *testing.T) {
-	m := newModel(newMockPlayer())
-	m.cfg.VibeAgent = "claude" // the planner is the CLI (nothing is spawned here)
-	m.applyVibeSetup("test")
-	m.executeCommand("model")
-	if !strings.Contains(m.errMsg, vibe.DefaultClaudeModel) || !strings.Contains(m.errMsg, "effort default") {
-		t.Fatalf("bare :model reports the current setup, got %q", m.errMsg)
-	}
-	m.executeCommand("model haiku")
-	c, ok := m.vibePlanner.(*vibe.ClaudePlanner)
-	if !ok || c.Model != "haiku" || m.cfg.VibeModel != "haiku" || !strings.Contains(m.errMsg, "haiku") {
-		t.Fatalf(":model haiku should rebuild the planner and remember it (planner=%+v cfg=%q msg=%q)", m.vibePlanner, m.cfg.VibeModel, m.errMsg)
-	}
-	m.executeCommand("effort low")
-	if c := m.vibePlanner.(*vibe.ClaudePlanner); c.Effort != "low" || c.Model != "haiku" || m.cfg.VibeEffort != "low" {
-		t.Fatalf(":effort low should keep the model and set the effort: %+v", c)
-	}
-	m.executeCommand("effort silly")
-	if c := m.vibePlanner.(*vibe.ClaudePlanner); c.Effort != "low" || !strings.Contains(m.errMsg, ":effort takes") {
-		t.Fatalf("an unknown effort is refused: %+v %q", c, m.errMsg)
-	}
-	m.executeCommand("model default")
-	m.executeCommand("effort default")
-	if c := m.vibePlanner.(*vibe.ClaudePlanner); c.Model != "" || c.Effort != "" || !strings.Contains(m.errMsg, "CLI default") {
-		t.Fatalf("default hands both back to the CLI: %+v %q", c, m.errMsg)
-	}
-	// The commands are in the palette.
-	found := 0
-	for _, c := range allCommands {
-		if c.trigger == "model" || c.trigger == "effort" {
-			found++
-		}
-	}
-	if found != 2 {
-		t.Fatalf("model and effort should be listed in the palette, found %d", found)
-	}
-}
-
 // openableFeedProvider serves the feed plus the tracks of its album and playlist.
 type openableFeedProvider struct{ feedProvider }
 
@@ -5370,16 +5335,16 @@ func TestPanelFootersListOnlyTheirOwnKeys(t *testing.T) {
 func TestDiscover_F_InsertsOnePickAfterEachPlayingTrack(t *testing.T) {
 	m, _ := navModel(t) // playing "Two" (1); queue One Two Three Four
 	footer := func() string { return ansi.Strip(strings.Join(m.statusLines(600), " ")) }
-	if f := footer(); !strings.Contains(f, "F discover") || strings.Contains(f, "● on") || strings.Contains(f, "⇧T") || !strings.Contains(f, "T +5 library") {
-		t.Fatalf("footer lists F discover (off) and a plain T: %q", f)
+	if f := footer(); !strings.Contains(f, "F apple radio") || strings.Contains(f, "● on") || strings.Contains(f, "⇧T") || !strings.Contains(f, "T +5 library") {
+		t.Fatalf("footer lists F apple radio (off) and a plain T: %q", f)
 	}
-	if f := strings.TrimRight(footer(), " "); !strings.HasSuffix(f, "R +5 related  ·  T +5 library  ·  F discover") {
-		t.Fatalf("R, T and F close the Tracks list: %q", f)
+	if f := strings.TrimRight(footer(), " "); !strings.HasSuffix(f, "R +5 related  ·  T +5 library  ·  F apple radio  ·  A ai radio") {
+		t.Fatalf("R, T, F and A close the Tracks list: %q", f)
 	}
 	if cmd := key(m, "F"); cmd == nil || !m.discover.on {
 		t.Fatal("F turns discover on and fetches a pick for the playing track")
 	}
-	if !strings.Contains(footer(), "F discover ● on") {
+	if !strings.Contains(footer(), "F apple radio ● on") {
 		t.Fatalf("footer shows the on indicator: %q", footer())
 	}
 	// The pick lands right after the playing track, without a status message.
@@ -5449,5 +5414,182 @@ func TestSearch_SavedAndFeedHideTheLeftoverQuery(t *testing.T) {
 	}
 	if m.searchQuery != "chill beats" {
 		t.Fatal("the text itself is kept while hidden")
+	}
+}
+
+// fakeDJ is a planner that can also choose the next songs (AI radio).
+type fakeDJ struct {
+	fakePlanner
+	picks  []vibe.Candidate
+	err    error
+	now    vibe.Candidate
+	recent []vibe.Candidate
+	avoid  []vibe.Candidate
+}
+
+func (d *fakeDJ) NextSongs(_ context.Context, now vibe.Candidate, recent, avoid []vibe.Candidate, _ int) ([]vibe.Candidate, error) {
+	d.now, d.recent, d.avoid = now, recent, avoid
+	return d.picks, d.err
+}
+
+// djProvider answers searches from a fixed catalog: every track whose title
+// appears in the search term.
+type djProvider struct {
+	mockProvider
+	catalog []provider.Track
+	terms   []string
+}
+
+func (p *djProvider) Search(_ context.Context, term string) (*provider.SearchResult, error) {
+	p.terms = append(p.terms, term)
+	res := &provider.SearchResult{}
+	for _, t := range p.catalog {
+		if strings.Contains(strings.ToLower(term), strings.ToLower(t.Title)) {
+			res.Tracks = append(res.Tracks, t)
+		}
+	}
+	return res, nil
+}
+
+// A turns AI radio on: the selected AI sees the playing track, the run before
+// it and the whole list, its first pick that Apple Music has (right title and
+// artist, not already listed) is inserted right after the playing track, once
+// per track. F and A switch each other off; a late result is dropped.
+func TestAIRadio_A_InsertsTheAIsPickAfterThePlayingTrack(t *testing.T) {
+	m, _ := navModel(t) // playing "Two" (1); queue One Two Three Four
+	dj := &fakeDJ{picks: []vibe.Candidate{{Artist: "Boards of Canada", Title: "Roygbiv"}, {Artist: "Four Tet", Title: "Angel Echoes"}}}
+	m.vibePlanner = dj
+	m.cfg.VibeAgent = ""
+	prov := &djProvider{catalog: []provider.Track{
+		{ID: "bad", Title: "Roygbiv", Artist: "Some Cover Band"}, // right title, wrong artist: skipped
+		{ID: "boc", Title: "ROYGBIV", Artist: "Boards Of Canada"},
+		{ID: "ft", Title: "Angel Echoes", Artist: "Four Tet"},
+	}}
+	m.provider = prov
+	footer := func() string { return ansi.Strip(strings.Join(m.statusLines(600), " ")) }
+	if f := footer(); !strings.Contains(f, "A ai radio") || strings.Contains(f, "A ai radio ● on") {
+		t.Fatalf("the footer lists A ai radio, off: %q", f)
+	}
+	m.discover.on = true
+	cmd := key(m, "A")
+	if cmd == nil || !m.aiRadio.on || m.discover.on {
+		t.Fatalf("A turns AI radio on, discover off, and asks about the playing track: cmd=%v on=%v discover=%v", cmd != nil, m.aiRadio.on, m.discover.on)
+	}
+	if !strings.Contains(footer(), "A ai radio ● on") {
+		t.Fatalf("the footer shows the on indicator: %q", footer())
+	}
+	msg := cmd().(aiRadioResultMsg)
+	if dj.now.Title != "Two" || len(dj.recent) != 1 || dj.recent[0].Title != "One" || len(dj.avoid) != 4 {
+		t.Fatalf("the AI sees the playing track, the run before it and the whole list: now=%+v recent=%+v avoid=%d", dj.now, dj.recent, len(dj.avoid))
+	}
+	if msg.err != nil || msg.track == nil || msg.track.ID != "boc" {
+		t.Fatalf("the first pick Apple Music has with the right artist wins: %+v", msg)
+	}
+	m.Update(msg)
+	if got := strings.Join(m.queueIDs, ","); got != "1,2,boc,3,4" {
+		t.Fatalf("the pick lands right after the playing track: %v", got)
+	}
+	// Once per track; the next track that plays gets its own ask.
+	if cmd := m.aiRadioFor(&m.queueTracks[1]); cmd != nil {
+		t.Fatal("one pick per track")
+	}
+	if cmd := m.aiRadioFor(&m.queueTracks[2]); cmd == nil {
+		t.Fatal("the next track gets its own pick")
+	}
+	// F takes over from AI radio; a late result is then dropped.
+	key(m, "F")
+	if m.aiRadio.on || !m.discover.on {
+		t.Fatalf("F switches AI radio off and discover on: ai=%v discover=%v", m.aiRadio.on, m.discover.on)
+	}
+	m.Update(aiRadioResultMsg{gen: msg.gen, seed: m.queueTracks[2], track: &prov.catalog[2]})
+	if len(m.queueIDs) != 5 {
+		t.Fatalf("a late pick after the switch is dropped: %v", m.queueIDs)
+	}
+	// No AI to ask: the keyword table cannot choose songs, so nothing is asked.
+	m.vibePlanner = vibe.KeywordPlanner{}
+	key(m, "A")
+	if !m.aiRadio.on || m.discover.on {
+		t.Fatal("A turns AI radio on and discover off again")
+	}
+	if cmd := m.aiRadioFor(&m.queueTracks[3]); cmd != nil {
+		t.Fatal("the keyword table is never asked for songs")
+	}
+}
+
+// :ai picks the AI in charge; :model and :effort show or set that AI's setup,
+// Claude's into vibe_model / vibe_effort and ChatGPT's into ai_model / ai_effort.
+func TestCommand_ModelAndEffortFollowTheAIInCharge(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "codex"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil { //nolint:gosec // test stub
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir) // a codex exists, so the ChatGPT planner is the Codex one (never run here)
+	m := newModel(newMockPlayer())
+	m.cfg.VibeAgent = "claude" // the Claude planner is the CLI (nothing is spawned here)
+	m.applyVibeSetup("test")
+	m.applyAISetup("test")
+	m.mode = modeSearch
+	m.setSearchSource(searchClaude)
+	if h := ansi.Strip(m.findHeader()); !strings.Contains(h, "Claude Code") {
+		t.Fatalf("the AI source names Claude Code by default: %q", h)
+	}
+	m.executeCommand("model")
+	if !strings.Contains(m.errMsg, "Claude Code: "+vibe.DefaultClaudeModel) || !strings.Contains(m.errMsg, "effort default") || strings.Contains(m.errMsg, "ChatGPT") {
+		t.Fatalf("bare :model shows the AI in charge alone, got %q", m.errMsg)
+	}
+	m.executeCommand("model haiku")
+	if c := m.vibePlanner.(*vibe.ClaudePlanner); c.Model != "haiku" || m.cfg.VibeModel != "haiku" || m.cfg.AIModel != "" || !strings.Contains(m.errMsg, "haiku") {
+		t.Fatalf(":model haiku sets Claude's model and leaves ChatGPT alone: %+v cfg=%q/%q msg=%q", c, m.cfg.VibeModel, m.cfg.AIModel, m.errMsg)
+	}
+	m.executeCommand("effort low")
+	if c := m.vibePlanner.(*vibe.ClaudePlanner); c.Effort != "low" || c.Model != "haiku" || m.cfg.VibeEffort != "low" || m.cfg.AIEffort != "" {
+		t.Fatalf(":effort low keeps the model and sets Claude's effort: %+v ai=%q", c, m.cfg.AIEffort)
+	}
+	m.executeCommand("effort minimal")
+	if m.cfg.VibeEffort != "low" || !strings.Contains(m.errMsg, ":effort takes low") {
+		t.Fatalf("minimal is not one of Claude's levels: cc=%q msg=%q", m.cfg.VibeEffort, m.errMsg)
+	}
+	m.executeCommand("model default")
+	m.executeCommand("effort default")
+	if c := m.vibePlanner.(*vibe.ClaudePlanner); c.Model != "" || c.Effort != "" || !strings.Contains(m.errMsg, "CLI default") {
+		t.Fatalf("default hands both back to the CLI: %+v %q", c, m.errMsg)
+	}
+	// :ai gpt puts ChatGPT in charge: the header, :model and :effort follow.
+	m.executeCommand("ai gpt")
+	if m.cfg.VibeAgent != "chatgpt" || m.lookupPlanner() != m.aiPlanner || !strings.Contains(m.errMsg, "AI is ChatGPT") {
+		t.Fatalf(":ai gpt selects ChatGPT: agent=%q msg=%q", m.cfg.VibeAgent, m.errMsg)
+	}
+	if h := ansi.Strip(m.findHeader()); !strings.Contains(h, "ChatGPT") {
+		t.Fatalf("the AI source names ChatGPT now: %q", h)
+	}
+	m.executeCommand("model")
+	if !strings.Contains(m.errMsg, "ChatGPT: "+vibe.DefaultCodexModel) || strings.Contains(m.errMsg, "Claude") {
+		t.Fatalf("bare :model shows ChatGPT alone now: %q", m.errMsg)
+	}
+	m.executeCommand("model gpt-5.5")
+	m.executeCommand("effort minimal")
+	if c := m.aiPlanner.(*vibe.CodexPlanner); c.Model != "gpt-5.5" || c.Effort != "minimal" || m.cfg.AIModel != "gpt-5.5" || m.cfg.AIEffort != "minimal" || m.cfg.VibeModel != "default" {
+		t.Fatalf(":model / :effort now set ChatGPT (Claude keeps its own): %+v cfg=%q/%q cc=%q", c, m.cfg.AIModel, m.cfg.AIEffort, m.cfg.VibeModel)
+	}
+	m.executeCommand("effort max")
+	if m.cfg.AIEffort != "minimal" || !strings.Contains(m.errMsg, ":effort takes minimal") {
+		t.Fatalf("max is not one of ChatGPT's levels: gpt=%q msg=%q", m.cfg.AIEffort, m.errMsg)
+	}
+	m.executeCommand("ai")
+	if !strings.Contains(m.errMsg, "AI is ChatGPT") || !strings.Contains(m.errMsg, ":ai cc") {
+		t.Fatalf("bare :ai shows the selection and how to change it: %q", m.errMsg)
+	}
+	m.executeCommand("ai cc")
+	if m.cfg.VibeAgent != "claude" || m.lookupPlanner() != m.vibePlanner {
+		t.Fatalf(":ai cc selects Claude Code: agent=%q", m.cfg.VibeAgent)
+	}
+	m.executeCommand("ai bogus")
+	if m.cfg.VibeAgent != "claude" || !strings.Contains(m.errMsg, ":ai takes") {
+		t.Fatalf("an unknown AI is refused: agent=%q msg=%q", m.cfg.VibeAgent, m.errMsg)
+	}
+	for _, c := range allCommands {
+		if strings.HasSuffix(c.trigger, "-cc") || strings.HasSuffix(c.trigger, "-gpt") || strings.HasSuffix(c.trigger, "-ai") || c.usage != c.trigger && strings.Contains(c.usage, "gpt-") {
+			t.Fatalf("no per-AI or GPT-specific commands in the palette: %q %q", c.trigger, c.usage)
+		}
 	}
 }

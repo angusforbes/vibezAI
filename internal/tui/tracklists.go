@@ -242,7 +242,7 @@ func (m *Model) writeTrackList(name string, st queuestate.State) {
 }
 
 // autoSaveTrackList is a bare `:save`: the name is the date and time plus a
-// few words about the songs, from Claude Code when the CC planner is in use
+// few words about the songs, from the selected AI (Claude Code or ChatGPT)
 // and the CLI is there, otherwise from the artists and genres themselves.
 // The snapshot is taken now; the file is written when the name arrives.
 func (m *Model) autoSaveTrackList() tea.Cmd {
@@ -251,7 +251,7 @@ func (m *Model) autoSaveTrackList() tea.Cmd {
 		return nil
 	}
 	stamp := time.Now().Format(autoNameStamp)
-	namer, ok := m.vibePlanner.(listNamer)
+	namer, ok := m.lookupPlanner().(listNamer)
 	if !ok || !namer.Available() {
 		m.finishAutoSave(trackListNamedMsg{stamp: stamp, state: st})
 		return nil

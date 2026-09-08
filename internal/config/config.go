@@ -26,14 +26,20 @@ type Config struct {
 	Provider            string `json:"provider"`
 	Theme               string `json:"theme"`
 	AudioQuality        string `json:"audio_quality,omitempty"`
-	// VibeAgent plans the Search panel's vibes-mode lookups: "claude" (Claude
-	// Code CLI, the user's own login), "keywords" (built-in table) or "auto"
-	// (Claude when installed, else keywords). Empty means auto.
+	// VibeAgent is the AI behind the Search panel's AI source and AI radio:
+	// "claude" (Claude Code CLI, the user's own login), "chatgpt" (OpenAI's
+	// Codex CLI, the user's ChatGPT login), "keywords" (built-in table) or
+	// "auto" (Claude when installed, else keywords). Empty means auto. :ai sets it.
 	VibeAgent string `json:"vibe_agent,omitempty"`
 	// VibeModel / VibeEffort are passed to the Claude CLI as --model / --effort
 	// (e.g. "haiku" + "low" for the fastest, cheapest plans). Empty = CLI defaults.
 	VibeModel  string `json:"vibe_model,omitempty"`
 	VibeEffort string `json:"vibe_effort,omitempty"`
+	// AIModel / AIEffort configure the Search panel's AI source (ChatGPT through
+	// the Codex CLI): its -m model slug and model_reasoning_effort. An empty
+	// model means gpt-5.6-sol; "default" leaves the CLI's own choice.
+	AIModel  string `json:"ai_model,omitempty"`
+	AIEffort string `json:"ai_effort,omitempty"`
 	// Volume is the last user-set playback volume (0.0–1.0). nil means
 	// "not yet saved" and the player default (1.0) is used on startup.
 	Volume *float64 `json:"volume,omitempty"`

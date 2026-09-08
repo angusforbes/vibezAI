@@ -28,7 +28,8 @@ func (m *Model) findLines(w, h int) []string {
 
 // findHeader is the column title, underlined like the Queue's and bold while
 // Search has the keys, followed by the mode the way the Queue shows its track
-// count: "Apple Music" (plain search), "Claude Code" (vibes lookups) or
+// count: "Apple Music" (plain search), the AI in charge ("Claude Code" or
+// "ChatGPT") for the AI source, or
 // "Saved lists" (the track lists kept with :save).
 //
 // While a lookup is in flight the mode text is the busy indicator: its colours
@@ -37,7 +38,7 @@ func (m *Model) findHeader() string {
 	mode := "Apple Music"
 	switch m.searchSrc {
 	case searchClaude:
-		mode = "Claude Code"
+		mode = m.aiBackendLabel()
 	case searchSaved:
 		mode = "Saved lists"
 	case searchFeed:
@@ -58,7 +59,7 @@ func (m *Model) searchFindLines(w, h int) []string {
 	glyph := "AM" // Apple Music's own search
 	switch m.searchSrc {
 	case searchClaude:
-		glyph = "CC" // Claude Code plans these lookups
+		glyph = "AI" // the selected AI (Claude Code or ChatGPT) plans these lookups
 	case searchSaved:
 		glyph = "SV" // the saved track lists
 	case searchFeed:
