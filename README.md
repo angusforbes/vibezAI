@@ -73,6 +73,28 @@ Results, songs as well as whole albums and playlists, can be marked with `Ctrl+S
 
 To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `SV`. Every list is a header with its size, `last session` first, then the newest saves. `→` opens one to all of its songs. `Ctrl+,` on the header adds the whole list to Tracks, on a song just that song, and `Ctrl+→` marks a header so a whole list joins a multi-selection. Adding never starts playback: with nothing playing, `space` starts what you have built. `Ctrl+Delete` on a header deletes the list, from disk and from the panel. Nothing here replaces Tracks; to start over from a list, clear Tracks with `c` first.
 
+## Apple radio and AI radio
+
+Two keys in Tracks keep the music going without a playlist, one song at a time. While either is on, every track that starts playing gets exactly one new song inserted directly after it, chosen once for that track and never again for the same track, so whatever you queued yourself is never pushed out, only spaced out. Turning one on also acts on the track playing right now. Both are quiet: the footer shows `● on` next to the key and what they did goes to the log (`:debug-logs`), not the status line. Turning one on switches the other off and stops `:radio`, upstream's continuous station mode.
+
+**Apple radio (`F`)** asks Apple Music, not an AI.
+
+1. It fetches the Apple Music station of the playing track's catalog entry, the same list `R` draws five songs from.
+2. Everything already in Tracks is dropped from that list, matched by id and by artist plus title, so a song you have listed cannot come back.
+3. The first station song left is inserted right after the playing track.
+
+Apple radio looks at nothing but the playing track: not the songs before it, and the rest of Tracks only as things to skip. A library-only track (your own upload or recording) has no catalog counterpart and so no station; it is skipped with a note in the log and the next track gets a pick instead.
+
+**AI radio (`A`)** asks the AI in charge (Claude Code, or ChatGPT after `:ai gpt`) to act as a DJ. It is given three things:
+
+1. **Now playing**: the artist, title and album of the playing track.
+2. **The run before it**: up to ten tracks above the playing one in Tracks, oldest first, so it can follow the mood and the drift of what led here. Tracks below the playing one are not part of this context.
+3. **Do not pick**: everything in Tracks, above and below, up to forty entries.
+
+The prompt asks for three real, released songs, best first, that would follow the playing song well: matching its mood, era and style and the drift of the recent run, preferring a different artist from the last few songs unless the run is all one artist, never a live, karaoke or tribute version, and nothing from the do-not-pick list. vibezAI searches Apple Music for each pick in order and inserts the first hit whose title and artist match and that is not already in Tracks (checked by id and by artist plus title, whatever the AI was told). If none of the three exists on Apple Music, nothing is inserted for that track and the log says so. Each ask is one CLI call, given up to a minute; the AI sees only the text of those lists, never your library or Apple's station.
+
+Neither looks at saved lists or Apple Music playlists, only at what is in Tracks at that moment.
+
 ## Key bindings
 
 ### Tracks (left column)
@@ -91,8 +113,8 @@ To use them, reach Search with `Tab` and press `Ctrl+/` until the prompt reads `
 | `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom |
 | `R` | Insert five related songs after the highlighted track, once |
 | `T` | Insert five random songs from your library after the highlighted track |
-| `F` | Apple radio on / off: while on, one song from the playing track's Apple Music station is inserted right after it, once per track, so something new always plays next |
-| `A` | AI radio on / off: while on, the selected AI (Claude Code, or ChatGPT after `:ai gpt`) picks one song to follow the playing track from what is playing and the ten songs before it; the pick is found on Apple Music and inserted right after the playing track. Apple radio and AI radio switch each other off |
+| `F` | Apple radio on / off: while on, each track that starts playing gets one song from its Apple Music station inserted right after it, once per track; see [Apple radio and AI radio](#apple-radio-and-ai-radio) |
+| `A` | AI radio on / off: while on, the AI in charge (Claude Code, or ChatGPT after `:ai gpt`) picks one song to follow each track that starts playing, from that track and the ten before it; the pick is found on Apple Music and inserted right after it. Apple radio and AI radio switch each other off; see [Apple radio and AI radio](#apple-radio-and-ai-radio) |
 | `s` | Jump to a random track |
 | `S` | Shuffle Tracks and play from the top |
 | `r` | Cycle repeat |
@@ -135,6 +157,7 @@ Typing `:` keeps both columns on screen and swaps the footer for the command lis
 | `:model <name\|default>` | Model the AI in charge uses (an alias like `haiku` or a full id; `default` leaves the CLI's own choice); bare `:model` shows it with the effort |
 | `:effort <level\|default>` | Effort for the AI in charge (Claude: `low` … `max`; ChatGPT: `minimal` … `xhigh`); bare `:effort` shows it |
 | `:save [name]` | Save Tracks as a named list in `~/.config/vibez/tracklists/`; the lists appear in Search under `SV`. Without a name the list is dated and named after its songs by Claude Code (from the artists and genres when the CLI is not there) |
+| `:radio` | Toggle upstream's continuous station mode, seeded by the playing track: it keeps appending station songs after whatever is already lined up. `R` is the one-shot version; turning on Apple radio or AI radio stops it |
 | `:quality <high\|standard\|256\|64>` | AAC bitrate |
 | `:debug-logs` | Toggle the debug log, where Claude's terms and rankings are recorded |
 | `:about` | About the app |
@@ -190,7 +213,7 @@ vibezAI started from vibez 0.7.0. The engines, themes, equalizer, radio mode, La
 | Search | Single flat result list, `enter` plays and replaces the queue | Sections (Playlists, Albums, Library, Tracks) with `+ 5 more` / `− 5 less`, foldable headers, paging through Apple's results, duplicates never added |
 | Vibe mode | `v` opens a prompt; a keyword table maps words to genres and dumps 15 shuffled songs into the queue | `AI` prompt inside Search; Claude Code (or ChatGPT) plans the terms and ranks a pool of 40 candidates; results shown as a section headed by the model, nothing added until you say so |
 | Adding | `enter` plays, `tab` adds, `shift+tab` plays next | `ctrl+,` adds, `ctrl+.` adds and plays; multi-select with `ctrl+shift+↑/↓` and `ctrl+→`, albums and playlists included |
-| Related songs | Continuous radio | `R` inserts five related songs once |
+| Related songs | Continuous radio | `R` inserts five related songs once; `F` (Apple radio) and `A` (AI radio) add one song after each track that starts playing, from Apple's station or from the AI in charge |
 | Library | Browser panel | `T` (shift+t) inserts five random library songs; the library is searched as part of every search |
 | Feed | `F` opens a Feed panel | `FE` source in Search: the same sections, marks and adds as a search; `→` opens any album or playlist to its tracks, each addable on its own |
 | Saved lists | — | `:save [name]` keeps Tracks as a list, named by Claude Code when no name is given; Search offers the lists under `SV`, whole or song by song; `ctrl+delete` removes one |
