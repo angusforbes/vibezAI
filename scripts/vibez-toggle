@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# vibez-toggle — single entry point for the vibez (Apple Music) terminal player.
+#
+#   vibez-toggle          SUPER + SHIFT + M.  Player window on your current
+#                         workspace -> close it (hide). On another workspace ->
+#                         bring it to this workspace and focus it. Not open ->
+#                         open it here.
+#   vibez-toggle show     Bar widget "Launch" and the app menu: same, but never
+#                         closes (bring here / focus / open).
+#
+# vibez itself runs inside the tmux session "vibez" (same name the Apple Music
+# bar widget uses); closing the window only detaches tmux, so playback and the
+# sign-in survive. Quit vibez with `:q` inside it. vibez is started with
+# --no-update because ~/.local/bin/vibez is a local build with queue
+# persistence (omarchy-customizations.md section 16); the self-updater would
+# replace it with the stock release.
+#
+# The player window is found by our app-id or by walking up from any tmux
+# client attached to the session (or a bare vibez process) to the terminal
+# window hosting it, so every entry point lands on the same window.
+# A short debounce ignores a second press within 700 ms (key repeat, double
+# tap) so close-then-reopen cannot happen by accident.
+# Log: $XDG_RUNTIME_DIR/vibez-toggle.log. Docs: omarchy-customizations.md 12-15.
+set -u
+APP_ID="org.omarchy.vibez"
+SESSION="vibezAI"
+MODE=${1:-toggle}
+VIBEZ=$(command -v vibezAI 2>/dev/null || echo "$HOME/.local/bin/vibezAI")
+RUN=${XDG_RUNTIME_DIR:-/tmp}
+LOG="$RUN/vibez-toggle.log"
+STAMP="$RUN/vibez-toggle.last"
+
+log() { printf '%s %s %s\n' "$(date '+%H:%M:%S')" "$MODE" "$*" >>"$LOG" 2>/dev/null; }
+
+# Debounce: ignore a repeat press within 700 ms of the previous action.
+now_ms=$(date +%s%3N)
+if [[ -f $STAMP ]]; then
+  last_ms=$(<"$STAMP")
+  if [[ $last_ms =~ ^[0-9]+$ ]] && (( now_ms - last_ms < 700 )); then
+    log "ignored (debounce, $((now_ms - last_ms)) ms after previous)"
+    exit 0
+  fi
+fi
+printf '%s' "$now_ms" >"$STAMP"
+
+find_window() {  # prints "<address> <workspace id>" or nothing
+  local clients pid addr
+  clients=$(hyprctl clients -j 2>/dev/null) || return 0
+  addr=$(jq -r --arg c "$APP_ID" '.[] | select(.class == $c) | "\(.address) \(.workspace.id)"' <<<"$clients" | head -n1)
+  if [[ -n $addr ]]; then printf '%s\n' "$addr"; return 0; fi
+  for pid in $(tmux list-clients -t "$SESSION" -F '#{client_pid}' 2>/dev/null; pgrep -x vibez 2>/dev/null); do
+    while [[ -n $pid && $pid -gt 1 ]]; do
+      addr=$(jq -r --argjson p "$pid" '.[] | select(.pid == $p) | "\(.address) \(.workspace.id)"' <<<"$clients" | head -n1)
+      if [[ -n $addr ]]; then printf '%s\n' "$addr"; return 0; fi
+      pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    done
+  done
+}
+
+dispatch() {  # Lua dispatcher first, classic fallback
+  hyprctl dispatch "$1" >/dev/null 2>&1 || hyprctl dispatch $2 >/dev/null 2>&1
+}
+
+read -r addr win_ws < <(find_window) || true
+if [[ -n ${addr:-} ]]; then
+  cur_ws=$(hyprctl activeworkspace -j 2>/dev/null | jq -r '.id // empty')
+  if [[ $MODE == toggle && $win_ws == "$cur_ws" ]]; then
+    log "close $addr (on current workspace $cur_ws)"
+    dispatch "hl.dsp.window.close({ window = \"address:$addr\" })" "closewindow address:$addr"
+    exit 0
+  fi
+  if [[ $win_ws != "$cur_ws" ]]; then
+    log "bring $addr from workspace $win_ws to $cur_ws"
+    dispatch "hl.dsp.window.move({ workspace = \"$cur_ws\", window = \"address:$addr\", follow = false })" \
+             "movetoworkspacesilent $cur_ws,address:$addr"
+  fi
+  log "focus $addr"
+  dispatch "hl.dsp.focus({ window = \"address:$addr\" })" "focuswindow address:$addr"
+  exit 0
+fi
+
+log "launch (no window; tmux session $(tmux has-session -t "$SESSION" 2>/dev/null && echo exists || echo missing))"
+# The session has no tmux prefix: Ctrl+Space (the global prefix) reaches the
+# player instead of arming tmux; prefix2 (Ctrl+b) still works for detaching.
+# J542 (2026-10-13, Angus: "should we use foot for vibezAI?"): the player window is foot, not the default
+# terminal (kitty since 09-25). Through tmux, kitty loses Ctrl+' / Ctrl+. (tmux asks for modifyOtherKeys,
+# which kitty doesn't speak) and can't draw the sixel cover art; foot does both.
+# Undo: cp ~/.local/share/omarchy-backups/j542-vibez-toggle ~/.local/bin/vibez-toggle
+# Requirements (J545): tmux (keeps the player alive when the window closes) and foot (carries Ctrl+'
+# Ctrl+. and the sixel cover through tmux). Without tmux there is nothing to run; without foot, say so
+# and fall back to the default terminal (keys without a control code and the cover won't work there).
+if ! command -v tmux >/dev/null; then
+  log "tmux missing"; notify-send -u critical "vibezAI needs tmux" "Install it: sudo pacman -S tmux"; exit 1
+fi
+if ! command -v foot >/dev/null; then
+  log "foot missing: default terminal"
+  notify-send "vibezAI: foot is not installed" "Using the default terminal: Ctrl+' / Ctrl+. and the cover picture won't work there. Install foot: sudo pacman -S foot"
+  exec omarchy-launch-tui --app-id="$APP_ID" bash -c \
+  "tmux has-session -t '$SESSION' 2>/dev/null || tmux new-session -d -s '$SESSION' \"bash -ic 'exec $VIBEZ --no-update'\"; tmux set-option -t '$SESSION' prefix None; exec tmux attach-session -t '$SESSION'"
+fi
+exec setsid uwsm-app -- foot --app-id="$APP_ID" bash -c \
+  "tmux has-session -t '$SESSION' 2>/dev/null || tmux new-session -d -s '$SESSION' \"bash -ic 'exec $VIBEZ --no-update'\"; tmux set-option -t '$SESSION' prefix None; exec tmux attach-session -t '$SESSION'"

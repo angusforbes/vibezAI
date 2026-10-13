@@ -392,6 +392,7 @@ type Model struct {
 
 	// Errors / status messages
 	errMsg    string
+	terminalWarned bool // the terminal-requirement warning was shown (terminal_check.go)
 	errExpiry time.Time
 
 	// Debug log
@@ -532,7 +533,12 @@ func waitForState(ch <-chan player.State) tea.Cmd {
 // ── Update ────────────────────────────────────────────────────────────────
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := m.screenKey()
 	model, cmd := m.update(msg)
+	// A view switch, resize or tmux re-attach repaints the whole screen (redraw.go).
+	if rc := m.redrawCmd(before, msg); rc != nil {
+		cmd = tea.Batch(cmd, rc)
+	}
 	// The cover picture (art_sixel.go) is drawn outside the frame, so it is
 	// reconciled with whatever this update changed.
 	if sc := m.sixelSyncCmd(msg); sc != nil {
@@ -549,6 +555,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if !m.terminalWarned {
+			cmds = append(cmds, terminalCheckCmd())
+		}
 		inner := max(0, m.width-2)
 		contentW := max(0, inner-2)
 		panelH := m.panelHeight()
@@ -557,6 +566,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lyricsP.SetSize(contentW, panelH)
 		m.eqP.SetSize(contentW, panelH)
 		m.aboutP.SetSize(contentW, panelH)
+
+	case terminalCheckMsg:
+		m.applyTerminalCheck(msg)
 
 	case tickMsg:
 		if m.errMsg != "" && time.Now().After(m.errExpiry) {
