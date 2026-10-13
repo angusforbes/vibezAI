@@ -147,12 +147,17 @@ type searchMoreMsg struct {
 // vibeCandidatesMsg is stage one of a vibe lookup: the plan and the pooled
 // search hits, before a Reranker orders them.
 type vibeCandidatesMsg struct {
-	query    string
-	plan     vibe.Plan
-	via      string
-	pool     []provider.Track
-	warnings []string
-	err      error
+	query       string
+	source      searchSource // which search mode triggered this (searchClaude or searchAJ)
+	gen         int          // per-source generation at search start; stale if != current gen
+	plan        vibe.Plan
+	via         string
+	pool        []provider.Track
+	warnings    []string
+	err         error
+	startedAt    time.Time     // when the lookup started (before planning)
+	planElapsed  time.Duration // how long the planning step took
+	appleElapsed time.Duration // how long the Apple provider-search stage took (wall time, includes fallback)
 }
 
 // maxSearchPageHops bounds how many pages one "+ 5 more" press may chain
@@ -166,15 +171,22 @@ type searchDebounceMsg struct {
 	gen   int
 }
 type vibeResultMsg struct {
-	query    string
-	tracks   []provider.Track
-	err      error
-	plan     vibe.Plan // what the planner made of the description
-	via      string    // planner that produced plan ("Claude", "keywords", …)
-	ranking  string    // how the final order came about ("picked 15 of 38", "Apple order …")
-	warnings []string  // non-fatal provider failures behind an incomplete result
-	radio    bool      // true when result is from a radio auto-refill
-	radioGen int       // radio generation that produced this result
+	query        string
+	source       searchSource  // which search mode produced this (searchClaude or searchAJ)
+	gen          int           // per-source generation at search start; stale if != current gen
+	tracks       []provider.Track
+	err          error
+	plan         vibe.Plan     // what the planner made of the description
+	via          string        // planner that produced plan ("Claude", "keywords", …)
+	ranking      string        // how the final order came about ("picked 15 of 38", "Apple order …")
+	warnings     []string      // non-fatal provider failures behind an incomplete result
+	radio        bool          // true when result is from a radio auto-refill
+	radioGen     int           // radio generation that produced this result
+	startedAt    time.Time     // when the lookup started
+	planElapsed  time.Duration // how long the planning step took
+	appleElapsed time.Duration // how long the Apple provider-search stage took
+	rankElapsed  time.Duration // how long the rerank step took
+	totalElapsed time.Duration // total wall time from query submission to result
 }
 type loveSongMsg struct {
 	title string
@@ -294,6 +306,7 @@ type Model struct {
 	artHTTP          *http.Client
 	supportsArtColor func() bool
 	artCellAsp       float64          // terminal cell height/width ratio, for square art
+	sixel            sixelState       // the cover as a real picture, when the terminal can
 	queueIDs         []string         // current playback queue (for "add to queue")
 	queueTracks      []provider.Track // full track objects parallel to queueIDs
 	queueMiniOffset  int              // scroll offset for the mini-queue in the split view
@@ -332,6 +345,12 @@ type Model struct {
 	// aiPlanner is ChatGPT through the Codex CLI, per config "ai_model" /
 	// "ai_effort"; lookupPlanner picks it or vibePlanner by "vibe_agent" (:ai).
 	aiPlanner vibe.Planner
+	// ajPlanner is always Claude Code with the vibe_model / vibe_effort config.
+	// It is independent of the :ai setting so that AJ always uses Claude for
+	// planning regardless of whether AI source is configured to use ChatGPT.
+	ajPlanner vibe.Planner
+	// jevReranker is the TypeSafe Jev reranker for the AJ source.
+	jevReranker *vibe.JevReranker
 	// aiRadio is A: the selected AI picks what follows the playing track.
 	aiRadio aiRadioMode
 
@@ -348,11 +367,15 @@ type Model struct {
 	searchShown  string       // query whose results the search panel currently lists
 	searchSrc    searchSource // what the Search column asks: Apple Music, Claude Code or the saved lists (Ctrl+/ cycles)
 	searchTyping bool         // the Search prompt takes keystrokes (Ctrl+' toggles; Enter and Esc end it)
-	vibeShown    string       // vibe description whose songs the panel currently lists
+	vibeShown    string       // vibe description whose songs the AI (searchClaude) panel currently lists
+	vibeGen      int          // incremented on each startVibeSearch; candidate/result messages with a different gen are stale
+	ajShown      string       // vibe description whose songs the AJ (searchAJ) panel currently lists
+	ajGen        int          // incremented on each startAJSearch; candidate/result messages with a different gen are stale
 	// Each mode keeps its own result list, so Ctrl+/ switches between them
 	// without redoing a lookup; m.search points at the active one.
 	searchAM *views.SearchModel // Apple Music search results
-	searchCC *views.SearchModel // Claude Code (vibes) results
+	searchCC *views.SearchModel // AI (Claude Code / ChatGPT) vibes results
+	ajSearch *views.SearchModel // AJ (Claude plan + Jev rerank) results
 	searchSV *views.SearchModel // the saved track lists, one foldable section each
 	searchFE *views.SearchModel // Apple's recommendations (the feed), one section per group
 
@@ -413,6 +436,7 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 		supportsArtColor: art.SupportsColor,
 		// Measured cell height/width ratio, so album art renders as a true square.
 		artCellAsp: cellAspect(),
+		sixel:      newSixelState(),
 	}
 	if plyr != nil {
 		m.stateCh = plyr.Subscribe()
@@ -428,8 +452,11 @@ func New(cfg *config.Config, prov provider.Provider, plyr player.Player, opts Op
 	m.eqP = &eqPanel{m: views.NewEqualizer(eqBands)}
 	m.vibePlanner = vibe.NewPlanner(cfg.VibeAgent, cfg.VibeModel, cfg.VibeEffort)
 	m.aiPlanner = vibe.NewAIPlanner(cfg.AIModel, cfg.AIEffort)
+	m.ajPlanner = vibe.NewPlanner("claude", cfg.VibeModel, cfg.VibeEffort)
+	m.jevReranker = vibe.NewJevReranker()
 	m.searchAM = views.NewSearch(prov)
 	m.searchCC = views.NewSearch(prov)
+	m.ajSearch = views.NewSearch(prov)
 	m.searchSV = views.NewSearch(prov)
 	m.searchFE = views.NewSearch(prov)
 	m.search = m.searchAM
@@ -453,6 +480,9 @@ func (m *Model) Init() tea.Cmd {
 	}
 	if m.provider != nil {
 		cmds = append(cmds, m.library.Init())
+	}
+	if c := m.sixelInitCmd(); c != nil {
+		cmds = append(cmds, c)
 	}
 	if m.stateCh != nil {
 		cmds = append(cmds, waitForState(m.stateCh))
@@ -502,6 +532,16 @@ func waitForState(ch <-chan player.State) tea.Cmd {
 // ── Update ────────────────────────────────────────────────────────────────
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	model, cmd := m.update(msg)
+	// The cover picture (art_sixel.go) is drawn outside the frame, so it is
+	// reconciled with whatever this update changed.
+	if sc := m.sixelSyncCmd(msg); sc != nil {
+		cmd = tea.Batch(cmd, sc)
+	}
+	return model, cmd
+}
+
+func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -974,6 +1014,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.searchAM = views.NewSearch(msg.Provider)
 		m.searchCC = views.NewSearch(msg.Provider)
+		m.ajSearch = views.NewSearch(msg.Provider)
 		m.searchSV = views.NewSearch(msg.Provider)
 		m.searchFE = views.NewSearch(msg.Provider)
 		m.feedLoaded, m.feedLoading = false, false
@@ -1203,19 +1244,19 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 		m.mode = modeNormal
 		return nil
 	case "ctrl+/", "ctrl+_":
-		// Cycle the source: Apple Music ("AM", searches on Enter) → Claude
-		// Code ("CC", Enter finds songs for a description) → the saved lists
-		// ("SV") → the feed ("FE", Apple's recommendations) → Apple Music. A
-		// plain "/" is text ("AC/DC"); terminals without the kitty protocol
-		// report Ctrl+/ as ctrl+_ (0x1F), so both spellings are accepted.
+		// Cycle the source: AM → AI → AJ → SV → FE → AM. A plain "/" is text
+		// ("AC/DC"); terminals without the kitty protocol report Ctrl+/ as
+		// ctrl+_ (0x1F), so both spellings are accepted.
 		m.setSearchSource(m.searchSrc.next())
-		// Each source keeps what it showed last time. Claude Code looks new
-		// text up on the way in (the same text keeps its songs); Apple Music
-		// searches on Enter only; the saved lists never look anything up; the
-		// feed is fetched on its first visit.
+		// Each source keeps what it showed last time. AI/AJ look new text up
+		// on the way in (the same text keeps its songs); Apple Music searches
+		// on Enter only; the saved lists never look anything up; the feed is
+		// fetched on its first visit.
 		switch {
 		case m.searchSrc == searchClaude && m.searchQuery != "" && m.searchQuery != m.vibeShown:
 			return m.startVibeSearch(m.searchQuery)
+		case m.searchSrc == searchAJ && m.searchQuery != "" && m.searchQuery != m.ajShown:
+			return m.startAJSearch(m.searchQuery)
 		case m.searchSrc == searchFeed:
 			return m.loadFeed()
 		}
@@ -1234,6 +1275,10 @@ func (m *Model) handleSearchKey(k string, msg tea.KeyPressMsg) tea.Cmd {
 			case searchClaude:
 				if m.searchQuery != "" && m.searchQuery != m.vibeShown {
 					return m.startVibeSearch(m.searchQuery)
+				}
+			case searchAJ:
+				if m.searchQuery != "" && m.searchQuery != m.ajShown {
+					return m.startAJSearch(m.searchQuery)
 				}
 			}
 			return nil
@@ -1454,6 +1499,7 @@ var allCommands = []cmdEntry{
 	{"ai", "ai <cc|gpt>", "Which AI answers the AI source and AI radio: Claude Code (cc, default) or ChatGPT (gpt); bare :ai shows it"},
 	{"model", "model <name|default>", "Model the AI in charge uses; bare :model shows it with the effort"},
 	{"effort", "effort <level|default>", "Effort the AI in charge spends (the levels depend on the AI); bare :effort shows it"},
+	{"art", "art", "Album cover at the left of Now Playing on/off: a real picture where the terminal draws sixels, coloured blocks elsewhere"},
 	{"about", "about", "Show information about vibez"},
 	{"debug-logs", "debug-logs", "Toggle debug log panel"},
 	{"q", "q", "Quit (:quit works too)"},
@@ -1461,11 +1507,9 @@ var allCommands = []cmdEntry{
 
 // retiredCommands still run when typed but are neither listed in the footer
 // nor completed: the fork does not use them. Move an entry back into
-// allCommands to bring it back.
-var retiredCommands = []cmdEntry{
-	{"art", "art", "Toggle album-art view (cover + track info instead of the bar)"},
-	{"radio", "radio", "Toggle continuous radio seeded by the playing track (R inserts 5 related songs once)"},
-}
+// allCommands to bring it back. Empty at the moment (:art returned to the
+// list when the cover became part of the Now Playing block).
+var retiredCommands = []cmdEntry{}
 
 // commandSuggestions returns commands whose trigger starts with the current
 // cmdBuf, or all commands when the buffer is empty.
@@ -1562,12 +1606,12 @@ func (m *Model) executeCommand(cmd string) tea.Cmd {
 		m.appendLog("[art] album-art view off")
 		return nil
 
-	case cmd == "radio":
-		if m.radio.enabled {
-			m.stopRadio()
-			return nil
-		}
-		return m.startRadioFrom(m.playerState.Track)
+	// The ":radio" command is disabled: it started upstream's continuous
+	// station mode (one seed, its station appended to the end of Tracks in
+	// batches whenever the list was about to run dry), which R and F (apple
+	// radio) now cover. The plumbing (radio state, startRadioFrom, stopRadio,
+	// runRadioSearch and the refill handling) is kept for a possible return of
+	// the feature; typing :radio is an unknown command.
 
 	case strings.HasPrefix(cmd, "quality"):
 		name, arg, _ := strings.Cut(cmd, " ")
@@ -1883,13 +1927,14 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 	}
 
 	// The About panel takes no commands. esc, ? and Tab close it (with the
-	// other panels, below), Ctrl+Shift+D opens the donation page, and every
-	// other key is dropped here so nothing reaches the player, the other
-	// panels or the command line from a screen of credits.
+	// other panels, below), Ctrl+Shift+D opens the donation page, Ctrl+Shift+G
+	// the fork's GitHub page, and every other key is dropped here so nothing
+	// reaches the player, the other panels or the command line from a screen
+	// of credits.
 	if m.activePanel >= 0 && m.panels[m.activePanel] == m.aboutP {
 		switch k {
 		case "esc", "tab", "shift+tab", "?":
-		case "ctrl+shift+d", "ctrl+shift+D":
+		case "ctrl+shift+d", "ctrl+shift+D", "ctrl+shift+g", "ctrl+shift+G":
 			m.lastKey = ""
 			return m.aboutP.Update(msg)
 		default:
@@ -2360,8 +2405,10 @@ func (m *Model) inChargeLabel() string {
 
 // applyVibeSetup rebuilds the Claude planner from the config's vibe_agent /
 // vibe_model / vibe_effort, saves the config and reports the result.
+// It also rebuilds the AJ planner (always Claude) from the same model/effort.
 func (m *Model) applyVibeSetup(what string) {
 	m.vibePlanner = vibe.NewPlanner(m.cfg.VibeAgent, m.cfg.VibeModel, m.cfg.VibeEffort)
+	m.ajPlanner = vibe.NewPlanner("claude", m.cfg.VibeModel, m.cfg.VibeEffort)
 	if err := m.cfg.Save(""); err != nil {
 		m.appendLog(fmt.Sprintf("[vibe] config save error: %v", err))
 	}
@@ -2497,15 +2544,32 @@ func (m *Model) scheduleSearch(query string) tea.Cmd {
 	return func() tea.Msg { return searchDebounceMsg{query: query, gen: gen} }
 }
 
-// startVibeSearch looks up songs for a vibe description typed into the Search
-// panel; the result lands in the panel's "Vibes" section (never in the queue).
+// startVibeSearch looks up songs for a vibe description typed into the AI
+// search panel; the result lands in the panel's "Vibes" section (never in the queue).
+// Each call increments m.vibeGen so that stale results from earlier searches
+// (including repeated same-query searches) are detected and dropped.
 func (m *Model) startVibeSearch(query string) tea.Cmd {
 	if m.provider == nil {
 		return nil
 	}
+	m.vibeGen++
 	m.vibeShown = query
 	m.searchCC.SetResults(nil, true, nil)
-	return m.runVibeSearch(query)
+	return m.runVibeSearch(query, m.vibeGen)
+}
+
+// startAJSearch looks up songs for a vibe description using Claude Code for
+// planning and Jev (TypeSafe) for reranking. Results land in the AJ panel.
+// Each call increments m.ajGen so that stale results from earlier searches
+// (including repeated same-query searches) are detected and dropped.
+func (m *Model) startAJSearch(query string) tea.Cmd {
+	if m.provider == nil {
+		return nil
+	}
+	m.ajGen++
+	m.ajShown = query
+	m.ajSearch.SetResults(nil, true, nil)
+	return m.runAJSearch(query, m.ajGen)
 }
 
 // setSearchSource switches the Search column between Apple Music, Claude
@@ -2529,6 +2593,8 @@ func (m *Model) searchFor(src searchSource) *views.SearchModel {
 	switch src {
 	case searchClaude:
 		return m.searchCC
+	case searchAJ:
+		return m.ajSearch
 	case searchSaved:
 		return m.searchSV
 	case searchFeed:
@@ -2537,11 +2603,16 @@ func (m *Model) searchFor(src searchSource) *views.SearchModel {
 	return m.searchAM
 }
 
-// handleVibeSearchResult shows the songs found for a vibe description in the
-// Claude Code list (even while Apple Music search is showing, so switching
-// back finds them). Late results for an older description are dropped.
+// handleVibeSearchResult shows the songs found for a vibe description.
+// It dispatches to handleAJSearchResult when the message came from the AJ
+// source, so AI and AJ results are always written to their own panels.
+// Late results for an older description are dropped.
 func (m *Model) handleVibeSearchResult(msg vibeResultMsg) {
-	if msg.query != m.vibeShown {
+	if msg.source == searchAJ {
+		m.handleAJSearchResult(msg)
+		return
+	}
+	if msg.gen != m.vibeGen || msg.query != m.vibeShown {
 		return
 	}
 	if len(msg.warnings) > 0 {
@@ -2564,13 +2635,95 @@ func (m *Model) handleVibeSearchResult(msg vibeResultMsg) {
 		}
 		m.appendLog(fmt.Sprintf("[vibe] %s (%s) planned %q → %q: %v (%s)", msg.via, msg.plan.Model, msg.query, summary, msg.plan.Queries, msg.ranking))
 	}
+	if msg.totalElapsed > 0 || msg.planElapsed > 0 {
+		m.appendLog(fmt.Sprintf("[vibe] timing: plan=%.1fs apple=%.1fs rank=%.1fs total=%.1fs",
+			msg.planElapsed.Seconds(), msg.appleElapsed.Seconds(), msg.rankElapsed.Seconds(), msg.totalElapsed.Seconds()))
+	}
+	if ts := formatTimingSummary(msg.planElapsed, msg.appleElapsed, msg.rankElapsed, msg.totalElapsed); ts != "" {
+		note = append(note, ts)
+	}
 	if msg.err != nil {
 		m.appendLog(fmt.Sprintf("[vibe] search error: %v", msg.err))
 		m.searchCC.SetVibeResults(nil, title, note...)
+		go persistSearchTiming(searchTimingRecord{
+			Timestamp: time.Now(),
+			Mode:      "vibe",
+			PlanMs:    msg.planElapsed.Milliseconds(),
+			AppleMs:   msg.appleElapsed.Milliseconds(),
+			RankMs:    msg.rankElapsed.Milliseconds(),
+			TotalMs:   msg.totalElapsed.Milliseconds(),
+			Success:   false,
+		})
 		return
 	}
 	m.appendLog(fmt.Sprintf("[vibe] %d song(s) for %q", len(msg.tracks), msg.query))
 	m.searchCC.SetVibeResults(msg.tracks, title, note...)
+	go persistSearchTiming(searchTimingRecord{
+		Timestamp: time.Now(),
+		Mode:      "vibe",
+		PlanMs:    msg.planElapsed.Milliseconds(),
+		AppleMs:   msg.appleElapsed.Milliseconds(),
+		RankMs:    msg.rankElapsed.Milliseconds(),
+		TotalMs:   msg.totalElapsed.Milliseconds(),
+		Success:   true,
+	})
+}
+
+// handleAJSearchResult shows the songs from an AJ (Claude plan + Jev rerank)
+// lookup in the AJ panel. Late results for an older description are dropped.
+func (m *Model) handleAJSearchResult(msg vibeResultMsg) {
+	if msg.gen != m.ajGen || msg.query != m.ajShown {
+		return
+	}
+	if len(msg.warnings) > 0 {
+		m.appendLog(fmt.Sprintf("[aj] partial results: %s", strings.Join(msg.warnings, "; ")))
+	}
+	title, note := "", []string(nil)
+	if msg.via != "" {
+		summary := strings.TrimSpace(msg.plan.Summary)
+		if msg.plan.Model != "" {
+			title = vibe.PrettyModel(msg.plan.Model)
+			if summary != "" {
+				note = append(note, summary)
+			}
+		} else {
+			note = append(note, msg.via+": "+summary)
+		}
+		note = append(note, "Jev")
+		m.appendLog(fmt.Sprintf("[aj] %s (%s) planned %q → %q: %v (%s)", msg.via, msg.plan.Model, msg.query, summary, msg.plan.Queries, msg.ranking))
+	}
+	if msg.totalElapsed > 0 || msg.planElapsed > 0 {
+		m.appendLog(fmt.Sprintf("[aj] timing: plan=%.1fs apple=%.1fs rank=%.1fs total=%.1fs",
+			msg.planElapsed.Seconds(), msg.appleElapsed.Seconds(), msg.rankElapsed.Seconds(), msg.totalElapsed.Seconds()))
+	}
+	if ts := formatTimingSummary(msg.planElapsed, msg.appleElapsed, msg.rankElapsed, msg.totalElapsed); ts != "" {
+		note = append(note, ts)
+	}
+	if msg.err != nil {
+		m.appendLog(fmt.Sprintf("[aj] search error: %v", msg.err))
+		m.ajSearch.SetVibeResults(nil, title, note...)
+		go persistSearchTiming(searchTimingRecord{
+			Timestamp: time.Now(),
+			Mode:      "aj",
+			PlanMs:    msg.planElapsed.Milliseconds(),
+			AppleMs:   msg.appleElapsed.Milliseconds(),
+			RankMs:    msg.rankElapsed.Milliseconds(),
+			TotalMs:   msg.totalElapsed.Milliseconds(),
+			Success:   false,
+		})
+		return
+	}
+	m.appendLog(fmt.Sprintf("[aj] %d song(s) for %q", len(msg.tracks), msg.query))
+	m.ajSearch.SetVibeResults(msg.tracks, title, note...)
+	go persistSearchTiming(searchTimingRecord{
+		Timestamp: time.Now(),
+		Mode:      "aj",
+		PlanMs:    msg.planElapsed.Milliseconds(),
+		AppleMs:   msg.appleElapsed.Milliseconds(),
+		RankMs:    msg.rankElapsed.Milliseconds(),
+		TotalMs:   msg.totalElapsed.Milliseconds(),
+		Success:   true,
+	})
 }
 
 // vibeResultCap is how many songs a vibe lookup lists; vibePoolCap is how many
@@ -2580,13 +2733,14 @@ const (
 	vibePoolCap   = 40
 )
 
-// runVibeSearch is stage one of a vibe lookup: the description goes through
+// runVibeSearch is stage one of an AI vibe lookup: the description goes through
 // the configured planner (Claude Code CLI or the keyword table; the table is
 // the fallback when the planner fails), the terms run in parallel through the
 // provider and the hits are interleaved so every term contributes,
 // deduplicated by artist and title, up to vibePoolCap candidates. The plan
-// rides along so the panel can show what was searched for.
-func (m *Model) runVibeSearch(query string) tea.Cmd {
+// rides along so the panel can show what was searched for. gen is the
+// generation counter captured at search start; stale results have a lower gen.
+func (m *Model) runVibeSearch(query string, gen int) tea.Cmd {
 	planner := m.lookupPlanner()
 	if planner == nil {
 		planner = vibe.KeywordPlanner{}
@@ -2594,9 +2748,12 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 	prov := m.provider
 
 	return func() tea.Msg {
+		startedAt := time.Now()
 		var reasons []string
 		pctx, pcancel := context.WithTimeout(context.Background(), 45*time.Second)
+		planStart := time.Now()
 		plan, err := planner.Plan(pctx, query)
+		planElapsed := time.Since(planStart)
 		pcancel()
 		via := planner.Name()
 		if err != nil {
@@ -2611,6 +2768,9 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 		}
 		plan.Queries = queries // the panel lists exactly the terms that ran
 
+		// Apple provider-search stage: concurrent term searches + optional fallback.
+		// appleElapsed is wall time from first request to last response.
+		appleStart := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
@@ -2646,9 +2806,11 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 		}
 		pool := interleaveTracks(perTerm, vibePoolCap)
 
+		var appleElapsed time.Duration
 		if len(pool) == 0 {
-			// Fallback to the raw description.
+			// Fallback to the raw description (included in apple elapsed).
 			res, err := prov.Search(ctx, query)
+			appleElapsed = time.Since(appleStart)
 			if err != nil {
 				reasons = append(reasons, err.Error())
 			}
@@ -2657,16 +2819,127 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 			}
 			if err != nil || res == nil || len(res.Tracks) == 0 {
 				return vibeCandidatesMsg{
-					query:    query,
-					err:      noResultsError(query, reasons),
-					warnings: dedupeStrings(reasons),
-					plan:     plan,
-					via:      via,
+					query:        query,
+					source:       searchClaude,
+					gen:          gen,
+					err:          noResultsError(query, reasons),
+					warnings:     dedupeStrings(reasons),
+					plan:         plan,
+					via:          via,
+					startedAt:    startedAt,
+					planElapsed:  planElapsed,
+					appleElapsed: appleElapsed,
 				}
 			}
 			pool = interleaveTracks([][]provider.Track{res.Tracks}, vibePoolCap)
+		} else {
+			appleElapsed = time.Since(appleStart)
 		}
-		return vibeCandidatesMsg{query: query, pool: pool, warnings: dedupeStrings(reasons), plan: plan, via: via}
+		return vibeCandidatesMsg{query: query, source: searchClaude, gen: gen, pool: pool, warnings: dedupeStrings(reasons), plan: plan, via: via, startedAt: startedAt, planElapsed: planElapsed, appleElapsed: appleElapsed}
+	}
+}
+
+// runAJSearch is stage one of an AJ vibe lookup. It always uses m.ajPlanner
+// (always Claude Code, never Codex or the keyword table) for planning and tags
+// messages with source searchAJ so they route to the AJ panel. gen must be
+// the caller's captured generation counter so stale results can be detected.
+// There is no keyword fallback: if the Claude planner fails, an explicit error
+// is returned so the AJ panel shows the failure rather than degrading silently.
+func (m *Model) runAJSearch(query string, gen int) tea.Cmd {
+	planner := m.ajPlanner
+	prov := m.provider
+
+	return func() tea.Msg {
+		startedAt := time.Now()
+		pctx, pcancel := context.WithTimeout(context.Background(), 45*time.Second)
+		planStart := time.Now()
+		plan, planErr := planner.Plan(pctx, query)
+		planElapsed := time.Since(planStart)
+		pcancel()
+		if planErr != nil {
+			// Explicit error; no keyword fallback for AJ.
+			return vibeCandidatesMsg{
+				query:       query,
+				source:      searchAJ,
+				gen:         gen,
+				err:         fmt.Errorf("aj: %w", planErr),
+				via:         planner.Name(),
+				startedAt:   startedAt,
+				planElapsed: planElapsed,
+			}
+		}
+		via := planner.Name()
+		var reasons []string
+		queries := plan.Queries
+		const maxQueriesAJ = 6
+		if len(queries) > maxQueriesAJ {
+			queries = queries[:maxQueriesAJ]
+		}
+		plan.Queries = queries
+
+		// Apple provider-search stage: concurrent term searches + optional fallback.
+		appleStart := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		type searchOut struct {
+			tracks   []provider.Track
+			warnings []string
+			err      error
+		}
+		chs := make([]chan searchOut, len(queries))
+		for i, q := range queries {
+			ch := make(chan searchOut, 1)
+			chs[i] = ch
+			go func(term string, out chan searchOut) {
+				res, err := prov.Search(ctx, term)
+				if err != nil || res == nil {
+					out <- searchOut{err: err}
+					return
+				}
+				out <- searchOut{tracks: res.Tracks, warnings: res.Warnings}
+			}(q, ch)
+		}
+		perTerm := make([][]provider.Track, len(queries))
+		for i, ch := range chs {
+			r := <-ch
+			if r.err != nil {
+				reasons = append(reasons, r.err.Error())
+			}
+			reasons = append(reasons, r.warnings...)
+			perTerm[i] = r.tracks
+		}
+		pool := interleaveTracks(perTerm, vibePoolCap)
+
+		var appleElapsed time.Duration
+		if len(pool) == 0 {
+			res, err := prov.Search(ctx, query)
+			appleElapsed = time.Since(appleStart)
+			if err != nil {
+				reasons = append(reasons, err.Error())
+			}
+			if res != nil {
+				reasons = append(reasons, res.Warnings...)
+			}
+			if err != nil || res == nil || len(res.Tracks) == 0 {
+				return vibeCandidatesMsg{
+					query:        query,
+					source:       searchAJ,
+					gen:          gen,
+					err:          noResultsError(query, reasons),
+					warnings:     dedupeStrings(reasons),
+					plan:         plan,
+					via:          via,
+					startedAt:    startedAt,
+					planElapsed:  planElapsed,
+					appleElapsed: appleElapsed,
+				}
+			}
+			pool = interleaveTracks([][]provider.Track{res.Tracks}, vibePoolCap)
+		} else {
+			appleElapsed = time.Since(appleStart)
+		}
+		return vibeCandidatesMsg{query: query, source: searchAJ, gen: gen, pool: pool, warnings: dedupeStrings(reasons), plan: plan, via: via, startedAt: startedAt, planElapsed: planElapsed, appleElapsed: appleElapsed}
 	}
 }
 
@@ -2674,13 +2947,36 @@ func (m *Model) runVibeSearch(query string) tea.Cmd {
 // goes back to it with the description and the panel says so; otherwise the
 // first vibeResultCap candidates are shown in search order.
 func (m *Model) handleVibeCandidates(msg vibeCandidatesMsg) tea.Cmd {
-	if msg.query != m.vibeShown {
+	// Generation + query identity check. The gen counter is incremented on
+	// every startVibeSearch/startAJSearch call, so a result from an earlier
+	// search (including a repeated same-query search or an A→B→A switch) has
+	// a lower gen and is dropped, even if the query string happens to match.
+	currentGen := m.vibeGen
+	shown := m.vibeShown
+	if msg.source == searchAJ {
+		currentGen = m.ajGen
+		shown = m.ajShown
+	}
+	if msg.gen != currentGen || msg.query != shown {
 		return nil
 	}
-	final := vibeResultMsg{query: msg.query, plan: msg.plan, via: msg.via, warnings: msg.warnings, err: msg.err}
+	// Log plan timing.
+	logPrefix := "[vibe]"
+	if msg.source == searchAJ {
+		logPrefix = "[aj]"
+	}
+	if msg.planElapsed > 0 {
+		m.appendLog(fmt.Sprintf("%s plan: %.1fs", logPrefix, msg.planElapsed.Seconds()))
+	}
+	final := vibeResultMsg{query: msg.query, source: msg.source, gen: msg.gen, plan: msg.plan, via: msg.via, warnings: msg.warnings, err: msg.err, startedAt: msg.startedAt, planElapsed: msg.planElapsed, appleElapsed: msg.appleElapsed}
 	if msg.err != nil || len(msg.pool) == 0 {
+		final.totalElapsed = time.Since(msg.startedAt)
 		m.handleVibeSearchResult(final)
 		return nil
+	}
+	// AJ always uses the Jev reranker regardless of the AI config.
+	if msg.source == searchAJ {
+		return m.rerankAJCmd(msg)
 	}
 	if rr, ok := m.lookupPlanner().(vibe.Reranker); ok && len(msg.pool) > 1 {
 		return m.rerankVibeCmd(msg, rr) // the panel keeps animating meanwhile
@@ -2689,11 +2985,12 @@ func (m *Model) handleVibeCandidates(msg vibeCandidatesMsg) tea.Cmd {
 	if len(msg.pool) > len(final.tracks) {
 		final.ranking = fmt.Sprintf("first %d of %d, search order", len(final.tracks), len(msg.pool))
 	}
+	final.totalElapsed = time.Since(msg.startedAt)
 	m.handleVibeSearchResult(final)
 	return nil
 }
 
-// rerankVibeCmd asks the reranker to order the pool against the description.
+// rerankVibeCmd asks the AI reranker to order the pool against the description.
 // A failed ranking keeps the search order and says so.
 func (m *Model) rerankVibeCmd(msg vibeCandidatesMsg, rr vibe.Reranker) tea.Cmd {
 	return func() tea.Msg {
@@ -2703,8 +3000,11 @@ func (m *Model) rerankVibeCmd(msg vibeCandidatesMsg, rr vibe.Reranker) tea.Cmd {
 		for i, t := range msg.pool {
 			cands[i] = vibe.Candidate{Artist: t.Artist, Title: t.Title, Album: t.Album}
 		}
-		final := vibeResultMsg{query: msg.query, plan: msg.plan, via: msg.via, warnings: msg.warnings}
+		final := vibeResultMsg{query: msg.query, source: msg.source, gen: msg.gen, plan: msg.plan, via: msg.via, warnings: msg.warnings, startedAt: msg.startedAt, planElapsed: msg.planElapsed, appleElapsed: msg.appleElapsed}
+		rankStart := time.Now()
 		idx, err := rr.Rerank(ctx, msg.query, cands, vibeResultCap)
+		final.rankElapsed = time.Since(rankStart)
+		final.totalElapsed = time.Since(msg.startedAt)
 		if err != nil {
 			final.tracks = msg.pool[:min(len(msg.pool), vibeResultCap)]
 			final.ranking = "ranking failed, search order"
@@ -2719,11 +3019,96 @@ func (m *Model) rerankVibeCmd(msg vibeCandidatesMsg, rr vibe.Reranker) tea.Cmd {
 	}
 }
 
+// rerankAJCmd asks the Jev reranker to order the AJ pool against the description.
+// When the Jev key is missing or the call fails, the error is shown explicitly
+// in the AJ panel rather than silently falling back to another ranker.
+func (m *Model) rerankAJCmd(msg vibeCandidatesMsg) tea.Cmd {
+	rr := m.jevReranker
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		cands := make([]vibe.Candidate, len(msg.pool))
+		for i, t := range msg.pool {
+			cands[i] = vibe.Candidate{Artist: t.Artist, Title: t.Title, Album: t.Album}
+		}
+		final := vibeResultMsg{query: msg.query, source: searchAJ, gen: msg.gen, plan: msg.plan, via: msg.via, warnings: msg.warnings, startedAt: msg.startedAt, planElapsed: msg.planElapsed, appleElapsed: msg.appleElapsed}
+		rankStart := time.Now()
+		idx, err := rr.Rerank(ctx, msg.query, cands, vibeResultCap)
+		final.rankElapsed = time.Since(rankStart)
+		final.totalElapsed = time.Since(msg.startedAt)
+		if err != nil {
+			// Explicit failure: show the error in the AJ panel, never fall back
+			// to another ranker, so the user knows Jev is not working.
+			final.err = err
+			final.ranking = "jev failed"
+			return final
+		}
+		for _, i := range idx {
+			final.tracks = append(final.tracks, msg.pool[i])
+		}
+		final.ranking = fmt.Sprintf("jev: picked %d of %d", len(final.tracks), len(msg.pool))
+		return final
+	}
+}
+
+// canonicalTrackKey returns a normalised deduplication key for a (artist, title)
+// pair. It folds common Unicode apostrophe and dash variants to their ASCII
+// equivalents and collapses runs of whitespace, so minor punctuation differences
+// between catalog and library copies of the same song are treated as duplicates.
+// Meaningful qualifiers such as "Live", "Remix" and "Acoustic" are preserved;
+// songs by different artists are never merged.
+func canonicalTrackKey(artist, title string) string {
+	return normTrackField(artist) + "||" + normTrackField(title)
+}
+
+// normTrackField lower-cases s and normalises punctuation for deduplication:
+// curly/smart apostrophes → \u0027, typographic dashes → hyphen-minus,
+// various Unicode spaces → ASCII space, then collapses interior whitespace.
+func normTrackField(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range strings.ToLower(s) {
+		switch r {
+		case '\u2019', '\u2018', '\u02bc', '\u0060', '\u00b4': // curly/modifier apostrophes
+			b.WriteByte('\'')
+		case '\u2013', '\u2014', '\u2012', '\u2212': // en-dash, em-dash, figure dash, minus
+			b.WriteByte('-')
+		case '\u00a0', '\u202f', '\u2009', '\u2008': // non-breaking and thin spaces
+			b.WriteByte(' ')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// formatTimingSummary returns a compact multi-stage timing string suitable for
+// the search result subtitle. Zero-duration stages are omitted.
+func formatTimingSummary(plan, apple, rank, total time.Duration) string {
+	var parts []string
+	if plan > 0 {
+		parts = append(parts, fmt.Sprintf("plan %.1fs", plan.Seconds()))
+	}
+	if apple > 0 {
+		parts = append(parts, fmt.Sprintf("apple %.1fs", apple.Seconds()))
+	}
+	if rank > 0 {
+		parts = append(parts, fmt.Sprintf("rank %.1fs", rank.Seconds()))
+	}
+	if total > 0 {
+		parts = append(parts, fmt.Sprintf("total %.1fs", total.Seconds()))
+	}
+	return strings.Join(parts, " \u00b7 ")
+}
+
 // interleaveTracks takes songs from each term's results in turn, skipping
-// repeats by artist and title, until limit songs are collected. Term order
-// is the planner's priority; within a term Apple's relevance order is kept.
+// repeats by artist and title (using a canonical key tolerant of punctuation
+// differences) and by catalog ID where non-empty, until limit songs are
+// collected. Term order is the planner's priority; within a term Apple's
+// relevance order is kept.
 func interleaveTracks(perTerm [][]provider.Track, limit int) []provider.Track {
-	seen := map[string]bool{}
+	seenKey := map[string]bool{}
+	seenCatalogID := map[string]bool{}
 	var merged []provider.Track
 	for progress := true; progress && len(merged) < limit; {
 		progress = false
@@ -2731,11 +3116,20 @@ func interleaveTracks(perTerm [][]provider.Track, limit int) []provider.Track {
 			for len(perTerm[i]) > 0 {
 				t := perTerm[i][0]
 				perTerm[i] = perTerm[i][1:]
-				key := strings.ToLower(t.Artist + "||" + t.Title)
-				if seen[key] {
+				key := canonicalTrackKey(t.Artist, t.Title)
+				// Catalog ID dedup: the same catalog song can appear under
+				// different query terms, library IDs, or CatalogID aliases.
+				catID := t.CatalogID
+				if catID == "" && !strings.HasPrefix(t.ID, "i.") {
+					catID = t.ID
+				}
+				if seenKey[key] || (catID != "" && seenCatalogID[catID]) {
 					continue
 				}
-				seen[key] = true
+				seenKey[key] = true
+				if catID != "" {
+					seenCatalogID[catID] = true
+				}
 				merged = append(merged, t)
 				progress = true
 				break
@@ -3105,105 +3499,113 @@ func (m *Model) artModeActive() bool {
 	return t != nil && t.ArtworkURL != "" && m.artwork.url == t.ArtworkURL && !m.artwork.failed
 }
 
-// nowPlayingTextRows is the compact text-mode block: "Artist — Title",
-// "Album • elapsed / total", the transport icons and the status line. Every
-// row saved here goes to the queue and vibe panels below.
+// nowPlayingTextRows is the block without a cover: "Artist — Title",
+// "Album • elapsed / total", the transport icons and the status line, all
+// left-justified. Every row saved here goes to the queue and vibe panels below.
 const nowPlayingTextRows = 4
 
+// nowPlayingArtRows is the block's height while the cover is shown: the cover
+// fills it at the very left, the four text rows sit beside it. Four rows makes
+// the cover the same height as the text block (no vertical centring) and half
+// the size it was at eight.
+const nowPlayingArtRows = 4
+
+// nowPlayingArtGap is the blank columns between the cover and the text.
+const nowPlayingArtGap = 2
+
 func (m *Model) nowPlayingHeight() int {
-	if !m.artModeActive() {
-		return nowPlayingTextRows
+	// The cover needs its rows and the split panels below still need a usable
+	// height; on a short terminal the text block wins.
+	if m.artModeActive() && m.height >= nowPlayingArtRows+14 {
+		return nowPlayingArtRows
 	}
-	// The art view trades panel rows for a bigger cover: grow with the
-	// terminal, but always leave the split panels a usable height.
-	return min(24, max(12, m.height-14))
+	return nowPlayingTextRows
 }
 
 // nowPlayingLines returns exactly h lines for the Now Playing section.
 func (m *Model) nowPlayingLines(contentW, h int) []string {
-	if m.artModeActive() && h >= 8 {
+	if m.artModeActive() && h >= nowPlayingArtRows {
 		return m.nowPlayingArtLines(contentW, h)
 	}
 	return m.nowPlayingTextLines(contentW, h)
 }
 
-// nowPlayingArtLines renders the album-art view: the cover centred, with the
-// track line and elapsed time beneath it — no progress bar or controls. The
-// bottom four rows hold a separator, "Artist — Title", "Album • elapsed /
-// total", and the status line; the rows above are the cover, vertically
-// centred, sized square via the measured cell aspect ratio. While the cover
-// is still downloading its rows stay blank and it pops in when loaded.
+// artGeometry sizes the cover for an h-row block: h rows tall and as many
+// columns as keep it square at the terminal's cell aspect, shrunk while it
+// would leave the text beside it less than a third of the width. ok is false
+// when no cover fits.
+func (m *Model) artGeometry(contentW, h int) (rows, cols int, ok bool) {
+	aspect := m.artCellAsp
+	if aspect <= 0 {
+		aspect = 2.0
+	}
+	colsFor := func(r int) int { return int(math.Round(float64(r) * aspect)) }
+	rows = h
+	cols = colsFor(rows)
+	for rows > 2 && cols > contentW*2/3 {
+		rows--
+		cols = colsFor(rows)
+	}
+	if rows < 2 || cols < 4 || contentW-cols-nowPlayingArtGap < 10 {
+		return 0, 0, false
+	}
+	return rows, cols, true
+}
+
+// nowPlayingArtLines renders the block with the cover: the cover at the very
+// left, square, and the text rows left-justified beside it, vertically
+// centred. The cover is a real picture where the terminal draws sixels (laid
+// over blank cells once the frame is out, see art_sixel.go) and coloured
+// half-blocks elsewhere; while it downloads its cells stay blank and it pops
+// in when loaded.
 func (m *Model) nowPlayingArtLines(contentW, h int) []string {
 	t := m.playerState.Track
 	if t == nil {
 		return m.nowPlayingTextLines(contentW, h)
 	}
-
-	aspect := m.artCellAsp
-	if aspect <= 0 {
-		aspect = 2.0
-	}
-	artColsFor := func(rows int) int { return int(math.Round(float64(rows) * aspect)) }
-	artRegion := h - 4
-	artRows := artRegion
-	artCols := artColsFor(artRows)
-	for artRows > 2 && artCols > contentW {
-		artRows--
-		artCols = artColsFor(artRows)
-	}
-	if artRows < 2 || artCols < 4 {
+	rows, cols, ok := m.artGeometry(contentW, h)
+	if !ok {
 		return m.nowPlayingTextLines(contentW, h)
 	}
 
-	size := art.Size{Width: artCols, Height: artRows}
-	if m.artwork.rendered == nil {
-		m.artwork.rendered = map[art.Size][]string{}
-	}
-	artLines := m.artwork.rendered[size]
-	if artLines == nil && m.artwork.img != nil {
-		const maxRenderedArtworkSizes = 16
-		if len(m.artwork.rendered) >= maxRenderedArtworkSizes {
+	var artLines []string
+	if m.artwork.img != nil && !m.sixelUsable() {
+		size := art.Size{Width: cols, Height: rows}
+		if m.artwork.rendered == nil {
 			m.artwork.rendered = map[art.Size][]string{}
 		}
-		artLines = art.RenderHalfBlocks(m.artwork.img, size)
-		m.artwork.rendered[size] = artLines
-	}
-
-	lines := make([]string, 0, h)
-	artTop := max(0, (artRegion-artRows)/2)
-	for i := range artRegion {
-		if ai := i - artTop; ai >= 0 && ai < len(artLines) {
-			lines = append(lines, centerStr(artLines[ai], contentW))
-		} else {
-			lines = append(lines, "")
+		artLines = m.artwork.rendered[size]
+		if artLines == nil {
+			const maxRenderedArtworkSizes = 16
+			if len(m.artwork.rendered) >= maxRenderedArtworkSizes {
+				m.artwork.rendered = map[art.Size][]string{}
+			}
+			artLines = art.RenderHalfBlocks(m.artwork.img, size)
+			m.artwork.rendered[size] = artLines
 		}
 	}
 
-	muted := styles.QueueItemMuted
-	var titleStr string
-	if m.playerState.Playing || m.playerState.Loading {
-		titleStr = styles.NowPlayingTitlePlaying.Render(t.Title)
-	} else {
-		titleStr = styles.NowPlayingTitle.Render(t.Title)
+	blank := strings.Repeat(" ", cols)
+	gap := strings.Repeat(" ", nowPlayingArtGap)
+	text := m.nowPlayingTextBlock(t, contentW-cols-nowPlayingArtGap)
+	textTop := max(0, (h-len(text))/2)
+	lines := make([]string, 0, h)
+	for i := range h {
+		left := blank
+		if i < len(artLines) {
+			left = artLines[i]
+		}
+		right := ""
+		if ti := i - textTop; ti >= 0 && ti < len(text) {
+			right = text[ti]
+		}
+		lines = append(lines, left+gap+right)
 	}
-	// Long metadata is truncated (ANSI-aware) so no row can overflow the
-	// panel and break the box border.
-	trackLine := centerStr(
-		ansi.Truncate(styles.NowPlayingArtist.Render(t.Artist)+muted.Render(" — ")+titleStr, contentW, "…"),
-		contentW,
-	)
-	elapsed := views.FormatDuration(m.playerState.Position)
-	total := views.FormatDuration(t.Duration)
-	albumLine := centerStr(
-		ansi.Truncate(styles.NowPlayingAlbum.Render(t.Album+" • ")+styles.TimeStyle.Render(elapsed+" / "+total), contentW, "…"),
-		contentW,
-	)
-	lines = append(lines, "", trackLine, albumLine, m.statusLine(contentW))
 	return lines
 }
 
-// statusLine renders the centred error/status line, or "" when there is no
-// message. Messages prefixed with '✓' are rendered as success (green); all
+// statusLine renders the error/status line, or "" when there is no message.
+// Messages prefixed with an info glyph are rendered as success (green); all
 // others are treated as warnings/errors (red with ⚠ prefix).
 func (m *Model) statusLine(contentW int) string {
 	if m.errMsg == "" {
@@ -3211,13 +3613,73 @@ func (m *Model) statusLine(contentW int) string {
 	}
 	for _, info := range []string{"✓", "♪", "🔇", "⏳", "ℹ"} {
 		if strings.HasPrefix(m.errMsg, info) {
-			text := truncateStr(m.errMsg, max(10, contentW))
-			return centerStr(styles.ControlActive.Render(text), contentW)
+			return styles.ControlActive.Render(truncateStr(m.errMsg, max(10, contentW)))
 		}
 	}
 	const prefix = "⚠  "
 	errText := truncateStr(m.errMsg, max(10, contentW-len([]rune(prefix))))
-	return centerStr(styles.ErrorStyle.Render(prefix+errText), contentW)
+	return styles.ErrorStyle.Render(prefix + errText)
+}
+
+// nowPlayingTextBlock is the block's four text rows for track t, each
+// left-justified and cut (ANSI-aware) to w columns: "Artist — Title",
+// "Album • elapsed / total", the transport icons and the status line.
+func (m *Model) nowPlayingTextBlock(t *provider.Track, w int) []string {
+	muted := styles.QueueItemMuted
+
+	// Four lines: artist, title, album, then the time and the two icons.
+	artistLine := styles.NowPlayingArtist.Render(t.Artist)
+
+	// Title: bright lavender while playing, softer gray while paused.
+	var titleLine string
+	if m.playerState.Playing || m.playerState.Loading {
+		titleLine = styles.NowPlayingTitlePlaying.Render(t.Title)
+	} else {
+		titleLine = styles.NowPlayingTitle.Render(t.Title)
+	}
+
+	albumLine := styles.NowPlayingAlbum.Render(t.Album)
+
+	// Play/pause: ▶ paused, ⏸ playing, a spinner while loading.
+	var playIcon string
+	var playStyle lipgloss.Style
+	switch {
+	case m.playerState.Loading:
+		spinnerFrames := [10]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		playIcon = spinnerFrames[m.glowStep%10]
+		playStyle = styles.ControlActive
+	case m.playerState.Playing:
+		playIcon = "⏸"
+		playStyle = styles.ControlActive
+	default:
+		playIcon = "▶"
+		playStyle = styles.Paused
+	}
+	repeatIcon, repeatStyle := "↺", muted
+	switch m.playerState.RepeatMode {
+	case player.RepeatModeAll:
+		repeatIcon, repeatStyle = "↺", styles.ControlActive
+	case player.RepeatModeOne:
+		repeatIcon, repeatStyle = "↻", styles.ControlActive
+	}
+	elapsed := views.FormatDuration(m.playerState.Position)
+	total := views.FormatDuration(t.Duration)
+	timeLine := styles.TimeStyle.Render(elapsed+" / "+total) + "   " +
+		repeatStyle.Render(repeatIcon) + "   " + playStyle.Render(playIcon)
+
+	// A transient status/error message (a volume flash, an error) takes the
+	// time line while it shows, then the time and icons return.
+	if sl := m.statusLine(w); sl != "" {
+		timeLine = sl
+	} else if m.memStats != "" {
+		timeLine = muted.Render(m.memStats)
+	}
+
+	rows := []string{artistLine, titleLine, albumLine, timeLine}
+	for i, row := range rows {
+		rows[i] = ansi.Truncate(row, max(0, w), "…")
+	}
+	return rows
 }
 
 func (m *Model) nowPlayingTextLines(contentW, h int) []string {
@@ -3254,70 +3716,9 @@ func (m *Model) nowPlayingTextLines(contentW, h int) []string {
 		return lines[:h]
 	}
 
-	// Title: bright lavender while playing, softer gray while paused.
-	var titleStr string
-	if m.playerState.Playing || m.playerState.Loading {
-		titleStr = styles.NowPlayingTitlePlaying.Render(t.Title)
-	} else {
-		titleStr = styles.NowPlayingTitle.Render(t.Title)
-	}
-
-	// "Artist — Title" — centred
-	trackLine := centerStr(
-		styles.NowPlayingArtist.Render(t.Artist)+muted.Render(" — ")+titleStr,
-		contentW,
-	)
-
-	// "Album • elapsed / total" — centred
-	elapsed := views.FormatDuration(m.playerState.Position)
-	total := views.FormatDuration(t.Duration)
-	albumLine := centerStr(
-		styles.NowPlayingAlbum.Render(t.Album+" • ")+styles.TimeStyle.Render(elapsed+" / "+total),
-		contentW,
-	)
-
-	// Controls: ↺  ⇄  ▶/⏸  ♡/♥
-	var playIcon string
-	var playStyle lipgloss.Style
-	switch {
-	case m.playerState.Loading:
-		spinnerFrames := [10]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-		playIcon = spinnerFrames[m.glowStep%10]
-		playStyle = styles.ControlActive
-	case m.playerState.Playing:
-		playIcon = "⏸"
-		playStyle = styles.ControlActive
-	default:
-		playIcon = "▶"
-		playStyle = styles.Paused
-	}
-
-	repeatIcon, repeatStyle := "↺", muted
-	switch m.playerState.RepeatMode {
-	case player.RepeatModeAll:
-		repeatIcon, repeatStyle = "↺", styles.ControlActive
-	case player.RepeatModeOne:
-		repeatIcon, repeatStyle = "↻", styles.ControlActive
-	}
-	controlsStr := repeatStyle.Render(repeatIcon) + "   " +
-		playStyle.Render(playIcon)
-	controls := centerStr(controlsStr, contentW)
-
-	errLine := m.statusLine(contentW)
-	if errLine == "" && m.memStats != "" {
-		// --mem-profiling used to live in the header row.
-		errLine = centerStr(muted.Render(m.memStats), contentW)
-	}
-
-	// Compact block: no "Now Playing" label, rule or progress bar; the icons
-	// sit right under the track info and the status line closes the block.
-	lines := []string{
-		trackLine,
-		albumLine,
-		controls,
-		errLine,
-	}
-
+	// The block without a cover: the same four rows, left-justified, then
+	// blank rows to h. No "Now Playing" label, rule or progress bar.
+	lines := m.nowPlayingTextBlock(t, contentW)
 	for len(lines) < h {
 		lines = append(lines, "")
 	}
@@ -3403,6 +3804,8 @@ func (m *Model) statusNavLines(w int) []string {
 		switch m.searchSrc {
 		case searchClaude:
 			glyph = "AI "
+		case searchAJ:
+			glyph = "AJ "
 		case searchSaved:
 			glyph = "SV "
 		case searchFeed:
@@ -3417,7 +3820,7 @@ func (m *Model) statusNavLines(w int) []string {
 		var actions []string
 		if m.searchTyping {
 			run := " search"
-			if m.searchSrc == searchClaude {
+			if m.searchSrc == searchClaude || m.searchSrc == searchAJ {
 				run = " find songs"
 			}
 			actions = append(actions,
@@ -3563,6 +3966,7 @@ func (m *Model) panelNavLines(w int) []string {
 		parts = []string{
 			styles.ModeNormal.Render("ABOUT"),
 			accent.Render("^⇧D") + muted.Render(" donate"),
+			accent.Render("^⇧G") + muted.Render(" github"),
 			accent.Render("esc/?") + muted.Render(" close"),
 		}
 	}
@@ -3596,9 +4000,6 @@ func (m *Model) statusPlayParts() []string {
 		accent.Render("S") + muted.Render(" shuffle & play"),
 		accent.Render("r") + muted.Render(" repeat"),
 		accent.Render("c") + muted.Render(" clear"),
-	}
-	if m.radio.enabled {
-		parts = append(parts, accent.Render(":radio")+styles.Playing.Render(" 📻 on"))
 	}
 	discover := accent.Render("F") + muted.Render(" apple radio")
 	if m.discover.on {
@@ -4005,22 +4406,27 @@ type searchSource int
 const (
 	searchApple  searchSource = iota // "AM": Apple Music, searches on Enter
 	searchClaude                     // "AI": the selected AI (Claude Code, or ChatGPT after :ai gpt) finds songs for a description on Enter
+	searchAJ                         // "AJ": Claude plans the search; Jev (TypeSafe) reranks — compare with AI
 	searchSaved                      // "SV": the saved track lists, one foldable section each
 	searchFeed                       // "FE": Apple's recommendations, one section per group
 )
 
 // next is the source Ctrl+/ moves to.
-func (s searchSource) next() searchSource { return (s + 1) % 4 }
+func (s searchSource) next() searchSource { return (s + 1) % 5 }
 
 // takesText reports whether the source has a prompt to type into.
-func (s searchSource) takesText() bool { return s == searchApple || s == searchClaude }
+func (s searchSource) takesText() bool {
+	return s == searchApple || s == searchClaude || s == searchAJ
+}
 
 // nextSourceLabel names where Ctrl+/ goes from the current source, for the
-// footers: "claude", "saved lists", "feed" or "apple music".
+// footers: "ai", "aj", "saved lists", "feed" or "apple music".
 func (m *Model) nextSourceLabel() string {
 	switch m.searchSrc.next() {
 	case searchClaude:
 		return "ai"
+	case searchAJ:
+		return "aj"
 	case searchSaved:
 		return "saved lists"
 	case searchFeed:

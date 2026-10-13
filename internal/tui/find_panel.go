@@ -39,6 +39,8 @@ func (m *Model) findHeader() string {
 	switch m.searchSrc {
 	case searchClaude:
 		mode = m.aiBackendLabel()
+	case searchAJ:
+		mode = "Claude+Jev"
 	case searchSaved:
 		mode = "Saved lists"
 	case searchFeed:
@@ -60,6 +62,8 @@ func (m *Model) searchFindLines(w, h int) []string {
 	switch m.searchSrc {
 	case searchClaude:
 		glyph = "AI" // the selected AI (Claude Code or ChatGPT) plans these lookups
+	case searchAJ:
+		glyph = "AJ" // Claude plans, Jev (TypeSafe) reranks
 	case searchSaved:
 		glyph = "SV" // the saved track lists
 	case searchFeed:

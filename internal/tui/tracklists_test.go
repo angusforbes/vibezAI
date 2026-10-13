@@ -121,8 +121,12 @@ func TestSavedSource_CtrlSlashCyclesThroughIt(t *testing.T) {
 	if m.searchSrc != searchClaude {
 		t.Fatalf("AM → CC first, got %v", m.searchSrc)
 	}
+	ctrlSlash(m) // CC → AJ (looks text up or does nothing — no text here, nothing to look up)
+	if m.searchSrc != searchAJ {
+		t.Fatalf("CC → AJ, got %v", m.searchSrc)
+	}
 	if cmd := ctrlSlash(m); cmd != nil || m.searchSrc != searchSaved || m.search != m.searchSV {
-		t.Fatalf("CC → saved lists, nothing looked up (cmd=%v src=%v)", cmd != nil, m.searchSrc)
+		t.Fatalf("AJ → saved lists, nothing looked up (cmd=%v src=%v)", cmd != nil, m.searchSrc)
 	}
 	lines := m.searchFindLines(60, 12)
 	joined := ansi.Strip(strings.Join(lines, "\n"))

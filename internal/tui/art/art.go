@@ -15,6 +15,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
+	"image/color"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
@@ -169,19 +170,59 @@ func RenderHalfBlocks(img image.Image, size Size) []string {
 		return nil
 	}
 	b := img.Bounds()
-	srcW, srcH := b.Dx(), b.Dy()
-	if srcW <= 0 || srcH <= 0 {
+	if b.Dx() <= 0 || b.Dy() <= 0 {
 		return nil
 	}
 
-	pxW, pxH := size.Width, size.Height*2
+	sample := boxSampler(img, size.Width, size.Height*2)
+	lines := make([]string, size.Height)
+	for row := range size.Height {
+		var sb strings.Builder
+		for col := range size.Width {
+			tr, tg, tb := sample(col, row*2)   // top pixel → foreground
+			br, bg, bb := sample(col, row*2+1) // bottom pixel → background
+			cell := lipgloss.NewStyle().
+				Foreground(lipgloss.Color(hexColor(tr, tg, tb))).
+				Background(lipgloss.Color(hexColor(br, bg, bb))).
+				Render(upperHalfBlock)
+			sb.WriteString(cell)
+		}
+		lines[row] = sb.String()
+	}
+	return lines
+}
 
-	// sample returns the average 8-bit RGB of every source pixel that maps to
-	// grid cell (px, py) in the pxW × pxH target grid. Area-averaging (a box
-	// filter) is what keeps a heavily downscaled cover smooth and
-	// recognisable; picking a single nearest pixel per cell instead produces
-	// a harsh, aliased result at this size.
-	sample := func(px, py int) (uint8, uint8, uint8) {
+// Resize scales img to exactly w × h pixels with the same box filter the
+// half-block renderer uses, so a cover shrunk to a few hundred pixels stays
+// smooth. It returns nil for a nil or empty image or non-positive dimensions.
+func Resize(img image.Image, w, h int) *image.RGBA {
+	if img == nil || w <= 0 || h <= 0 {
+		return nil
+	}
+	b := img.Bounds()
+	if b.Dx() <= 0 || b.Dy() <= 0 {
+		return nil
+	}
+	sample := boxSampler(img, w, h)
+	out := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			r, g, bl := sample(x, y)
+			out.SetRGBA(x, y, color.RGBA{R: r, G: g, B: bl, A: 255})
+		}
+	}
+	return out
+}
+
+// boxSampler returns a function giving the average 8-bit RGB of every source
+// pixel of img that maps to cell (px, py) of a pxW × pxH grid laid over it.
+// Area-averaging (a box filter) is what keeps a heavily downscaled cover
+// smooth and recognisable; picking a single nearest pixel per cell instead
+// produces a harsh, aliased result at these sizes.
+func boxSampler(img image.Image, pxW, pxH int) func(px, py int) (uint8, uint8, uint8) {
+	b := img.Bounds()
+	srcW, srcH := b.Dx(), b.Dy()
+	return func(px, py int) (uint8, uint8, uint8) {
 		x0 := b.Min.X + px*srcW/pxW
 		x1 := b.Min.X + (px+1)*srcW/pxW
 		y0 := b.Min.Y + py*srcH/pxH
@@ -207,22 +248,6 @@ func RenderHalfBlocks(img image.Image, size Size) []string {
 		}
 		return uint8(rs / n), uint8(gs / n), uint8(bs / n) //nolint:gosec // averaged 8-bit channels
 	}
-
-	lines := make([]string, size.Height)
-	for row := range size.Height {
-		var sb strings.Builder
-		for col := range size.Width {
-			tr, tg, tb := sample(col, row*2)   // top pixel → foreground
-			br, bg, bb := sample(col, row*2+1) // bottom pixel → background
-			cell := lipgloss.NewStyle().
-				Foreground(lipgloss.Color(hexColor(tr, tg, tb))).
-				Background(lipgloss.Color(hexColor(br, bg, bb))).
-				Render(upperHalfBlock)
-			sb.WriteString(cell)
-		}
-		lines[row] = sb.String()
-	}
-	return lines
 }
 
 func hexColor(r, g, b uint8) string {

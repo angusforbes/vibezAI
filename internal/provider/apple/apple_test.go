@@ -139,7 +139,7 @@ func TestSearch_ReturnsTracksAlbumsPlaylists(t *testing.T) {
 	if tk.Duration != 212*time.Second {
 		t.Errorf("Track.Duration = %v, want 212s", tk.Duration)
 	}
-	if tk.ArtworkURL != "https://art/300x300.jpg" {
+	if tk.ArtworkURL != "https://art/600x600.jpg" {
 		t.Errorf("Track.ArtworkURL = %q", tk.ArtworkURL)
 	}
 	if len(result.Albums) != 1 || result.Albums[0].ID != "a1" {

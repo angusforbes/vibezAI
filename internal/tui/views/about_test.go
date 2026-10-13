@@ -35,6 +35,34 @@ func TestAboutModel(t *testing.T) {
 	}
 }
 
+// The panel names the fork's repository and Ctrl+Shift+G opens it; the
+// donation key is unchanged.
+func TestAbout_CtrlShiftGOpensTheGitHubPage(t *testing.T) {
+	m := NewAbout()
+	m.SetSize(80, 24)
+	var opened []string
+	m.OpenURL = func(u string) error { opened = append(opened, u); return nil }
+	if plain := stripANSI(m.View()); !strings.Contains(plain, GitHubURL) {
+		t.Fatalf("the panel shows the repository, got %q", plain)
+	}
+	if cmd := m.Update(tea.KeyPressMsg{Text: "g", Code: 'g'}); cmd != nil || len(opened) != 0 {
+		t.Fatal("a plain g opens nothing")
+	}
+	cmd := m.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl | tea.ModShift})
+	if cmd == nil {
+		t.Fatal("Ctrl+Shift+G returns the command that opens the page")
+	}
+	if msg := cmd(); msg != nil {
+		t.Fatalf("a successful open reports nothing, got %#v", msg)
+	}
+	if len(opened) != 1 || opened[0] != GitHubURL {
+		t.Fatalf("opened %v, want [%s]", opened, GitHubURL)
+	}
+	if plain := stripANSI(m.View()); !strings.Contains(plain, "Opening "+GitHubURL) {
+		t.Errorf("the panel says what it is doing, got %q", plain)
+	}
+}
+
 func TestAbout_OnlyCtrlShiftDOpensTheDonationPage(t *testing.T) {
 	m := NewAbout()
 	m.SetSize(80, 24)

@@ -321,7 +321,7 @@ func toTrack(s songResource) provider.Track {
 		Artist:     s.Attributes.ArtistName,
 		Album:      s.Attributes.AlbumName,
 		Duration:   time.Duration(s.Attributes.DurationMs) * time.Millisecond,
-		ArtworkURL: s.Attributes.Artwork.formatted(300),
+		ArtworkURL: s.Attributes.Artwork.formatted(600),
 		PreviewURL: preview,
 		Genres:     s.Attributes.GenreNames,
 	}
@@ -336,7 +336,7 @@ func toAlbum(r albumResource) provider.Album {
 		ID:         r.ID,
 		Title:      r.Attributes.Name,
 		Artist:     r.Attributes.ArtistName,
-		ArtworkURL: r.Attributes.Artwork.formatted(300),
+		ArtworkURL: r.Attributes.Artwork.formatted(600),
 		TrackCount: r.Attributes.TrackCount,
 	}
 	if r.Attributes.PlayParams != nil && r.Attributes.PlayParams.CatalogID != "" {
@@ -349,7 +349,7 @@ func toPlaylist(r playlistResource) provider.Playlist {
 	return provider.Playlist{
 		ID:         r.ID,
 		Name:       r.Attributes.Name,
-		ArtworkURL: r.Attributes.Artwork.formatted(300),
+		ArtworkURL: r.Attributes.Artwork.formatted(600),
 		TrackCount: r.Attributes.TrackCount,
 	}
 }

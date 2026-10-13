@@ -28,14 +28,18 @@ func cellAspect() float64 {
 	if cw <= 0 || ch <= 0 {
 		return fallback
 	}
-	r := ch / cw
 	// Clamp to a sane range so a bogus report can't distort the layout.
-	switch {
-	case r < 1.5:
-		return 1.5
-	case r > 2.6:
-		return 2.6
-	default:
-		return r
+	return clampCellAspect(ch / cw)
+}
+
+// cellPixels returns the size of one terminal cell in pixels, or zeros when the
+// terminal does not report its pixel geometry. A cover drawn as a picture is
+// scaled to cells, so without this it stays half-blocks.
+func cellPixels() (w, h int) {
+	//nolint:gosec // a file descriptor fits an int; os.Stdout.Fd is 1.
+	ws, err := unix.IoctlGetWinsize(int(os.Stdout.Fd()), unix.TIOCGWINSZ)
+	if err != nil || ws.Xpixel == 0 || ws.Ypixel == 0 || ws.Col == 0 || ws.Row == 0 {
+		return 0, 0
 	}
+	return int(ws.Xpixel) / int(ws.Col), int(ws.Ypixel) / int(ws.Row)
 }

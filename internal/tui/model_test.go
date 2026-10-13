@@ -1040,13 +1040,18 @@ func TestCtrlSlashFromTracks_CyclesTheSearchSource(t *testing.T) {
 		t.Fatalf("^/ from Tracks switches the Search source in place: src=%v mode=%v", m.searchSrc, m.mode)
 	}
 	m.mode = modeSearch
-	if f := ansi.Strip(strings.Join(m.statusLines(600), " ")); !strings.Contains(f, "^/ saved lists") {
-		t.Fatalf("the SEARCH row says where ^/ goes next: %q", f)
+	if f := ansi.Strip(strings.Join(m.statusLines(600), " ")); !strings.Contains(f, "^/ aj") {
+		t.Fatalf("the SEARCH row says where ^/ goes next (aj after ai): %q", f)
 	}
 	m.mode = modeNormal
+	// Cycle through AJ too before reaching saved lists.
+	m.handleNormalKey(tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}, "ctrl+_")
+	if m.searchSrc != searchAJ || m.mode != modeNormal {
+		t.Fatalf("ctrl+_ cycles AI → AJ: src=%v mode=%v", m.searchSrc, m.mode)
+	}
 	m.handleNormalKey(tea.KeyPressMsg{Code: '_', Mod: tea.ModCtrl}, "ctrl+_")
 	if m.searchSrc != searchSaved || m.mode != modeNormal {
-		t.Fatalf("the legacy spelling cycles on: src=%v mode=%v", m.searchSrc, m.mode)
+		t.Fatalf("the legacy spelling cycles on to SV: src=%v mode=%v", m.searchSrc, m.mode)
 	}
 	if lines := m.searchFindLines(60, 12); !strings.Contains(ansi.Strip(lines[0]), "Saved lists") {
 		t.Fatalf("the column shows the new source at once: %q", ansi.Strip(lines[0]))
@@ -1242,9 +1247,10 @@ func TestFeedSource_CyclesLoadsAndSelectsLikeASearch(t *testing.T) {
 	press := func(k string, code rune, mod tea.KeyMod) tea.Cmd {
 		return m.handleSearchKey(k, tea.KeyPressMsg{Code: code, Mod: mod})
 	}
-	press("ctrl+/", '/', tea.ModCtrl) // CC
-	press("ctrl+/", '/', tea.ModCtrl) // SV
-	cmd := press("ctrl+/", '/', tea.ModCtrl)
+	press("ctrl+/", '/', tea.ModCtrl) // AM → CC
+	press("ctrl+/", '/', tea.ModCtrl) // CC → AJ
+	press("ctrl+/", '/', tea.ModCtrl) // AJ → SV
+	cmd := press("ctrl+/", '/', tea.ModCtrl) // SV → FE
 	if m.searchSrc != searchFeed || m.search != m.searchFE || cmd == nil || !m.search.Loading() {
 		t.Fatalf("SV → FE fetches the recommendations once: src=%v cmd=%v loading=%v", m.searchSrc, cmd != nil, m.search.Loading())
 	}
@@ -1278,7 +1284,7 @@ func TestFeedSource_CyclesLoadsAndSelectsLikeASearch(t *testing.T) {
 	if m.searchSrc != searchApple {
 		t.Fatalf("FE → AM, got %v", m.searchSrc)
 	}
-	for range 3 {
+	for range 4 {
 		cmd = press("ctrl+/", '/', tea.ModCtrl)
 	}
 	if m.searchSrc != searchFeed || cmd != nil || !m.search.Feed() {
@@ -2175,7 +2181,7 @@ func TestHandleNormalKey_R_StartRadio(t *testing.T) {
 	m := newModel(mp)
 	track := &provider.Track{Title: "Seed Song", Artist: "Artist", ID: "seed", CatalogID: "seedcat"}
 	m.playerState.Track = track
-	cmd := m.executeCommand("radio")
+	cmd := m.startRadioFrom(m.playerState.Track)
 	if cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a search cmd")
 	}
@@ -2207,7 +2213,7 @@ func TestHandleNormalKey_R_StartRadio_KeepsRestOfQueue(t *testing.T) {
 	m.queue.SetTracks(m.queueTracks)
 	m.playerState.Track = &track2 // currently playing the 2nd (of 4) queued tracks
 
-	cmd := m.executeCommand("radio")
+	cmd := m.startRadioFrom(m.playerState.Track)
 	if cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a cmd")
 	}
@@ -2247,7 +2253,7 @@ func TestHandleNormalKey_R_StartRadio_RefillSkipsTracksAlreadyQueued(t *testing.
 	m.queue.SetTracks(m.queueTracks)
 	m.playerState.Track = &track2 // currently playing the 2nd (of 4) queued tracks
 
-	if cmd := m.executeCommand("radio"); cmd == nil {
+	if cmd := m.startRadioFrom(m.playerState.Track); cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a cmd")
 	}
 	if len(m.radio.skipped) != 0 {
@@ -2289,7 +2295,7 @@ func TestHandleNormalKey_R_StartRadio_SeedNotInQueue_InsertsAsPlayNext(t *testin
 	seed := &provider.Track{Title: "Seed Song", ID: "seed", CatalogID: "seedcat"}
 	m.playerState.Track = seed // playing a track that isn't in m.queueTracks
 
-	cmd := m.executeCommand("radio")
+	cmd := m.startRadioFrom(m.playerState.Track)
 	if cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a cmd")
 	}
@@ -2323,7 +2329,7 @@ func TestHandleNormalKey_R_StartRadio_SeedNotInQueue_InsertsAsPlayNext(t *testin
 
 func TestHandleNormalKey_R_NoTrackPlaying_NoOp(t *testing.T) {
 	m := newModel(nil)
-	cmd := m.executeCommand("radio")
+	cmd := m.startRadioFrom(m.playerState.Track)
 	if cmd != nil {
 		t.Error("R key with nothing playing should not start radio")
 	}
@@ -2337,8 +2343,7 @@ func TestHandleNormalKey_R_StopRadio(t *testing.T) {
 	m := newModel(mp)
 	m.radio.enabled = true
 	m.radio.seed = &provider.Track{ID: "seed"}
-	cmd := m.executeCommand("radio")
-	_ = cmd
+	m.stopRadio()
 	if m.radio.enabled {
 		t.Error("R key when radio is on should stop radio")
 	}
@@ -2354,7 +2359,7 @@ func TestHandleNormalKey_R_StopRadio_ClearsSkipped(t *testing.T) {
 	m.radio.enabled = true
 	m.radio.seed = &provider.Track{ID: "seed"}
 	m.radio.skipped = map[string]bool{"blocked": true}
-	m.executeCommand("radio")
+	m.stopRadio()
 	if m.radio.skipped != nil {
 		t.Errorf("radio.skipped = %v, want nil after stopping radio", m.radio.skipped)
 	}
@@ -2370,7 +2375,7 @@ func TestHandleNormalKey_R_StartRadio_ResetsStaleSkipped(t *testing.T) {
 	m.playerState.Track = seed
 	m.radio.skipped = map[string]bool{"stale-from-last-session": true}
 
-	cmd := m.executeCommand("radio")
+	cmd := m.startRadioFrom(m.playerState.Track)
 	if cmd == nil {
 		t.Fatal("R key with a playing track should start radio and return a cmd")
 	}
@@ -2379,17 +2384,26 @@ func TestHandleNormalKey_R_StartRadio_ResetsStaleSkipped(t *testing.T) {
 	}
 }
 
+// :radio is gone: it is an unknown command and radio never starts from it.
+func TestCommand_Radio_IsGone(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.playerState.Track = &provider.Track{Title: "Seed", ID: "seed", CatalogID: "seedcat"}
+	if cmd := m.executeCommand("radio"); cmd != nil || m.radio.enabled || !strings.Contains(m.errMsg, "unknown command: radio") {
+		t.Fatalf(":radio must be an unknown command: cmd=%v on=%v msg=%q", cmd != nil, m.radio.enabled, m.errMsg)
+	}
+}
+
 func TestRadio_StopsDiscover(t *testing.T) {
 	mp := newMockPlayer()
 	m := newModel(mp)
 	m.discover.on = true
 	m.playerState.Track = &provider.Track{Title: "New Seed", ID: "new-seed", CatalogID: "newcat"}
-	m.executeCommand("radio")
+	m.startRadioFrom(m.playerState.Track)
 	if m.discover.on {
 		t.Error("starting radio should turn discover off: one auto-filler at a time")
 	}
 	if !m.radio.enabled {
-		t.Error(":radio should have started radio")
+		t.Error("startRadioFrom should have started radio")
 	}
 }
 
@@ -2939,11 +2953,12 @@ func TestNowPlayingArtModeClipsLongMetadata(t *testing.T) {
 	}
 }
 
-// TestNowPlayingArtMode_LayoutIsMinimal checks Simone's requested art view:
-// the cover with just track, album, and elapsed time — no progress bar or
-// control icons.
-func TestNowPlayingArtMode_LayoutIsMinimal(t *testing.T) {
+// TestNowPlayingArtMode_CoverLeftTextBeside checks the card: the cover at the
+// very left, "Artist — Title", "Album • elapsed / total", the controls and the
+// status line left-justified beside it, no progress bar, eight rows tall.
+func TestNowPlayingArtMode_CoverLeftTextBeside(t *testing.T) {
 	m := newModel(nil)
+	m.width, m.height = 120, 40
 	m.artMode = true
 	m.supportsArtColor = func() bool { return true }
 	m.artwork = artworkCache{
@@ -2963,19 +2978,65 @@ func TestNowPlayingArtMode_LayoutIsMinimal(t *testing.T) {
 		},
 	}
 
-	joined := strings.Join(m.nowPlayingLines(100, 20), "\n")
-	for _, want := range []string{"▀", "Minimal Song", "Minimal Artist", "Minimal Album", "0:42 / 3:00"} {
+	if h := m.nowPlayingHeight(); h != nowPlayingArtRows {
+		t.Fatalf("nowPlayingHeight() in art mode = %d, want %d", h, nowPlayingArtRows)
+	}
+	lines := m.nowPlayingLines(100, nowPlayingArtRows)
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"▀", "Minimal Song", "Minimal Artist", "Minimal Album", "0:42 / 3:00", "⏸"} {
 		if !strings.Contains(joined, want) {
-			t.Fatalf("art view missing %q: %q", want, joined)
+			t.Fatalf("card missing %q: %q", want, joined)
 		}
 	}
-	for _, unwanted := range []string{"╱", "╲", "⏸", "⇄"} {
+	for _, unwanted := range []string{"╱", "╲", "⇄", "Now Playing"} {
 		if strings.Contains(joined, unwanted) {
-			t.Fatalf("art view should not contain %q: %q", unwanted, joined)
+			t.Fatalf("card should not contain %q: %q", unwanted, joined)
 		}
 	}
-	if h := m.nowPlayingHeight(); h < 12 {
-		t.Fatalf("nowPlayingHeight() in art mode = %d, want >= 12", h)
+	// The cover is 4 rows, the same height as the four text rows, so every row
+	// is the cover (cols half-blocks), the gap, then one text row, aligned top
+	// with no vertical centring.
+	rows, cols, ok := m.artGeometry(100, nowPlayingArtRows)
+	if !ok || rows != nowPlayingArtRows || cols != 8 {
+		t.Fatalf("artGeometry = %d rows × %d cols (ok=%v), want 4 × 8 at the 2.0 fallback aspect", rows, cols, ok)
+	}
+	prefix := strings.Repeat("▀", cols) + strings.Repeat(" ", nowPlayingArtGap)
+	for i, line := range lines {
+		if plain := ansi.Strip(line); !strings.HasPrefix(plain, prefix) {
+			t.Fatalf("row %d does not start with the cover and the gap: %q", i, plain)
+		}
+	}
+	if plain := ansi.Strip(lines[0]); !strings.HasPrefix(plain, prefix+"Minimal Artist") || strings.Contains(plain, "Minimal Song") {
+		t.Fatalf("row 0 is the artist alone right after the gap: %q", plain)
+	}
+	if plain := ansi.Strip(lines[1]); !strings.HasPrefix(plain, prefix+"Minimal Song") {
+		t.Fatalf("row 1 is the title right after the gap: %q", plain)
+	}
+	if plain := ansi.Strip(lines[2]); !strings.HasPrefix(plain, prefix+"Minimal Album") || strings.Contains(plain, "0:42") {
+		t.Fatalf("row 2 is the album alone right after the gap: %q", plain)
+	}
+	if plain := ansi.Strip(lines[3]); !strings.HasPrefix(plain, prefix+"0:42 / 3:00") || !strings.Contains(plain, "↺") || !strings.Contains(plain, "⏸") {
+		t.Fatalf("row 3 is the time then the repeat and play icons: %q", plain)
+	}
+}
+
+// Without a cover the same four rows are left-justified: no centring.
+func TestNowPlayingTextMode_IsLeftJustified(t *testing.T) {
+	m := newModel(nil)
+	m.playerState = player.State{Playing: true, Position: 5 * time.Second,
+		Track: &provider.Track{Title: "Left Song", Artist: "Left Artist", Album: "Left Album", Duration: time.Minute}}
+	lines := m.nowPlayingLines(100, nowPlayingTextRows)
+	if got := ansi.Strip(lines[0]); got != "Left Artist" && !strings.HasPrefix(got, "Left Artist ") {
+		t.Fatalf("row 0 is the artist, left-justified: %q", got)
+	}
+	if got := ansi.Strip(lines[1]); !strings.HasPrefix(got, "Left Song") {
+		t.Fatalf("row 1 is the title, left-justified: %q", got)
+	}
+	if got := ansi.Strip(lines[2]); !strings.HasPrefix(got, "Left Album") {
+		t.Fatalf("row 2 is the album, left-justified: %q", got)
+	}
+	if got := ansi.Strip(lines[3]); !strings.HasPrefix(got, "0:05 / 1:00") || !strings.Contains(got, "↺") || !strings.Contains(got, "⏸") {
+		t.Fatalf("row 3 is the time then the icons, left-justified: %q", got)
 	}
 }
 
@@ -4312,10 +4373,16 @@ func TestHandleSearchKey_CtrlSlashTogglesVibesMode(t *testing.T) {
 	if !strings.Contains(footer, "SEARCH") || strings.Contains(footer, "VIBES") || !strings.Contains(footer, "find songs") {
 		t.Fatalf("footer keeps the SEARCH label in vibes mode and says Enter = find songs: %q", footer)
 	}
-	// Next come the saved lists: nothing is looked up, the prompt reads SV
-	// and the header names the source.
+	// Next comes AJ: looks the text up with Claude+Jev, so cmd is non-nil.
+	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd == nil || m.searchSrc != searchAJ {
+		t.Fatalf("ctrl+/ from CC goes to AJ and looks the text up (cmd=%v src=%v)", cmd != nil, m.searchSrc)
+	}
+	if lines := m.searchFindLines(40, 6); !strings.Contains(lines[2], "AJ") || !strings.Contains(ansi.Strip(lines[0]), "Claude+Jev") {
+		t.Fatalf("the AJ source shows the AJ prompt and names Claude+Jev: %q / %q", lines[2], ansi.Strip(lines[0]))
+	}
+	// Then the saved lists: nothing is looked up.
 	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil || m.searchSrc != searchSaved {
-		t.Fatalf("ctrl+/ from CC goes to the saved lists without looking anything up (cmd=%v src=%v)", cmd != nil, m.searchSrc)
+		t.Fatalf("ctrl+/ from AJ goes to the saved lists without looking anything up (cmd=%v src=%v)", cmd != nil, m.searchSrc)
 	}
 	if lines := m.searchFindLines(40, 6); !strings.Contains(lines[2], "SV") || !strings.Contains(ansi.Strip(lines[0]), "Saved lists") {
 		t.Fatalf("the saved-lists source shows the SV prompt and names itself: %q / %q", lines[2], ansi.Strip(lines[0]))
@@ -4359,7 +4426,7 @@ func TestHandleSearchKey_EnterInVibesModeFindsSongsThenActsOnRows(t *testing.T) 
 	for i := range 12 {
 		tracks = append(tracks, provider.Track{Title: fmt.Sprintf("Song %d", i), Artist: "Band", ID: fmt.Sprintf("v%d", i), CatalogID: fmt.Sprintf("v%d", i)})
 	}
-	m.Update(vibeResultMsg{query: "late night coding", tracks: tracks})
+	m.Update(vibeResultMsg{query: "late night coding", gen: m.vibeGen, tracks: tracks})
 	view := m.search.View()
 	if !strings.Contains(view, "Vibes") || !strings.Contains(view, "+ 5 more") || !strings.Contains(view, "− 5 less") {
 		t.Fatalf("vibe songs should be listed like search results with the more/less controls: %q", view)
@@ -4443,7 +4510,7 @@ func TestRunVibeSearch_UsesThePlannerTermsAndInterleaves(t *testing.T) {
 	m.provider = &termProvider{n: 10}
 	fp := &fakePlanner{plan: vibe.Plan{Summary: "Dreamy soul", Queries: []string{"alpha", "beta"}}}
 	m.vibePlanner = fp
-	msg, ok := m.runVibeSearch("dreamy soul")().(vibeCandidatesMsg)
+	msg, ok := m.runVibeSearch("dreamy soul", m.vibeGen)().(vibeCandidatesMsg)
 	if !ok || msg.err != nil {
 		t.Fatalf("vibe search failed: ok=%v err=%v", ok, msg.err)
 	}
@@ -4485,11 +4552,11 @@ func TestRunVibeSearch_FallsBackToKeywordsWhenThePlannerFails(t *testing.T) {
 	m.provider = &termProvider{n: 3}
 	// Over-long plans are trimmed to the terms that actually run.
 	m.vibePlanner = &fakePlanner{plan: vibe.Plan{Summary: "s", Queries: []string{"a", "b", "c", "d", "e", "f", "g", "h"}}}
-	if msg := m.runVibeSearch("x")().(vibeCandidatesMsg); len(msg.plan.Queries) != 6 || msg.plan.Queries[5] != "f" {
+	if msg := m.runVibeSearch("x", m.vibeGen)().(vibeCandidatesMsg); len(msg.plan.Queries) != 6 || msg.plan.Queries[5] != "f" {
 		t.Fatalf("the shown plan must list only the 6 searched terms, got %v", msg.plan.Queries)
 	}
 	m.vibePlanner = &fakePlanner{err: errors.New("not logged in")}
-	msg := m.runVibeSearch("late night coding")().(vibeCandidatesMsg)
+	msg := m.runVibeSearch("late night coding", m.vibeGen)().(vibeCandidatesMsg)
 	if msg.err != nil || len(msg.pool) == 0 {
 		t.Fatalf("the keyword table must take over: err=%v pool=%d", msg.err, len(msg.pool))
 	}
@@ -4530,7 +4597,7 @@ func TestSearchFindLines_BusyAnimatesTheModeText(t *testing.T) {
 		t.Fatalf("no dots or status text while busy, the header carries it: %q", lines)
 	}
 	// Results in: the header goes back to the plain muted mode text.
-	m.Update(vibeResultMsg{query: "anything", tracks: nil, via: "Test", plan: vibe.Plan{Summary: "s"}})
+	m.Update(vibeResultMsg{query: "anything", gen: m.vibeGen, tracks: nil, via: "Test", plan: vibe.Plan{Summary: "s"}})
 	if got := m.findHeader(); got != idle {
 		t.Fatalf("after the lookup the header is back to normal: %q vs %q", got, idle)
 	}
@@ -4571,7 +4638,7 @@ func TestVibeLookup_RerankerOrdersThePool(t *testing.T) {
 	m.vibeShown = "dreamy soul"
 	m.search.SetResults(nil, true, nil)
 
-	stage1 := m.runVibeSearch("dreamy soul")()
+	stage1 := m.runVibeSearch("dreamy soul", m.vibeGen)()
 	_, stage2 := m.Update(stage1)
 	if stage2 == nil {
 		t.Fatal("a reranking planner gets a second stage")
@@ -4597,7 +4664,7 @@ func TestVibeLookup_RerankerOrdersThePool(t *testing.T) {
 
 	// A failed ranking keeps the search order and says so.
 	rr.rankErr = errors.New("timeout")
-	_, stage2 = m.Update(m.runVibeSearch("dreamy soul")())
+	_, stage2 = m.Update(m.runVibeSearch("dreamy soul", m.vibeGen)())
 	m.Update(stage2())
 	got = m.search.Results()
 	if len(got) != vibeResultCap || got[0].Title != "alpha 0" {
@@ -4786,10 +4853,16 @@ func TestCtrlSlash_KeepsEachModesResultsAndSkipsRepeatLookups(t *testing.T) {
 	if cmd == nil || m.searchSrc != searchClaude || !m.search.Loading() {
 		t.Fatalf("first Claude Code switch must look the text up (cmd=%v vibe=%v loading=%v)", cmd != nil, m.searchSrc == searchClaude, m.search.Loading())
 	}
-	m.Update(vibeResultMsg{query: "coltrane", via: "Test", plan: vibe.Plan{Model: "fable-5-1", Summary: "Late Coltrane"}, tracks: catalogTracks(2)})
+	m.Update(vibeResultMsg{query: "coltrane", gen: m.vibeGen, via: "Test", plan: vibe.Plan{Model: "fable-5-1", Summary: "Late Coltrane"}, tracks: catalogTracks(2)})
 	if !m.search.VibeResults() || len(m.search.Results()) != 2 {
 		t.Fatalf("Claude Code results should show (vibe=%v n=%d)", m.search.VibeResults(), len(m.search.Results()))
 	}
+	// Through AJ: it looks the same text up with Jev.
+	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd == nil || m.searchSrc != searchAJ {
+		t.Fatalf("CC → AJ looks the text up (cmd=%v src=%v)", cmd != nil, m.searchSrc)
+	}
+	// Deliver an AJ result so ajShown == query.
+	m.Update(vibeResultMsg{query: "coltrane", source: searchAJ, gen: m.ajGen, via: "Test", plan: vibe.Plan{Model: "fable-5-1", Summary: "Late Coltrane"}, tracks: catalogTracks(2)})
 	// Through the saved lists, which never look anything up…
 	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil || m.searchSrc != searchSaved {
 		t.Fatalf("the saved lists never look anything up (cmd=%v src=%v)", cmd != nil, m.searchSrc)
@@ -4816,8 +4889,9 @@ func TestCtrlSlash_KeepsEachModesResultsAndSkipsRepeatLookups(t *testing.T) {
 	// waits for Enter (through the saved lists first, which ignore it).
 	m.searchTyping = true
 	m.handleSearchKey("!", tea.KeyPressMsg{Code: '!', Text: "!"})
-	m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}) // SV
-	m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}) // FE
+	m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}) // CC → AJ (starts AJ lookup for changed text)
+	m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}) // AJ → SV
+	m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}) // SV → FE
 	if cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl}); cmd != nil || m.searchSrc != searchApple || m.search.Loading() {
 		t.Fatalf("switching to Apple Music with new text does not search yet (cmd=%v src=%v loading=%v)", cmd != nil, m.searchSrc, m.search.Loading())
 	}
@@ -4838,8 +4912,9 @@ func TestVibeResult_LandsInClaudeListWhileAppleMusicShows(t *testing.T) {
 	m.setSearchSource(searchClaude)
 	m.searchQuery = "chill"
 	m.startVibeSearch("chill")
+	gen := m.vibeGen // capture before switching away
 	m.setSearchSource(searchApple) // user switched back before the answer came
-	m.Update(vibeResultMsg{query: "chill", via: "Test", plan: vibe.Plan{Summary: "s"}, tracks: catalogTracks(1)})
+	m.Update(vibeResultMsg{query: "chill", gen: gen, via: "Test", plan: vibe.Plan{Summary: "s"}, tracks: catalogTracks(1)})
 	if m.search.VibeResults() {
 		t.Fatal("the Apple Music list must not be replaced by the late Claude result")
 	}
@@ -5276,6 +5351,17 @@ func TestAboutPanelTakesOnlyCloseAndDonate(t *testing.T) {
 	if m.activePanel < 0 || m.panels[m.activePanel] != m.aboutP {
 		t.Fatal("About stays open after donating")
 	}
+	// Ctrl+Shift+G opens the fork's GitHub page the same way.
+	cmd = press("ctrl+shift+g", 'g', tea.ModCtrl|tea.ModShift)
+	if cmd == nil {
+		t.Fatal("Ctrl+Shift+G returns the open command")
+	}
+	if msg := cmd(); msg != nil {
+		t.Fatalf("a successful open reports nothing, got %#v", msg)
+	}
+	if len(opened) != 2 || opened[1] != views.GitHubURL {
+		t.Fatalf("opened %v, want [%s %s]", opened, views.DonateURL, views.GitHubURL)
+	}
 
 	// esc, ? and Tab close it.
 	press("esc", tea.KeyEscape, 0)
@@ -5591,5 +5677,426 @@ func TestCommand_ModelAndEffortFollowTheAIInCharge(t *testing.T) {
 		if strings.HasSuffix(c.trigger, "-cc") || strings.HasSuffix(c.trigger, "-gpt") || strings.HasSuffix(c.trigger, "-ai") || c.usage != c.trigger && strings.Contains(c.usage, "gpt-") {
 			t.Fatalf("no per-AI or GPT-specific commands in the palette: %q %q", c.trigger, c.usage)
 		}
+	}
+}
+
+// ---------- AJ mode tests ----------
+
+func TestAJSource_CyclesInCycle(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &mockProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	// Full cycle: AM → AI → AJ → SV → FE → AM
+	sources := []searchSource{searchApple, searchClaude, searchAJ, searchSaved, searchFeed, searchApple}
+	for i, want := range sources[1:] {
+		m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl})
+		if m.searchSrc != want {
+			t.Fatalf("step %d: want src %v, got %v", i+1, want, m.searchSrc)
+		}
+	}
+}
+
+func TestAJSource_TakesText(t *testing.T) {
+	if !searchAJ.takesText() {
+		t.Fatal("AJ source must accept typed text")
+	}
+}
+
+func TestAJSource_NextSourceLabel(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.searchSrc = searchClaude
+	if lbl := m.nextSourceLabel(); lbl != "aj" {
+		t.Fatalf("AI → AJ label should be \"aj\", got %q", lbl)
+	}
+	m.searchSrc = searchAJ
+	if lbl := m.nextSourceLabel(); lbl != "saved lists" {
+		t.Fatalf("AJ → SV label should be \"saved lists\", got %q", lbl)
+	}
+}
+
+func TestAJSource_SeparateResultState(t *testing.T) {
+	// AI and AJ keep independent result lists; delivering to one must not
+	// affect the other.
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	m.setSearchSource(searchClaude)
+	m.vibeShown = "chill"
+	m.ajShown = "chill"
+
+	aiTracks := []provider.Track{{Title: "AI Song", ID: "ai1", CatalogID: "ai1"}}
+	ajTracks := []provider.Track{{Title: "AJ Song", ID: "aj1", CatalogID: "aj1"}}
+
+	// Deliver AI result.
+	m.Update(vibeResultMsg{query: "chill", source: searchClaude, tracks: aiTracks, via: "Test", plan: vibe.Plan{Summary: "s"}})
+	if len(m.searchCC.Results()) != 1 || m.searchCC.Results()[0].Title != "AI Song" {
+		t.Fatalf("AI result should land in searchCC, got %v", m.searchCC.Results())
+	}
+	if len(m.ajSearch.Results()) != 0 {
+		t.Fatalf("AI result must not touch ajSearch, got %v", m.ajSearch.Results())
+	}
+
+	// Deliver AJ result.
+	m.Update(vibeResultMsg{query: "chill", source: searchAJ, tracks: ajTracks, via: "Test", plan: vibe.Plan{Summary: "s"}})
+	if len(m.ajSearch.Results()) != 1 || m.ajSearch.Results()[0].Title != "AJ Song" {
+		t.Fatalf("AJ result should land in ajSearch, got %v", m.ajSearch.Results())
+	}
+	if len(m.searchCC.Results()) != 1 || m.searchCC.Results()[0].Title != "AI Song" {
+		t.Fatalf("AJ result must not touch searchCC, got %v", m.searchCC.Results())
+	}
+}
+
+func TestAJSource_StaleQueryDropped(t *testing.T) {
+	// A result for an older query must not overwrite the current one.
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	m.ajShown = "new query"
+
+	stale := vibeResultMsg{query: "old query", source: searchAJ, tracks: catalogTracks(3), via: "T", plan: vibe.Plan{Summary: "s"}}
+	m.Update(stale)
+	if len(m.ajSearch.Results()) != 0 {
+		t.Fatalf("stale AJ result must be dropped, got %d results", len(m.ajSearch.Results()))
+	}
+}
+
+func TestAJSource_AIStaleDropped(t *testing.T) {
+	// A stale AI result (source=searchClaude) must not overwrite a new AI result.
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	m.vibeShown = "new query"
+
+	stale := vibeResultMsg{query: "old query", source: searchClaude, tracks: catalogTracks(3), via: "T", plan: vibe.Plan{Summary: "s"}}
+	m.Update(stale)
+	if len(m.searchCC.Results()) != 0 {
+		t.Fatalf("stale AI result must be dropped, got %d results", len(m.searchCC.Results()))
+	}
+}
+
+func TestAJSource_AsyncModeSwitch_NoCrossContamination(t *testing.T) {
+	// Start an AJ search, switch to AI source, then deliver the AJ result.
+	// The AJ result should only land in ajSearch, not searchCC.
+	m := newModel(newMockPlayer())
+	m.provider = &mockProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	m.searchQuery = "jazz"
+	m.searchCursor = 4
+
+	// Switch to AJ, which starts a lookup.
+	m.setSearchSource(searchAJ)
+	m.ajShown = "jazz"
+
+	// Switch back to AI.
+	m.setSearchSource(searchClaude)
+
+	// Deliver the AJ result while AI source is active.
+	ajTracks := catalogTracks(2)
+	m.Update(vibeResultMsg{query: "jazz", source: searchAJ, tracks: ajTracks, via: "T", plan: vibe.Plan{Summary: "s"}})
+
+	// searchCC (AI panel) must not have the AJ tracks.
+	if len(m.searchCC.Results()) != 0 {
+		t.Fatalf("AJ result must not land in AI panel, got %d", len(m.searchCC.Results()))
+	}
+	// ajSearch must have them.
+	if len(m.ajSearch.Results()) != 2 {
+		t.Fatalf("AJ result must land in AJ panel, got %d", len(m.ajSearch.Results()))
+	}
+}
+
+func TestAJSource_EnterStartsLookup(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &mockProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.setSearchSource(searchAJ)
+	m.searchTyping = true
+	m.searchQuery = "dreamy"
+	m.searchCursor = len(m.searchQuery)
+
+	cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil || m.ajShown != "dreamy" || !m.search.Loading() {
+		t.Fatalf("Enter in AJ must start the lookup (cmd=%v shown=%q loading=%v)", cmd != nil, m.ajShown, m.search.Loading())
+	}
+	// Same query again: nothing starts.
+	if cmd := m.handleSearchKey("enter", tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil {
+		t.Fatal("Enter on the same AJ query already shown must do nothing")
+	}
+}
+
+func TestAJSource_CtrlSlashWithTextStartsLookup(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.provider = &mockProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.searchQuery = "soul"
+	m.searchCursor = 4
+	// AM → AI (no text shown yet, vibeShown = "")
+	m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl})
+	m.vibeShown = "soul" // simulate AI already showed this
+	// AI → AJ: text is "soul", ajShown is "" → should start AJ lookup
+	cmd := m.handleSearchKey("ctrl+/", tea.KeyPressMsg{Code: '/', Mod: tea.ModCtrl})
+	if m.searchSrc != searchAJ || cmd == nil || m.ajShown != "soul" || !m.search.Loading() {
+		t.Fatalf("AI → AJ with text must start AJ lookup (src=%v cmd=%v shown=%q loading=%v)", m.searchSrc, cmd != nil, m.ajShown, m.search.Loading())
+	}
+}
+
+func TestAJSource_HeaderShowsClaudePlusJev(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.setSearchSource(searchAJ)
+	header := ansi.Strip(m.findHeader())
+	if !strings.Contains(header, "Claude+Jev") {
+		t.Fatalf("AJ header must show Claude+Jev, got %q", header)
+	}
+	lines := m.searchFindLines(40, 8)
+	if !strings.Contains(lines[2], "AJ") {
+		t.Fatalf("AJ prompt must show AJ glyph, got %q", lines[2])
+	}
+}
+
+func TestAJSource_ErrorIsVisibleNotSilent(t *testing.T) {
+	// When Jev reranking fails (missing key), the error must be shown in the
+	// AJ panel rather than falling back silently to another ranker.
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	m.setSearchSource(searchAJ)
+	m.ajShown = "melancholy"
+
+	// Deliver an error result for AJ.
+	errResult := vibeResultMsg{
+		query:   "melancholy",
+		source:  searchAJ,
+		err:     fmt.Errorf("jev: TYPESAFE_API_KEY is not set"),
+		via:     "Claude",
+		plan:    vibe.Plan{Summary: "Melancholy vibes"},
+	}
+	m.Update(errResult)
+
+	// The error must be logged.
+	errFound := false
+	for _, line := range m.debugLog {
+		if strings.Contains(line, "[aj]") && strings.Contains(line, "search error") {
+			errFound = true
+		}
+	}
+	if !errFound {
+		t.Fatalf("AJ error must be logged under [aj], log: %v", m.debugLog)
+	}
+}
+
+func TestAJSource_TimingIsLogged(t *testing.T) {
+	// Verify that plan timing and total/rank timing are logged.
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	m.ajShown = "focus"
+
+	candidatesMsg := vibeCandidatesMsg{
+		query:       "focus",
+		source:      searchAJ,
+		plan:        vibe.Plan{Summary: "Focused", Queries: []string{"q"}},
+		via:         "Claude",
+		planElapsed: 2100 * time.Millisecond,
+		startedAt:   time.Now().Add(-3 * time.Second),
+	}
+	m.handleVibeCandidates(candidatesMsg)
+	planLogged := false
+	for _, line := range m.debugLog {
+		if strings.Contains(line, "[aj]") && strings.Contains(line, "plan:") {
+			planLogged = true
+		}
+	}
+	if !planLogged {
+		t.Fatalf("[aj] plan timing must be logged, log: %v", m.debugLog)
+	}
+}
+
+func TestAJSource_GlyphInFooter(t *testing.T) {
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 20)
+	m.setSearchSource(searchAJ)
+	footer := ansi.Strip(strings.Join(m.statusNavLines(200), " "))
+	if !strings.Contains(footer, "AJ") {
+		t.Fatalf("AJ source must show AJ glyph in footer, got %q", footer)
+	}
+}
+
+func TestAISource_TimingIsLogged(t *testing.T) {
+	// Verify that AI result timing is also logged.
+	m := newModel(newMockPlayer())
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	m.vibeShown = "focus"
+
+	resultMsg := vibeResultMsg{
+		query:        "focus",
+		source:       searchClaude,
+		tracks:       catalogTracks(2),
+		via:          "Claude",
+		plan:         vibe.Plan{Summary: "Focused"},
+		totalElapsed: 5 * time.Second,
+		rankElapsed:  3 * time.Second,
+	}
+	m.Update(resultMsg)
+	timingLogged := false
+	for _, line := range m.debugLog {
+		if strings.Contains(line, "[vibe]") && strings.Contains(line, "timing:") {
+			timingLogged = true
+		}
+	}
+	if !timingLogged {
+		t.Fatalf("[vibe] total timing must be logged, log: %v", m.debugLog)
+	}
+}
+
+// ---------- Tests for verified-issue fixes ----------
+
+func TestAJSource_AIGptDoesNotAffectAJPlanner(t *testing.T) {
+	// :ai gpt switches AI source to ChatGPT; AJ must still use Claude.
+	m := newModel(newMockPlayer())
+	ajPlannerBefore := m.ajPlanner
+
+	// Simulate :ai gpt.
+	m.executeCommand("ai gpt")
+
+	// vibePlanner may now be ChatGPT (or keyword if Codex CLI not installed).
+	// ajPlanner must still be the same Claude planner (or rebuilt as Claude).
+	if m.ajPlanner == m.aiPlanner {
+		t.Fatal(":ai gpt must not make ajPlanner point at the aiPlanner (ChatGPT)")
+	}
+	// ajPlanner should be the same object or a new Claude-typed planner.
+	// At minimum it should NOT be the same object as aiPlanner.
+	_ = ajPlannerBefore
+	if _, isKeyword := m.ajPlanner.(vibe.KeywordPlanner); isKeyword {
+		t.Fatal("ajPlanner must never be a KeywordPlanner: AJ requires Claude")
+	}
+}
+
+func TestAJSource_AIGptCommandPreservesAJClaude(t *testing.T) {
+	// Verify ajPlanner is always a *vibe.ClaudePlanner type after :ai commands.
+	m := newModel(newMockPlayer())
+	m.executeCommand("ai gpt")
+	if _, ok := m.ajPlanner.(*vibe.ClaudePlanner); !ok {
+		t.Fatalf("after :ai gpt, ajPlanner should still be *ClaudePlanner, got %T", m.ajPlanner)
+	}
+	m.executeCommand("ai cc")
+	if _, ok := m.ajPlanner.(*vibe.ClaudePlanner); !ok {
+		t.Fatalf("after :ai cc, ajPlanner should still be *ClaudePlanner, got %T", m.ajPlanner)
+	}
+}
+
+func TestAJSource_ModelEffortCommandUpdatesAJPlanner(t *testing.T) {
+	// :model and :effort commands (for Claude) must update ajPlanner too.
+	m := newModel(newMockPlayer())
+	original := m.ajPlanner.(*vibe.ClaudePlanner).Model
+
+	m.executeCommand("model fable-5-1")
+	cp, ok := m.ajPlanner.(*vibe.ClaudePlanner)
+	if !ok {
+		t.Fatalf("ajPlanner should remain *ClaudePlanner after :model, got %T", m.ajPlanner)
+	}
+	if cp.Model == original && original != "fable-5-1" {
+		t.Fatalf("ajPlanner.Model should update after :model, got %q", cp.Model)
+	}
+}
+
+func TestAJSource_SameQueryRepeat_DroppedByGen(t *testing.T) {
+	// Start a search, deliver a result, start the same query again.
+	// The first result (old gen) must not overwrite the new search in progress.
+	m := newModel(newMockPlayer())
+	m.provider = &mockProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	m.setSearchSource(searchClaude)
+
+	m.startVibeSearch("jazz")
+	gen1 := m.vibeGen
+	// Deliver the first result.
+	m.Update(vibeResultMsg{query: "jazz", gen: gen1, source: searchClaude, tracks: catalogTracks(2), via: "T", plan: vibe.Plan{Summary: "s"}})
+	if len(m.searchCC.Results()) != 2 {
+		t.Fatalf("first result should land: got %d", len(m.searchCC.Results()))
+	}
+
+	// Start the same query again (simulates the user pressing Enter on the same text).
+	m.startVibeSearch("jazz")
+	gen2 := m.vibeGen
+	if gen2 == gen1 {
+		t.Fatal("second startVibeSearch must increment vibeGen")
+	}
+
+	// Deliver the stale first result (old gen).
+	m.Update(vibeResultMsg{query: "jazz", gen: gen1, source: searchClaude, tracks: catalogTracks(5), via: "T", plan: vibe.Plan{Summary: "s"}})
+	// The stale result must not overwrite; panel should still show loading or the original.
+	if len(m.searchCC.Results()) != 0 {
+		// The panel was cleared by the second startVibeSearch, and the stale
+		// result must not repopulate it.
+		t.Fatalf("stale gen1 result must be dropped; searchCC should be empty, got %d", len(m.searchCC.Results()))
+	}
+}
+
+func TestAJSameQuery_GenProtection(t *testing.T) {
+	// AJ same-query repeat must also use gen to discard old results.
+	m := newModel(newMockPlayer())
+	m.provider = &mockProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	m.setSearchSource(searchAJ)
+
+	m.startAJSearch("soul")
+	gen1 := m.ajGen
+	m.Update(vibeResultMsg{query: "soul", gen: gen1, source: searchAJ, tracks: catalogTracks(2), via: "T", plan: vibe.Plan{Summary: "s"}})
+	if len(m.ajSearch.Results()) != 2 {
+		t.Fatalf("first AJ result should land: got %d", len(m.ajSearch.Results()))
+	}
+
+	m.startAJSearch("soul")
+	gen2 := m.ajGen
+	if gen2 == gen1 {
+		t.Fatal("second startAJSearch must increment ajGen")
+	}
+
+	// Old gen result must be dropped.
+	m.Update(vibeResultMsg{query: "soul", gen: gen1, source: searchAJ, tracks: catalogTracks(5), via: "T", plan: vibe.Plan{Summary: "s"}})
+	if len(m.ajSearch.Results()) != 0 {
+		t.Fatalf("stale gen1 AJ result must be dropped; got %d", len(m.ajSearch.Results()))
+	}
+}
+
+func TestVibeSearch_AtoBAtoA_GenProtection(t *testing.T) {
+	// A→B→A pattern: switch away and back with same query.
+	// The result from the first A search must be dropped when it arrives after B.
+	m := newModel(newMockPlayer())
+	m.provider = &mockProvider{}
+	m.mode = modeSearch
+	m.search.SetSize(80, 30)
+	m.setSearchSource(searchClaude)
+	m.searchQuery = "blues"
+	m.searchCursor = 5
+
+	// First AI search.
+	m.startVibeSearch("blues")
+	gen1 := m.vibeGen
+
+	// Switch to AJ (B) and back to AI (A) — same text, same panel, new gen.
+	m.setSearchSource(searchAJ)
+	m.startAJSearch("blues") // AJ gets its own gen
+	m.setSearchSource(searchClaude)
+	m.startVibeSearch("blues") // second AI search: gen2
+	gen2 := m.vibeGen
+
+	if gen2 == gen1 {
+		t.Fatal("returning to AI with same query must give a new vibeGen")
+	}
+
+	// The late first-search result must be dropped.
+	m.Update(vibeResultMsg{query: "blues", gen: gen1, source: searchClaude, tracks: catalogTracks(3), via: "T", plan: vibe.Plan{Summary: "s"}})
+	if len(m.searchCC.Results()) != 0 {
+		t.Fatalf("stale A gen result must be dropped on A→B→A cycle, got %d", len(m.searchCC.Results()))
 	}
 }
