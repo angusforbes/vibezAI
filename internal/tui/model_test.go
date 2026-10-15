@@ -5424,8 +5424,8 @@ func TestDiscover_F_InsertsOnePickAfterEachPlayingTrack(t *testing.T) {
 	if f := footer(); !strings.Contains(f, "F apple radio") || strings.Contains(f, "● on") || strings.Contains(f, "⇧T") || !strings.Contains(f, "T +5 library") {
 		t.Fatalf("footer lists F apple radio (off) and a plain T: %q", f)
 	}
-	if f := strings.TrimRight(footer(), " "); !strings.HasSuffix(f, "R +5 related  ·  T +5 library  ·  F apple radio  ·  A ai radio") {
-		t.Fatalf("R, T, F and A close the Tracks list: %q", f)
+	if f := strings.TrimRight(footer(), " "); !strings.HasSuffix(f, "R +5 related  ·  T +5 library  ·  B +5 same artist  ·  F apple radio  ·  A ai radio") {
+		t.Fatalf("R, T, B, F and A close the Tracks list: %q", f)
 	}
 	if cmd := key(m, "F"); cmd == nil || !m.discover.on {
 		t.Fatal("F turns discover on and fetches a pick for the playing track")

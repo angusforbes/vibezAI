@@ -318,6 +318,7 @@ type Model struct {
 	libraryCache     []provider.Track // the whole library, for random picks (T)
 	libraryCacheAt   time.Time        // when libraryCache was fetched
 	randomGen        int              // generation of the latest random-library pick
+	artistGen        int              // generation of the latest B (more by the artist) search
 	relatedGen       int              // generation of the latest R (related songs) lookup
 
 	// Discover (F)
@@ -1158,6 +1159,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case randomLibraryResultMsg:
 		cmds = append(cmds, m.handleRandomLibraryResult(msg))
+
+	case artistMoreResultMsg:
+		cmds = append(cmds, m.handleArtistMoreResult(msg))
 
 	case RestartMsg:
 		m.flushQueueState()
@@ -2103,6 +2107,16 @@ func (m *Model) handleNormalKey(msg tea.KeyPressMsg, k string) tea.Cmd {
 			seed = &t
 		}
 		return m.fetchRandomLibraryCmd(seed)
+
+	case "B":
+		// Five more songs by the highlighted (or playing) track's artist.
+		m.lastKey = ""
+		seed := m.playerState.Track
+		if m.activePanel < 0 && m.queueCursorActive() {
+			t := m.queueTracks[m.queueCursor]
+			seed = &t
+		}
+		return m.fetchArtistMoreCmd(seed)
 
 	case "left":
 		m.lastKey = ""
@@ -4031,6 +4045,7 @@ func (m *Model) statusPlayParts() []string {
 	return append(parts,
 		accent.Render("R")+muted.Render(" +5 related"),
 		accent.Render("T")+muted.Render(" +5 library"),
+		accent.Render("B")+muted.Render(" +5 same artist"),
 		discover,
 		radio,
 	)

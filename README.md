@@ -119,6 +119,7 @@ Where the terminal draws sixel graphics, the cover is a real picture at the term
 | `shift+↑` / `shift+↓` | Jump the highlight to the top / bottom |
 | `R` | Insert five related songs after the highlighted track, once |
 | `T` | Insert five random songs from your library after the highlighted track |
+| `B` | Insert five more songs by the highlighted track's artist that aren't in Tracks yet, right after it (Apple's search order, so another press goes further down the list) |
 | `F` | Apple radio on / off: while on, each track that starts playing gets one song from its Apple Music station inserted right after it, once per track; see [Apple radio and AI radio](#apple-radio-and-ai-radio) |
 | `A` | AI radio on / off: while on, the AI in charge (Claude Code, or ChatGPT after `:ai gpt`) picks one song to follow each track that starts playing, from that track and the ten before it; the pick is found on Apple Music and inserted right after it. Apple radio and AI radio switch each other off; see [Apple radio and AI radio](#apple-radio-and-ai-radio) |
 | `s` | Jump to a random track |

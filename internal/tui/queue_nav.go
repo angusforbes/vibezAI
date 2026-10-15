@@ -19,7 +19,8 @@ import (
 // entry (queue kept), restarting it when it is the playing one. d (also
 // x/delete) removes it, K/J
 // move it, shift+d removes it and everything below, ctrl+shift+d removes
-// everything above, R inserts five related songs right after it, c clears the
+// everything above, R inserts five related songs right after it (T five library songs,
+// B five more by its artist), c clears the
 // queue and s jumps to a random queued song. Nothing else changes with the
 // highlight's position, and esc does nothing in this view.
 
