@@ -393,6 +393,7 @@ type Model struct {
 	// Errors / status messages
 	errMsg    string
 	terminalWarned bool // the terminal-requirement warning was shown (terminal_check.go)
+	repaintUntil   time.Time // after a panel switch: every cell below the cover is rewritten until then (redraw.go, J618)
 	errExpiry time.Time
 
 	// Debug log
@@ -534,6 +535,12 @@ func waitForState(ch <-chan player.State) tea.Cmd {
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	before := m.screenKey()
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		trace("key", k.String())
+	}
+	if w, ok := msg.(tea.WindowSizeMsg); ok {
+		trace("resize", fmt.Sprintf("%dx%d", w.Width, w.Height))
+	}
 	model, cmd := m.update(msg)
 	// A view switch, resize or tmux re-attach repaints the whole screen (redraw.go).
 	if rc := m.redrawCmd(before, msg); rc != nil {
@@ -3366,7 +3373,7 @@ func (m *Model) View() tea.View {
 	default:
 		content = m.renderBoxLayout()
 	}
-	v := tea.NewView(content)
+	v := tea.NewView(m.withRepaintParity(content))
 	v.AltScreen = true
 	return v
 }

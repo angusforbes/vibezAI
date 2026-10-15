@@ -184,8 +184,8 @@ func (m *Model) sixelSyncCmd(msg tea.Msg) tea.Cmd {
 		m.sixel.shownKey, m.sixel.pendingKey = "", ""
 		extra = requestCellSize()
 	case sixelEmitMsg:
-		m.sixel.pendingKey = ""
 		p, key, ok := m.sixelWanted()
+		m.sixel.pendingKey = ""
 		if !ok || key != msg.key {
 			return nil
 		}
@@ -196,6 +196,7 @@ func (m *Model) sixelSyncCmd(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 		m.sixel.shownKey, m.sixel.shown = key, p
+		trace("cover", fmt.Sprintf("draw %d", len(seq)))
 		return tea.Raw(seq)
 	}
 
