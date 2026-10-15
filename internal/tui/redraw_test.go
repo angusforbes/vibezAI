@@ -39,6 +39,18 @@ func TestRedrawCmd_LayoutChangesRepaint(t *testing.T) {
 	}
 }
 
+func TestParityAfter_UnderlineKeepsItsColour(t *testing.T) {
+	if got := parityAfter("\x1b[38;5;111;4m", "\x1b[58;5;1m"); got != "\x1b[58;5;111m" {
+		t.Fatalf("underlined text keeps its own underline colour, got %q", got)
+	}
+	if got := parityAfter("\x1b[38;2;1;2;3;4m", "P"); got != "\x1b[58;2;1;2;3m" {
+		t.Fatalf("truecolour underline, got %q", got)
+	}
+	if got := parityAfter("\x1b[31m", "P"); got != "P" {
+		t.Fatalf("plain text gets the parity colour, got %q", got)
+	}
+}
+
 func TestWithRepaintParity(t *testing.T) {
 	m := New(testCfg(), &captureProvider{}, newMockPlayer(), Options{})
 	m.width = 10

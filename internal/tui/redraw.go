@@ -76,7 +76,7 @@ func (m *Model) withRepaintParity(content string) string {
 	}
 	const par = "\x1b[58;5;1m"
 	for i := from; i < len(lines); i++ {
-		l := sgrRe.ReplaceAllStringFunc(lines[i], func(s string) string { return s + par })
+		l := sgrRe.ReplaceAllStringFunc(lines[i], func(s string) string { return s + parityAfter(s, par) })
 		if pad := m.width - lipgloss.Width(lines[i]); pad > 0 {
 			l += strings.Repeat(" ", pad)
 		}
@@ -88,6 +88,31 @@ func (m *Model) withRepaintParity(content string) string {
 // repaintWindow is how long the repaint style is kept after a switch: a few of
 // the renderer's frames (it flushes at ~60 fps), so one of them surely goes out.
 const repaintWindow = 120 * time.Millisecond
+
+// parityAfter is what follows an SGR sequence inside the repaint region: the parity underline colour, except
+// where that SGR turns underlining on (the Lyrics heading). There the underline is visible, so its colour is set
+// to the text's own colour (an underline's default), which the renderer still sees as a change (RedrawCheck618).
+func parityAfter(sgr, par string) string {
+	params := strings.Split(strings.TrimSuffix(strings.TrimPrefix(sgr, "\x1b["), "m"), ";")
+	underlined := false
+	for _, p := range params {
+		if p == "4" || (strings.HasPrefix(p, "4:") && p != "4:0") {
+			underlined = true
+		}
+	}
+	if !underlined {
+		return par
+	}
+	for i := 0; i < len(params); i++ {
+		if params[i] == "38" && i+2 < len(params) && params[i+1] == "5" {
+			return "\x1b[58;5;" + params[i+2] + "m"
+		}
+		if params[i] == "38" && i+4 < len(params) && params[i+1] == "2" {
+			return "\x1b[58;2;" + params[i+2] + ";" + params[i+3] + ";" + params[i+4] + "m"
+		}
+	}
+	return "\x1b[59m" // underlined in the default colour: keep it so (no parity on those cells)
+}
 
 var sgrRe = regexp.MustCompile("\x1b\\[[0-9;:]*m")
 
